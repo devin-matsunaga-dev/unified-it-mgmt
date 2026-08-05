@@ -5,3 +5,4 @@
 - Bootstrap: modular monolith over microservices; extract Python pollers/ML only (see ARCHITECTURE.md §9)
 - Bootstrap: platform versions pinned to LTS/latest-supported — .NET 10, Aspire 13.x, Node 24, Python 3.13+ (see WORKFLOW.md table)
 - Bootstrap: UI = Tailwind + shadcn/ui + lucide per DESIGN.md reference screenshot
+- WP-0.1: no new architectural decisions; the skeleton follows the existing steering documents (2026-08-06)

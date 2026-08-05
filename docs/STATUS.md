@@ -5,9 +5,9 @@
 ## Current position
 
 - **Phase:** 0 — Foundation
-- **Last completed WP:** none (steering docs bootstrapped by hand: ARCHITECTURE, CONVENTIONS, DESIGN, SESSION, WORKFLOW, WORK_PACKAGES, DECISIONS, design/reference-overview.png)
-- **Current WP:** WP-0.1 (solution skeleton — targets net10.0; steering docs already exist, verify layout matches them)
-- **Current branch:** feat/wp-0.1-skeleton
+- **Last completed WP:** WP-0.1 (solution skeleton — net10.0 solution and steering-doc layout verified)
+- **Current WP:** WP-0.2 (Aspire AppHost + infrastructure resources)
+- **Current branch:** feat/wp-0.2-infrastructure
 - **Last tag:** —
 
 ## Platform versions (law — see WORKFLOW.md table for EOL dates)
@@ -25,7 +25,7 @@
 <!-- Flip as you go. One line each; add date + anything notably deviated from the WP text. -->
 
 ### Phase 0 — Foundation
-- [ ] WP-0.1 Solution skeleton (net10.0) + docs verified
+- [x] WP-0.1 Solution skeleton (net10.0) + docs verified (2026-08-06)
 - [ ] WP-0.2 Aspire AppHost + infrastructure
 - [ ] WP-0.3 Auth + RBAC
 - [ ] WP-0.4 Audit + platform services
