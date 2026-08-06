@@ -3,6 +3,7 @@
     <Project Path="src/AppHost/AppHost.csproj" />
     <Project Path="src/Contracts/Contracts.csproj" />
     <Project Path="src/Platform/Platform.csproj" />
+    <Project Path="src/Seeder/Seeder.csproj" />
     <Project Path="src/Web.Host/Web.Host.csproj" />
   </Folder>
   <Folder Name="/src/Modules/" />

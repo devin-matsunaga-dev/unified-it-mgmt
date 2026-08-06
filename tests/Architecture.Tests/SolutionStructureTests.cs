@@ -10,6 +10,7 @@ public sealed class SolutionStructureTests
         "src/Modules/Helpdesk/Modules.Helpdesk.csproj",
         "src/Modules/Monitoring/Modules.Monitoring.csproj",
         "src/Platform/Platform.csproj",
+        "src/Seeder/Seeder.csproj",
         "src/Web.Host/Web.Host.csproj",
         "tests/Architecture.Tests/Architecture.Tests.csproj",
         "tests/Infrastructure.Tests/Infrastructure.Tests.csproj",

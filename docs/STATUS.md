@@ -4,10 +4,10 @@
 
 ## Current position
 
-- **Phase:** 0 — Foundation
-- **Last completed WP:** WP-0.7 (CI + test harness)
-- **Current WP:** WP-0.8 (Demo-data seeder v1)
-- **Current branch:** feat/wp-0.8-demo-data-seeder
+- **Phase:** 1 — Helpdesk
+- **Last completed WP:** WP-0.8 (Demo-data seeder v1)
+- **Current WP:** WP-1.1 (Ticket domain + CRUD)
+- **Current branch:** feat/wp-1.1-ticket-domain-crud
 - **Last tag:** —
 
 ## Platform versions (law — see WORKFLOW.md table for EOL dates)
@@ -32,7 +32,7 @@
 - [x] WP-0.5 Bus + outbox (2026-08-06)
 - [x] WP-0.6 React shell + auth (styled per DESIGN.md) (2026-08-06)
 - [x] WP-0.7 CI + test harness (2026-08-06)
-- [ ] WP-0.8 Seeder v1
+- [x] WP-0.8 Seeder v1 (2026-08-06)
 
 ### Phase 1 — Helpdesk
 - [ ] WP-1.1 Ticket domain + CRUD

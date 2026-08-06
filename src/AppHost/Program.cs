@@ -1,4 +1,5 @@
 using System.IO;
+
 using Aspire.Hosting.ApplicationModel;
 
 var builder = DistributedApplication.CreateBuilder(args);
@@ -58,6 +59,10 @@ var webHost = builder.AddProject<Projects.Web_Host>("web-host")
     .WaitFor(keycloak)
     .WaitFor(minio)
     .WithHttpHealthCheck("/health");
+
+builder.AddProject<Projects.Seeder>("seeder")
+    .WithReference(database)
+    .WaitFor(webHost);
 
 builder.AddViteApp("web", "../../web")
     .WithReference(webHost)

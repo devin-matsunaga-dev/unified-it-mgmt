@@ -20,6 +20,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\Seeder\Seeder.csproj" />
     <ProjectReference Include="..\Web.Host\Web.Host.csproj" />
   </ItemGroup>
 
