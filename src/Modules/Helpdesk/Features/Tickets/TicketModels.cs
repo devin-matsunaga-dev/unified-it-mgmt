@@ -26,6 +26,7 @@ public sealed record TicketResponse(
     TicketLevel Urgency,
     TicketLevel Impact,
     TicketPriority Priority,
+    string Status,
     string RequesterId,
     DateTimeOffset CreatedAt,
     DateTimeOffset UpdatedAt);
@@ -35,3 +36,14 @@ public sealed record TicketPageResponse(
     int Total,
     int Page,
     int PageSize);
+
+public sealed record TransitionTicketRequest(string TargetStatus, string? ResolutionNote);
+
+public sealed record TicketTransitionResponse(
+    Guid Id,
+    Guid TicketId,
+    string FromStatus,
+    string ToStatus,
+    string? ResolutionNote,
+    string ActorId,
+    DateTimeOffset OccurredAt);

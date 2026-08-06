@@ -6,6 +6,9 @@ namespace Modules.Helpdesk.Data;
 public sealed class HelpdeskDbContext(DbContextOptions<HelpdeskDbContext> options) : DbContext(options)
 {
     public DbSet<Ticket> Tickets => Set<Ticket>();
+    public DbSet<TicketStatus> TicketStatuses => Set<TicketStatus>();
+    public DbSet<TicketStatusTransition> TicketStatusTransitions => Set<TicketStatusTransition>();
+    public DbSet<TicketTransitionHistory> TicketTransitionHistory => Set<TicketTransitionHistory>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

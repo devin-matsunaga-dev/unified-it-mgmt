@@ -91,6 +91,49 @@ public static class TicketEndpoints
                 : Results.Ok(ticket);
         });
 
+        group.MapPost("/{id:guid}/transitions", async (
+            Guid id,
+            TransitionTicketRequest request,
+            ClaimsPrincipal user,
+            ITicketService service,
+            CancellationToken cancellationToken) =>
+        {
+            var validation = await new TransitionTicketRequestValidator().ValidateAsync(request, cancellationToken);
+            if (!validation.IsValid)
+            {
+                return Results.ValidationProblem(validation.ToDictionary());
+            }
+
+            var result = await service.TransitionAsync(id, request, user, cancellationToken);
+            return result.Outcome switch
+            {
+                TransitionTicketOutcome.Success => Results.Ok(result.Ticket),
+                TransitionTicketOutcome.NotFound => Results.Problem(
+                    statusCode: StatusCodes.Status404NotFound, title: "Ticket not found."),
+                TransitionTicketOutcome.UnknownStatus => Results.ValidationProblem(
+                    new Dictionary<string, string[]> { [nameof(request.TargetStatus)] = [result.Error!] }),
+                TransitionTicketOutcome.ResolutionNoteRequired => Results.ValidationProblem(
+                    new Dictionary<string, string[]> { [nameof(request.ResolutionNote)] = [result.Error!] }),
+                TransitionTicketOutcome.IllegalTransition => Results.Problem(
+                    statusCode: StatusCodes.Status409Conflict,
+                    title: "Ticket transition is not allowed.",
+                    detail: result.Error),
+                _ => throw new InvalidOperationException($"Unknown transition outcome '{result.Outcome}'."),
+            };
+        });
+
+        group.MapGet("/{id:guid}/transitions", async (
+            Guid id,
+            ClaimsPrincipal user,
+            ITicketService service,
+            CancellationToken cancellationToken) =>
+        {
+            var history = await service.GetTransitionHistoryAsync(id, user, cancellationToken);
+            return history is null
+                ? Results.Problem(statusCode: StatusCodes.Status404NotFound, title: "Ticket not found.")
+                : Results.Ok(history);
+        });
+
         return endpoints;
     }
 }

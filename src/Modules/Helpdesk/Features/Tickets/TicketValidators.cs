@@ -15,6 +15,19 @@ public sealed class CreateTicketRequestValidator : AbstractValidator<CreateTicke
     }
 }
 
+public sealed class TransitionTicketRequestValidator : AbstractValidator<TransitionTicketRequest>
+{
+    public TransitionTicketRequestValidator()
+    {
+        RuleFor(request => request.TargetStatus).NotEmpty().MaximumLength(50);
+        RuleFor(request => request.ResolutionNote).MaximumLength(10_000);
+        RuleFor(request => request.ResolutionNote)
+            .NotEmpty()
+            .When(request => string.Equals(request.TargetStatus, "Resolved", StringComparison.OrdinalIgnoreCase))
+            .WithMessage("A resolution note is required when resolving a ticket.");
+    }
+}
+
 public sealed class UpdateTicketRequestValidator : AbstractValidator<UpdateTicketRequest>
 {
     public UpdateTicketRequestValidator()

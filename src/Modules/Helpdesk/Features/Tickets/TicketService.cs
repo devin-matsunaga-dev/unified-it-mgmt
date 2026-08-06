@@ -29,6 +29,7 @@ public sealed class TicketService(
             Urgency = request.Urgency,
             Impact = request.Impact,
             Priority = TicketPriorityMatrix.Calculate(request.Urgency, request.Impact),
+            StatusId = DefaultTicketStatuses.NewId,
             RequesterId = requesterId,
             CreatedAt = now,
             UpdatedAt = now,
@@ -37,6 +38,7 @@ public sealed class TicketService(
         await using var transaction = await dbContext.Database.BeginTransactionAsync(cancellationToken);
         dbContext.Tickets.Add(ticket);
         await dbContext.SaveChangesAsync(cancellationToken);
+        await dbContext.Entry(ticket).Reference(item => item.Status).LoadAsync(cancellationToken);
         await publishEndpoint.Publish(new TicketCreated(
             Guid.CreateVersion7(), now, ticket.Id, ticket.Number, ticket.RequesterId,
             ticket.Type.ToString(), ticket.Priority.ToString()), cancellationToken);
@@ -103,9 +105,103 @@ public sealed class TicketService(
         return after;
     }
 
+    public async Task<TransitionTicketResult> TransitionAsync(
+        Guid id,
+        TransitionTicketRequest request,
+        ClaimsPrincipal actor,
+        CancellationToken cancellationToken)
+    {
+        var ticket = await VisibleTickets(actor).SingleOrDefaultAsync(item => item.Id == id, cancellationToken);
+        if (ticket is null)
+        {
+            return new(TransitionTicketOutcome.NotFound);
+        }
+
+        var targetStatus = await dbContext.TicketStatuses.SingleOrDefaultAsync(
+            status => status.Name.ToLower() == request.TargetStatus.Trim().ToLower(), cancellationToken);
+        if (targetStatus is null)
+        {
+            return new(TransitionTicketOutcome.UnknownStatus, Error: $"Status '{request.TargetStatus}' does not exist.");
+        }
+
+        var allowed = await dbContext.TicketStatusTransitions.AnyAsync(
+            transition => transition.FromStatusId == ticket.StatusId && transition.ToStatusId == targetStatus.Id,
+            cancellationToken);
+        if (!allowed)
+        {
+            return new(
+                TransitionTicketOutcome.IllegalTransition,
+                Error: $"Transition from '{ticket.Status.Name}' to '{targetStatus.Name}' is not allowed.");
+        }
+
+        var resolutionNote = string.IsNullOrWhiteSpace(request.ResolutionNote) ? null : request.ResolutionNote.Trim();
+        if (targetStatus.RequiresResolutionNote && resolutionNote is null)
+        {
+            return new(
+                TransitionTicketOutcome.ResolutionNoteRequired,
+                Error: $"A resolution note is required when transitioning to '{targetStatus.Name}'.");
+        }
+
+        var actorId = GetActorId(actor);
+        var occurredAt = DateTimeOffset.UtcNow;
+        var before = Map(ticket);
+        var history = new TicketTransitionHistory
+        {
+            Id = Guid.CreateVersion7(),
+            TicketId = ticket.Id,
+            FromStatusId = ticket.StatusId,
+            ToStatusId = targetStatus.Id,
+            ResolutionNote = resolutionNote,
+            ActorId = actorId,
+            OccurredAt = occurredAt,
+        };
+
+        await using var transaction = await dbContext.Database.BeginTransactionAsync(cancellationToken);
+        dbContext.TicketTransitionHistory.Add(history);
+        ticket.StatusId = targetStatus.Id;
+        ticket.Status = targetStatus;
+        ticket.UpdatedAt = occurredAt;
+        await dbContext.SaveChangesAsync(cancellationToken);
+        await publishEndpoint.Publish(new TicketStatusChanged(
+            Guid.CreateVersion7(), occurredAt, ticket.Id, ticket.Number,
+            before.Status, targetStatus.Name, actorId), cancellationToken);
+        await dbContext.SaveChangesAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+
+        var after = Map(ticket);
+        await auditService.WriteAsync(
+            actor, "StatusChanged", "Ticket", ticket.Id.ToString(), before, after, cancellationToken);
+        return new(TransitionTicketOutcome.Success, after);
+    }
+
+    public async Task<IReadOnlyList<TicketTransitionResponse>?> GetTransitionHistoryAsync(
+        Guid id,
+        ClaimsPrincipal actor,
+        CancellationToken cancellationToken)
+    {
+        if (!await VisibleTickets(actor).AnyAsync(ticket => ticket.Id == id, cancellationToken))
+        {
+            return null;
+        }
+
+        return await dbContext.TicketTransitionHistory
+            .Where(history => history.TicketId == id)
+            .OrderBy(history => history.OccurredAt)
+            .ThenBy(history => history.Id)
+            .Select(history => new TicketTransitionResponse(
+                history.Id,
+                history.TicketId,
+                history.FromStatus.Name,
+                history.ToStatus.Name,
+                history.ResolutionNote,
+                history.ActorId,
+                history.OccurredAt))
+            .ToListAsync(cancellationToken);
+    }
+
     private IQueryable<Ticket> VisibleTickets(ClaimsPrincipal actor)
     {
-        var query = dbContext.Tickets.AsQueryable();
+        var query = dbContext.Tickets.Include(ticket => ticket.Status).AsQueryable();
         return IsEndUser(actor) ? query.Where(ticket => ticket.RequesterId == GetActorId(actor)) : query;
     }
 
@@ -124,6 +220,7 @@ public sealed class TicketService(
         ticket.Urgency,
         ticket.Impact,
         ticket.Priority,
+        ticket.Status.Name,
         ticket.RequesterId,
         ticket.CreatedAt,
         ticket.UpdatedAt);

@@ -99,6 +99,7 @@ public sealed class TicketApiIntegrationTests : IAsyncLifetime
 
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
         Assert.Equal("application/problem+json", response.Content.Headers.ContentType?.MediaType);
+
     }
 
     [Fact]
@@ -110,6 +111,92 @@ public sealed class TicketApiIntegrationTests : IAsyncLifetime
         using var response = await _client!.SendAsync(request);
 
         Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task StatusWorkflow_LegalTransitions_PersistHistoryAuditAndOutboxEvent()
+    {
+        var created = await CreateTicketAsync("workflow-requester");
+        Assert.Equal("New", created.Status);
+
+        var triaged = await TransitionAsync(created.Id, "Triage");
+        var inProgress = await TransitionAsync(created.Id, "InProgress");
+
+        Assert.Equal("Triage", triaged.Status);
+        Assert.Equal("InProgress", inProgress.Status);
+
+        using var historyRequest = Authenticated(HttpMethod.Get, $"/api/tickets/{created.Id}/transitions");
+        using var historyResponse = await _client!.SendAsync(historyRequest);
+        var history = await historyResponse.Content.ReadFromJsonAsync<List<TransitionDto>>();
+
+        Assert.Equal(HttpStatusCode.OK, historyResponse.StatusCode);
+        Assert.NotNull(history);
+        Assert.Collection(
+            history,
+            transition =>
+            {
+                Assert.Equal("New", transition.FromStatus);
+                Assert.Equal("Triage", transition.ToStatus);
+            },
+            transition =>
+            {
+                Assert.Equal("Triage", transition.FromStatus);
+                Assert.Equal("InProgress", transition.ToStatus);
+            });
+
+        await using var scope = _application.Services.CreateAsyncScope();
+        var platformContext = scope.ServiceProvider.GetRequiredService<PlatformDbContext>();
+        Assert.Contains(
+            await platformContext.AuditEntries.Where(entry => entry.EntityId == created.Id.ToString()).ToListAsync(),
+            entry => entry.Action == "StatusChanged");
+        Assert.Contains(
+            await platformContext.Set<OutboxMessage>().ToListAsync(),
+            message => message.MessageType.Contains(nameof(Contracts.Events.TicketStatusChanged), StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task StatusWorkflow_IllegalTransition_ReturnsConflictWithoutHistory()
+    {
+        var created = await CreateTicketAsync("illegal-transition-requester");
+        using var request = Authenticated(HttpMethod.Post, $"/api/tickets/{created.Id}/transitions");
+        request.Content = JsonContent.Create(new { targetStatus = "Pending", resolutionNote = (string?)null });
+
+        using var response = await _client!.SendAsync(request);
+        var problem = await response.Content.ReadAsStringAsync();
+
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+        Assert.Equal("application/problem+json", response.Content.Headers.ContentType?.MediaType);
+        Assert.Contains("Transition from 'New' to 'Pending' is not allowed.", problem, StringComparison.Ordinal);
+
+        await using var scope = _application.Services.CreateAsyncScope();
+        var historyCount = await scope.ServiceProvider.GetRequiredService<HelpdeskDbContext>()
+            .TicketTransitionHistory.CountAsync(history => history.TicketId == created.Id);
+        Assert.Equal(0, historyCount);
+    }
+
+    [Fact]
+    public async Task StatusWorkflow_ResolveWithoutNote_ReturnsValidationProblem()
+    {
+        var created = await CreateTicketAsync("resolution-requester");
+        await TransitionAsync(created.Id, "Triage");
+        await TransitionAsync(created.Id, "InProgress");
+        await TransitionAsync(created.Id, "Pending");
+        using var request = Authenticated(HttpMethod.Post, $"/api/tickets/{created.Id}/transitions");
+        request.Content = JsonContent.Create(new { targetStatus = "Resolved", resolutionNote = "  " });
+
+        using var response = await _client!.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Equal("application/problem+json", response.Content.Headers.ContentType?.MediaType);
+
+        var resolved = await TransitionAsync(created.Id, "Resolved", "Replaced the failed print server.");
+        Assert.Equal("Resolved", resolved.Status);
+
+        using var historyRequest = Authenticated(HttpMethod.Get, $"/api/tickets/{created.Id}/transitions");
+        using var historyResponse = await _client.SendAsync(historyRequest);
+        var history = await historyResponse.Content.ReadFromJsonAsync<List<TransitionDto>>();
+        Assert.Equal(4, history?.Count);
+        Assert.Equal("Replaced the failed print server.", history?[^1].ResolutionNote);
     }
 
     [Fact]
@@ -140,6 +227,17 @@ public sealed class TicketApiIntegrationTests : IAsyncLifetime
         return Assert.IsType<TicketDto>(ticket);
     }
 
+    private async Task<TicketDto> TransitionAsync(Guid ticketId, string targetStatus, string? resolutionNote = null)
+    {
+        using var request = Authenticated(HttpMethod.Post, $"/api/tickets/{ticketId}/transitions");
+        request.Content = JsonContent.Create(new { targetStatus, resolutionNote });
+        using var response = await _client!.SendAsync(request);
+        var ticket = await response.Content.ReadFromJsonAsync<TicketDto>();
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        return Assert.IsType<TicketDto>(ticket);
+    }
+
     private static HttpRequestMessage Authenticated(HttpMethod method, string uri, string role = "Technician")
     {
         var request = new HttpRequestMessage(method, uri);
@@ -153,7 +251,9 @@ public sealed class TicketApiIntegrationTests : IAsyncLifetime
         await _application.DisposeAsync();
     }
 
-    private sealed record TicketDto(Guid Id, string Number, string Priority);
+    private sealed record TicketDto(Guid Id, string Number, string Priority, string Status);
+
+    private sealed record TransitionDto(string FromStatus, string ToStatus, string? ResolutionNote);
 
     private sealed class TicketApplication : WebApplicationFactory<Program>
     {

@@ -22,4 +22,29 @@ public interface ITicketService
         UpdateTicketRequest request,
         ClaimsPrincipal actor,
         CancellationToken cancellationToken);
+
+    Task<TransitionTicketResult> TransitionAsync(
+        Guid id,
+        TransitionTicketRequest request,
+        ClaimsPrincipal actor,
+        CancellationToken cancellationToken);
+
+    Task<IReadOnlyList<TicketTransitionResponse>?> GetTransitionHistoryAsync(
+        Guid id,
+        ClaimsPrincipal actor,
+        CancellationToken cancellationToken);
 }
+
+public enum TransitionTicketOutcome
+{
+    Success,
+    NotFound,
+    UnknownStatus,
+    IllegalTransition,
+    ResolutionNoteRequired,
+}
+
+public sealed record TransitionTicketResult(
+    TransitionTicketOutcome Outcome,
+    TicketResponse? Ticket = null,
+    string? Error = null);

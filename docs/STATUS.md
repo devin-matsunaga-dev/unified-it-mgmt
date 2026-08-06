@@ -5,9 +5,9 @@
 ## Current position
 
 - **Phase:** 1 — Helpdesk
-- **Last completed WP:** WP-1.1 (Ticket domain + CRUD)
-- **Current WP:** WP-1.2 (Status workflow engine)
-- **Current branch:** feat/wp-1.2-status-workflow
+- **Last completed WP:** WP-1.2 (Status workflow engine)
+- **Current WP:** WP-1.3 (Queues + assignment)
+- **Current branch:** feat/wp-1.3-queues-assignment
 - **Last tag:** —
 
 ## Platform versions (law — see WORKFLOW.md table for EOL dates)
@@ -36,7 +36,7 @@
 
 ### Phase 1 — Helpdesk
 - [x] WP-1.1 Ticket domain + CRUD (2026-08-06)
-- [ ] WP-1.2 Status workflow
+- [x] WP-1.2 Status workflow (2026-08-06)
 - [ ] WP-1.3 Queues + assignment
 - [ ] WP-1.4 Comments/worklogs/attachments
 - [ ] WP-1.5 SLA engine

@@ -10,6 +10,8 @@ public sealed class Ticket
     public TicketLevel Urgency { get; set; }
     public TicketLevel Impact { get; set; }
     public TicketPriority Priority { get; set; }
+    public Guid StatusId { get; set; }
+    public TicketStatus Status { get; set; } = null!;
     public string RequesterId { get; set; } = string.Empty;
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset UpdatedAt { get; set; }
