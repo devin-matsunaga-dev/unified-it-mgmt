@@ -53,6 +53,8 @@ var webHost = builder.AddProject<Projects.Web_Host>("web-host")
         "Authentication__Authority",
         ReferenceExpression.Create($"{keycloak.GetEndpoint("http")}/realms/it-platform"))
     .WithEnvironment("ConnectionStrings__minio", minio.GetEndpoint("api"))
+    .WithEnvironment("ObjectStorage__AccessKey", minioAccessKey)
+    .WithEnvironment("ObjectStorage__SecretKey", minioSecretKey)
     .WaitFor(database)
     .WaitFor(redis)
     .WaitFor(rabbitMq)

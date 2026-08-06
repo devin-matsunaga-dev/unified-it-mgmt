@@ -30,7 +30,8 @@ public sealed class TicketApiIntegrationTests : IAsyncLifetime
     {
         _application = new TicketApplication(
             infrastructure.PostgresConnectionString,
-            infrastructure.RabbitMqConnectionString);
+            infrastructure.RabbitMqConnectionString,
+            infrastructure.MinioConnectionString);
     }
 
     public async Task InitializeAsync()
@@ -268,6 +269,100 @@ public sealed class TicketApiIntegrationTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Comments_InternalAndPublic_EndUserReadsOnlyPublicComment()
+    {
+        var ticket = await CreateTicketAsync("comment-requester");
+        await AddCommentAsync(ticket.Id, "Visible reply", false);
+        await AddCommentAsync(ticket.Id, "Technician-only note", true);
+
+        using var technicianRequest = Authenticated(HttpMethod.Get, $"/api/tickets/{ticket.Id}/comments");
+        using var technicianResponse = await _client!.SendAsync(technicianRequest);
+        var technicianComments = await technicianResponse.Content.ReadFromJsonAsync<List<CommentDto>>();
+        Assert.Equal(2, technicianComments?.Count);
+
+        using var endUserRequest = Authenticated(
+            HttpMethod.Get, $"/api/tickets/{ticket.Id}/comments", "EndUser", "comment-requester");
+        using var endUserResponse = await _client.SendAsync(endUserRequest);
+        var endUserComments = await endUserResponse.Content.ReadFromJsonAsync<List<CommentDto>>();
+
+        Assert.Equal(HttpStatusCode.OK, endUserResponse.StatusCode);
+        var comment = Assert.Single(Assert.IsType<List<CommentDto>>(endUserComments));
+        Assert.Equal("Visible reply", comment.Body);
+        Assert.False(comment.IsInternal);
+    }
+
+    [Fact]
+    public async Task Comments_EndUserCreatesInternalComment_ReturnsForbidden()
+    {
+        var ticket = await CreateTicketAsync("internal-comment-requester");
+        using var request = Authenticated(
+            HttpMethod.Post, $"/api/tickets/{ticket.Id}/comments", "EndUser", "internal-comment-requester");
+        request.Content = JsonContent.Create(new { body = "Should be rejected", isInternal = true });
+
+        using var response = await _client!.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        Assert.Equal("application/problem+json", response.Content.Headers.ContentType?.MediaType);
+    }
+
+    [Fact]
+    public async Task Worklogs_ValidAndInvalidMinutes_PersistsValidEntryAndRejectsInvalidEntry()
+    {
+        var ticket = await CreateTicketAsync("worklog-requester");
+        using var validRequest = Authenticated(HttpMethod.Post, $"/api/tickets/{ticket.Id}/worklogs");
+        validRequest.Content = JsonContent.Create(new { minutes = 45, note = "Diagnosed printer queue." });
+        using var validResponse = await _client!.SendAsync(validRequest);
+        Assert.Equal(HttpStatusCode.Created, validResponse.StatusCode);
+
+        using var invalidRequest = Authenticated(HttpMethod.Post, $"/api/tickets/{ticket.Id}/worklogs");
+        invalidRequest.Content = JsonContent.Create(new { minutes = 0, note = "Invalid" });
+        using var invalidResponse = await _client.SendAsync(invalidRequest);
+        Assert.Equal(HttpStatusCode.BadRequest, invalidResponse.StatusCode);
+
+        using var listRequest = Authenticated(HttpMethod.Get, $"/api/tickets/{ticket.Id}/worklogs");
+        using var listResponse = await _client.SendAsync(listRequest);
+        var worklogs = await listResponse.Content.ReadFromJsonAsync<List<WorklogDto>>();
+        Assert.Equal(45, Assert.Single(Assert.IsType<List<WorklogDto>>(worklogs)).Minutes);
+    }
+
+    [Fact]
+    public async Task Attachments_TenMegabyteAllowedFile_UploadsAndDownloadsFromMinio()
+    {
+        var ticket = await CreateTicketAsync("attachment-requester");
+        var expected = new byte[10 * 1024 * 1024];
+        Random.Shared.NextBytes(expected);
+        using var request = Authenticated(HttpMethod.Post, $"/api/tickets/{ticket.Id}/attachments");
+        request.Content = Multipart(expected, "evidence.pdf", "application/pdf");
+
+        using var response = await _client!.SendAsync(request);
+        var attachment = await response.Content.ReadFromJsonAsync<AttachmentDto>();
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        Assert.Equal(expected.Length, attachment?.Size);
+
+        using var downloadRequest = Authenticated(HttpMethod.Get, Assert.IsType<AttachmentDto>(attachment).DownloadUrl);
+        using var downloadResponse = await _client.SendAsync(downloadRequest);
+        Assert.Equal(HttpStatusCode.OK, downloadResponse.StatusCode);
+        Assert.Equal(expected, await downloadResponse.Content.ReadAsByteArrayAsync());
+        Assert.Contains("evidence.pdf", downloadResponse.Content.Headers.ContentDisposition?.FileNameStar, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Attachments_BlockedExtension_ReturnsValidationProblemWithoutMetadata()
+    {
+        var ticket = await CreateTicketAsync("blocked-attachment-requester");
+        using var request = Authenticated(HttpMethod.Post, $"/api/tickets/{ticket.Id}/attachments");
+        request.Content = Multipart([1, 2, 3], "malware.exe", "application/octet-stream");
+
+        using var response = await _client!.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Equal("application/problem+json", response.Content.Headers.ContentType?.MediaType);
+        await using var scope = _application.Services.CreateAsyncScope();
+        Assert.False(await scope.ServiceProvider.GetRequiredService<HelpdeskDbContext>()
+            .TicketAttachments.AnyAsync(attachment => attachment.TicketId == ticket.Id));
+    }
+
+    [Fact]
     public async Task HelpdeskMigrations_CurrentModel_HasNoPendingChanges()
     {
         await using var scope = _application.Services.CreateAsyncScope();
@@ -294,6 +389,23 @@ public sealed class TicketApiIntegrationTests : IAsyncLifetime
 
         Assert.Equal(HttpStatusCode.Created, response.StatusCode);
         return Assert.IsType<TicketDto>(ticket);
+    }
+
+    private async Task AddCommentAsync(Guid ticketId, string body, bool isInternal)
+    {
+        using var request = Authenticated(HttpMethod.Post, $"/api/tickets/{ticketId}/comments");
+        request.Content = JsonContent.Create(new { body, isInternal });
+        using var response = await _client!.SendAsync(request);
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+    }
+
+    private static MultipartFormDataContent Multipart(byte[] content, string fileName, string contentType)
+    {
+        var multipart = new MultipartFormDataContent();
+        var file = new ByteArrayContent(content);
+        file.Headers.ContentType = new(contentType);
+        multipart.Add(file, "file", fileName);
+        return multipart;
     }
 
     private async Task<Guid> CreateQueueWithMembersAsync(params string[] technicianIds)
@@ -362,6 +474,9 @@ public sealed class TicketApiIntegrationTests : IAsyncLifetime
     private sealed record QueueDto(Guid Id);
     private sealed record TicketPageDto(IReadOnlyList<TicketDto> Items, int Total);
     private sealed record AssignmentDto(string? FromTechnicianId, string ToTechnicianId, string Kind);
+    private sealed record CommentDto(string Body, bool IsInternal);
+    private sealed record WorklogDto(int Minutes);
+    private sealed record AttachmentDto(Guid Id, long Size, string DownloadUrl);
 
     private sealed record TransitionDto(string FromStatus, string ToStatus, string? ResolutionNote);
 
@@ -369,11 +484,13 @@ public sealed class TicketApiIntegrationTests : IAsyncLifetime
     {
         private readonly string _connectionString;
         private readonly string _rabbitMqConnectionString;
+        private readonly string _minioConnectionString;
 
-        public TicketApplication(string connectionString, string rabbitMqConnectionString)
+        public TicketApplication(string connectionString, string rabbitMqConnectionString, string minioConnectionString)
         {
             _connectionString = connectionString;
             _rabbitMqConnectionString = rabbitMqConnectionString;
+            _minioConnectionString = minioConnectionString;
             Environment.SetEnvironmentVariable("ConnectionStrings__database", connectionString);
             Environment.SetEnvironmentVariable("ConnectionStrings__rabbitmq", rabbitMqConnectionString);
             Environment.SetEnvironmentVariable("Platform__EnableMessageBus", "true");
@@ -390,6 +507,9 @@ public sealed class TicketApiIntegrationTests : IAsyncLifetime
                     ["Authentication:PostLogoutRedirectUri"] = "https://app.example.test/",
                     ["ConnectionStrings:database"] = _connectionString,
                     ["ConnectionStrings:rabbitmq"] = _rabbitMqConnectionString,
+                    ["ConnectionStrings:minio"] = _minioConnectionString,
+                    ["ObjectStorage:AccessKey"] = "minioadmin",
+                    ["ObjectStorage:SecretKey"] = "minio-test-password",
                     ["Platform:ApplyMigrations"] = "false",
                     ["Platform:EnableMessageBus"] = "true",
                     ["Platform:EnableScheduler"] = "false",

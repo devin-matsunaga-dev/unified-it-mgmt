@@ -13,6 +13,9 @@ public sealed class HelpdeskDbContext(DbContextOptions<HelpdeskDbContext> option
     public DbSet<TeamMember> TeamMembers => Set<TeamMember>();
     public DbSet<TicketQueue> TicketQueues => Set<TicketQueue>();
     public DbSet<TicketAssignmentHistory> TicketAssignmentHistory => Set<TicketAssignmentHistory>();
+    public DbSet<TicketComment> TicketComments => Set<TicketComment>();
+    public DbSet<TicketWorklog> TicketWorklogs => Set<TicketWorklog>();
+    public DbSet<TicketAttachment> TicketAttachments => Set<TicketAttachment>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

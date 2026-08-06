@@ -16,3 +16,5 @@
 - WP-1.1: no new architectural decisions; ticket storage, auditing, and event publication follow the existing module-schema and Platform outbox architecture (2026-08-06)
 - WP-1.2: no new architectural decisions; persisted workflow configuration, guarded transitions, history, auditing, and outbox publication follow the existing Helpdesk and Platform patterns (2026-08-06)
 - WP-1.3: no new architectural decisions; team-owned queues, persisted round-robin state, assignment history, auditing, and technician-scoped queries follow the existing Helpdesk patterns (2026-08-06)
+- WP-1.4: chose a 25 MB attachment ceiling with an explicit document/image/archive extension and media-type allowlist because the required 10 MB upload needs headroom while executable and unknown formats must fail closed (2026-08-06)
+- WP-1.4: chose private MinIO objects served through authorized API downloads because ticket visibility must be enforced for every attachment access (2026-08-06)

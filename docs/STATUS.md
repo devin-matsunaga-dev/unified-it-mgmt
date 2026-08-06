@@ -5,9 +5,9 @@
 ## Current position
 
 - **Phase:** 1 — Helpdesk
-- **Last completed WP:** WP-1.3 (Queues + assignment)
-- **Current WP:** WP-1.4 (Comments, worklogs, attachments)
-- **Current branch:** feat/wp-1.4-comments-worklogs-attachments
+- **Last completed WP:** WP-1.4 (Comments, worklogs, attachments)
+- **Current WP:** WP-1.5 (SLA engine)
+- **Current branch:** feat/wp-1.5-sla-engine
 - **Last tag:** —
 
 ## Platform versions (law — see WORKFLOW.md table for EOL dates)
@@ -38,7 +38,7 @@
 - [x] WP-1.1 Ticket domain + CRUD (2026-08-06)
 - [x] WP-1.2 Status workflow (2026-08-06)
 - [x] WP-1.3 Queues + assignment (2026-08-06)
-- [ ] WP-1.4 Comments/worklogs/attachments
+- [x] WP-1.4 Comments/worklogs/attachments (2026-08-06)
 - [ ] WP-1.5 SLA engine
 - [ ] WP-1.6 Email-to-ticket
 - [ ] WP-1.7 Agent ticket UI

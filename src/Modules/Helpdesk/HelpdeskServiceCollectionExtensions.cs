@@ -4,6 +4,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Modules.Helpdesk.Data;
 using Modules.Helpdesk.Features.Tickets;
 using Modules.Helpdesk.Features.Assignments;
+using Modules.Helpdesk.Features.Interactions;
 
 namespace Modules.Helpdesk;
 
@@ -21,6 +22,9 @@ public static class HelpdeskServiceCollectionExtensions
         });
         services.AddScoped<ITicketService, TicketService>();
         services.AddScoped<IAssignmentService, AssignmentService>();
+        services.AddScoped<IInteractionService, InteractionService>();
+        services.AddSingleton<IAttachmentStorage, MinioAttachmentStorage>();
+        services.AddSingleton<IAntivirusScanner, NoOpAntivirusScanner>();
 
         return services;
     }
