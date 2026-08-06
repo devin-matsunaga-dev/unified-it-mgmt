@@ -18,3 +18,7 @@
 - WP-1.3: no new architectural decisions; team-owned queues, persisted round-robin state, assignment history, auditing, and technician-scoped queries follow the existing Helpdesk patterns (2026-08-06)
 - WP-1.4: chose a 25 MB attachment ceiling with an explicit document/image/archive extension and media-type allowlist because the required 10 MB upload needs headroom while executable and unknown formats must fail closed (2026-08-06)
 - WP-1.4: chose private MinIO objects served through authorized API downloads because ticket visibility must be enforced for every attachment access (2026-08-06)
+- WP-1.5: chose persisted elapsed business seconds plus an active interval over wall-clock deadlines because Pending pauses and calendar changes must not consume SLA time (2026-08-07)
+- WP-1.5: chose a per-policy warning percentage constrained to 1–99 because different service tiers need configurable lead time before breach (2026-08-07)
+- WP-1.5: chose priority-only matching for currently uncategorized tickets while persisting an optional category selector because ticket categories are introduced by WP-1.9 (2026-08-07)
+- WP-1.5: chose resolution-breach reassignment to the next ordered queue technician because it extends the established round-robin ownership model without adding a second escalation topology (2026-08-07)

@@ -16,6 +16,9 @@ public sealed class HelpdeskDbContext(DbContextOptions<HelpdeskDbContext> option
     public DbSet<TicketComment> TicketComments => Set<TicketComment>();
     public DbSet<TicketWorklog> TicketWorklogs => Set<TicketWorklog>();
     public DbSet<TicketAttachment> TicketAttachments => Set<TicketAttachment>();
+    public DbSet<BusinessHoursCalendar> BusinessHoursCalendars => Set<BusinessHoursCalendar>();
+    public DbSet<SlaPolicy> SlaPolicies => Set<SlaPolicy>();
+    public DbSet<TicketSla> TicketSlas => Set<TicketSla>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

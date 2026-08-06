@@ -33,6 +33,7 @@ public sealed class TicketStatusTransitionConfiguration : IEntityTypeConfigurati
             new TicketStatusTransition { FromStatusId = DefaultTicketStatuses.NewId, ToStatusId = DefaultTicketStatuses.TriageId },
             new TicketStatusTransition { FromStatusId = DefaultTicketStatuses.TriageId, ToStatusId = DefaultTicketStatuses.InProgressId },
             new TicketStatusTransition { FromStatusId = DefaultTicketStatuses.InProgressId, ToStatusId = DefaultTicketStatuses.PendingId },
+            new TicketStatusTransition { FromStatusId = DefaultTicketStatuses.PendingId, ToStatusId = DefaultTicketStatuses.InProgressId },
             new TicketStatusTransition { FromStatusId = DefaultTicketStatuses.PendingId, ToStatusId = DefaultTicketStatuses.ResolvedId },
             new TicketStatusTransition { FromStatusId = DefaultTicketStatuses.ResolvedId, ToStatusId = DefaultTicketStatuses.ClosedId });
     }

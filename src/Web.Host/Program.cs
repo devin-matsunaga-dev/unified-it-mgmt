@@ -5,6 +5,7 @@ using Modules.Helpdesk.Data;
 using Modules.Helpdesk.Features.Tickets;
 using Modules.Helpdesk.Features.Assignments;
 using Modules.Helpdesk.Features.Interactions;
+using Modules.Helpdesk.Features.Sla;
 using Platform;
 using Platform.Auditing;
 using Platform.Data;
@@ -57,6 +58,7 @@ app.MapSystemPingEndpoints();
 app.MapTicketEndpoints();
 app.MapAssignmentEndpoints();
 app.MapInteractionEndpoints();
+app.MapSlaEndpoints();
 
 app.Run();
 

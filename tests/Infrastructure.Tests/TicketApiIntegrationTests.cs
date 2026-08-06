@@ -16,7 +16,9 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Modules.Helpdesk.Data;
 using Modules.Helpdesk.Features.Tickets;
+using Modules.Helpdesk.Features.Sla;
 using Platform.Data;
+using Platform.Notifications;
 
 namespace Infrastructure.Tests;
 
@@ -371,6 +373,107 @@ public sealed class TicketApiIntegrationTests : IAsyncLifetime
         Assert.False(dbContext.Database.HasPendingModelChanges());
     }
 
+    [Fact]
+    public async Task SlaClock_PendingPausesResumeContinuesAndSchedulerEscalates()
+    {
+        var queueId = await CreateQueueWithMembersAsync("sla-tech-a", "sla-tech-b");
+        var calendarId = await CreateSlaCalendarAsync();
+        await CreateSlaPolicyAsync(calendarId);
+        var ticket = await CreateTicketAsync("sla-requester", queueId);
+
+        await TransitionAsync(ticket.Id, "Triage");
+        await TransitionAsync(ticket.Id, "InProgress");
+        await using (var scope = _application.Services.CreateAsyncScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<HelpdeskDbContext>();
+            var sla = await db.TicketSlas.SingleAsync(item => item.TicketId == ticket.Id);
+            sla.ActiveSince = DateTimeOffset.UtcNow.AddMinutes(-2);
+            await db.SaveChangesAsync();
+        }
+        await TransitionAsync(ticket.Id, "Pending");
+        var pausedOne = await GetSlaAsync(ticket.Id);
+        await Task.Delay(100);
+        var pausedTwo = await GetSlaAsync(ticket.Id);
+        Assert.True(pausedOne.IsPaused);
+        Assert.InRange(Math.Abs(pausedOne.ResolutionRemainingSeconds - pausedTwo.ResolutionRemainingSeconds), 0, 0.01);
+
+        await TransitionAsync(ticket.Id, "InProgress");
+        await Task.Delay(100);
+        var resumed = await GetSlaAsync(ticket.Id);
+        Assert.False(resumed.IsPaused);
+        Assert.True(resumed.ResolutionRemainingSeconds < pausedTwo.ResolutionRemainingSeconds);
+
+        await using (var scope = _application.Services.CreateAsyncScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<HelpdeskDbContext>();
+            var sla = await db.TicketSlas.SingleAsync(item => item.TicketId == ticket.Id);
+            sla.AccumulatedBusinessSeconds = 360;
+            sla.ActiveSince = DateTimeOffset.UtcNow;
+            await db.SaveChangesAsync();
+            await scope.ServiceProvider.GetRequiredService<ISlaService>().EvaluateAsync(DateTimeOffset.UtcNow, default);
+        }
+
+        await using var verifyScope = _application.Services.CreateAsyncScope();
+        var escalated = await verifyScope.ServiceProvider.GetRequiredService<HelpdeskDbContext>().Tickets
+            .SingleAsync(item => item.Id == ticket.Id);
+        Assert.Equal("sla-tech-b", escalated.AssignedTechnicianId);
+        Assert.Contains(_application.Notifications.Messages, item => item.Template.Name == "SlaWarning");
+        Assert.Contains(_application.Notifications.Messages, item => item.Template.Name == "SlaEscalation");
+        var audits = await verifyScope.ServiceProvider.GetRequiredService<PlatformDbContext>().AuditEntries
+            .Where(item => item.EntityType == "TicketSla").Select(item => item.Action).ToListAsync();
+        Assert.Contains("WarningRaised", audits);
+        Assert.Contains("Breached", audits);
+    }
+
+    [Fact]
+    public async Task SlaCalendar_EndBeforeStart_ReturnsValidationProblem()
+    {
+        using var request = Authenticated(HttpMethod.Post, "/api/sla/calendars", "Admin");
+        request.Content = JsonContent.Create(new
+        {
+            name = $"Invalid {Guid.NewGuid():N}", timeZoneId = "UTC", workingDays = "Weekdays",
+            startTime = "17:00:00", endTime = "09:00:00",
+        });
+        using var response = await _client!.SendAsync(request);
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Equal("application/problem+json", response.Content.Headers.ContentType?.MediaType);
+    }
+
+    private async Task<Guid> CreateSlaCalendarAsync()
+    {
+        using var request = Authenticated(HttpMethod.Post, "/api/sla/calendars", "Admin");
+        request.Content = JsonContent.Create(new
+        {
+            name = $"24x7 {Guid.NewGuid():N}", timeZoneId = "UTC", workingDays = 127,
+            startTime = "00:00:00", endTime = "23:59:59",
+        });
+        using var response = await _client!.SendAsync(request);
+        var calendar = await response.Content.ReadFromJsonAsync<CalendarDto>();
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        return Assert.IsType<CalendarDto>(calendar).Id;
+    }
+
+    private async Task CreateSlaPolicyAsync(Guid calendarId)
+    {
+        using var request = Authenticated(HttpMethod.Post, "/api/sla/policies", "Admin");
+        request.Content = JsonContent.Create(new
+        {
+            name = $"Critical five minute {Guid.NewGuid():N}", priority = "Critical",
+            responseTargetMinutes = 5, resolutionTargetMinutes = 5, warningPercent = 80, calendarId,
+        });
+        using var response = await _client!.SendAsync(request);
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+    }
+
+    private async Task<SlaDto> GetSlaAsync(Guid ticketId)
+    {
+        using var request = Authenticated(HttpMethod.Get, $"/api/tickets/{ticketId}/sla");
+        using var response = await _client!.SendAsync(request);
+        var sla = await response.Content.ReadFromJsonAsync<SlaDto>();
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        return Assert.IsType<SlaDto>(sla);
+    }
+
     private async Task<TicketDto> CreateTicketAsync(string requesterId, Guid? queueId = null)
     {
         using var request = Authenticated(HttpMethod.Post, "/api/tickets");
@@ -479,12 +582,15 @@ public sealed class TicketApiIntegrationTests : IAsyncLifetime
     private sealed record AttachmentDto(Guid Id, long Size, string DownloadUrl);
 
     private sealed record TransitionDto(string FromStatus, string ToStatus, string? ResolutionNote);
+    private sealed record CalendarDto(Guid Id);
+    private sealed record SlaDto(bool IsPaused, double ResolutionRemainingSeconds);
 
     private sealed class TicketApplication : WebApplicationFactory<Program>
     {
         private readonly string _connectionString;
         private readonly string _rabbitMqConnectionString;
         private readonly string _minioConnectionString;
+        public RecordingNotificationService Notifications { get; } = new();
 
         public TicketApplication(string connectionString, string rabbitMqConnectionString, string minioConnectionString)
         {
@@ -517,6 +623,8 @@ public sealed class TicketApiIntegrationTests : IAsyncLifetime
             builder.ConfigureServices(services =>
             {
                 services.RemoveAll<IHostedService>();
+                services.RemoveAll<INotificationService>();
+                services.AddSingleton<INotificationService>(Notifications);
                 services.AddAuthentication(options =>
                     {
                         options.DefaultAuthenticateScheme = TicketAuthenticationHandler.TestScheme;
@@ -527,6 +635,16 @@ public sealed class TicketApiIntegrationTests : IAsyncLifetime
                         TicketAuthenticationHandler.TestScheme,
                         _ => { });
             });
+        }
+
+        public sealed class RecordingNotificationService : INotificationService
+        {
+            public List<NotificationMessage> Messages { get; } = [];
+            public Task SendAsync(NotificationMessage message, CancellationToken cancellationToken = default)
+            {
+                Messages.Add(message);
+                return Task.CompletedTask;
+            }
         }
 
         protected override void Dispose(bool disposing)

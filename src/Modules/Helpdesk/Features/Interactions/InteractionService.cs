@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
 using Modules.Helpdesk.Data;
 using Platform.Auditing;
+using Modules.Helpdesk.Features.Sla;
 
 namespace Modules.Helpdesk.Features.Interactions;
 
@@ -11,7 +12,8 @@ public sealed class InteractionService(
     HelpdeskDbContext dbContext,
     IAttachmentStorage attachmentStorage,
     IAntivirusScanner antivirusScanner,
-    IAuditService auditService) : IInteractionService
+    IAuditService auditService,
+    ISlaService slaService) : IInteractionService
 {
     public const long MaximumAttachmentSize = 25 * 1024 * 1024;
     private static readonly HashSet<string> AllowedExtensions = new(StringComparer.OrdinalIgnoreCase)
@@ -53,6 +55,10 @@ public sealed class InteractionService(
         };
         dbContext.TicketComments.Add(comment);
         await dbContext.SaveChangesAsync(cancellationToken);
+        if (!request.IsInternal && !IsEndUser(actor))
+        {
+            await slaService.MarkRespondedAsync(ticketId, comment.CreatedAt, cancellationToken);
+        }
         var response = Map(comment);
         await auditService.WriteAsync(
             actor, "Created", "TicketComment", comment.Id.ToString(), null, response, cancellationToken);

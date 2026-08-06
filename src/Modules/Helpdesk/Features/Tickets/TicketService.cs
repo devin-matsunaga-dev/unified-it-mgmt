@@ -5,13 +5,15 @@ using MassTransit;
 using Microsoft.EntityFrameworkCore;
 using Modules.Helpdesk.Data;
 using Platform.Auditing;
+using Modules.Helpdesk.Features.Sla;
 
 namespace Modules.Helpdesk.Features.Tickets;
 
 public sealed class TicketService(
     HelpdeskDbContext dbContext,
     IPublishEndpoint publishEndpoint,
-    IAuditService auditService) : ITicketService
+    IAuditService auditService,
+    ISlaService slaService) : ITicketService
 {
     public async Task<TicketResponse?> CreateAsync(
         CreateTicketRequest request,
@@ -74,6 +76,7 @@ public sealed class TicketService(
         }
         await dbContext.SaveChangesAsync(cancellationToken);
         await dbContext.Entry(ticket).Reference(item => item.Status).LoadAsync(cancellationToken);
+        await slaService.StartAsync(ticket, now, cancellationToken);
         await publishEndpoint.Publish(new TicketCreated(
             Guid.CreateVersion7(), now, ticket.Id, ticket.Number, ticket.RequesterId,
             ticket.Type.ToString(), ticket.Priority.ToString()), cancellationToken);
@@ -180,6 +183,7 @@ public sealed class TicketService(
         var actorId = GetActorId(actor);
         var occurredAt = DateTimeOffset.UtcNow;
         var before = Map(ticket);
+        var fromStatusId = ticket.StatusId;
         var history = new TicketTransitionHistory
         {
             Id = Guid.CreateVersion7(),
@@ -196,6 +200,7 @@ public sealed class TicketService(
         ticket.StatusId = targetStatus.Id;
         ticket.Status = targetStatus;
         ticket.UpdatedAt = occurredAt;
+        await slaService.RecordStatusChangeAsync(ticket, fromStatusId, occurredAt, cancellationToken);
         await dbContext.SaveChangesAsync(cancellationToken);
         await publishEndpoint.Publish(new TicketStatusChanged(
             Guid.CreateVersion7(), occurredAt, ticket.Id, ticket.Number,
