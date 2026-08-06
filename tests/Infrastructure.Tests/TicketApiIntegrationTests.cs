@@ -17,6 +17,7 @@ using Microsoft.Extensions.Options;
 using Modules.Helpdesk.Data;
 using Modules.Helpdesk.Features.Tickets;
 using Modules.Helpdesk.Features.Sla;
+using Modules.Helpdesk.Features.Email;
 using Platform.Data;
 using Platform.Notifications;
 
@@ -82,6 +83,69 @@ public sealed class TicketApiIntegrationTests : IAsyncLifetime
         var messages = await platformContext.Set<OutboxMessage>().ToListAsync();
         Assert.Contains(messages, message => message.MessageType.Contains(nameof(Contracts.Events.TicketCreated), StringComparison.Ordinal));
         Assert.Contains(messages, message => message.MessageType.Contains(nameof(Contracts.Events.TicketUpdated), StringComparison.Ordinal));
+        Assert.Contains(_application.Notifications.Messages, message => message.Template.Name == "TicketCreated");
+        Assert.Contains(_application.Notifications.Messages, message => message.Template.Name == "TicketUpdated");
+    }
+
+    [Fact]
+    public async Task EmailIngestion_NewMessageCreatesTicketAttachmentAndDeduplicates()
+    {
+        await using var scope = _application.Services.CreateAsyncScope();
+        var service = scope.ServiceProvider.GetRequiredService<IEmailIngestionService>();
+        var message = new InboundEmailMessage(
+            "101", $"mail-{Guid.NewGuid():N}@example.test", "requester@example.test", "Printer is offline",
+            "The third-floor printer cannot be reached.", DateTimeOffset.UtcNow, [],
+            [new InboundEmailAttachment("diagnostic.txt", "text/plain", "ping failed"u8.ToArray())]);
+
+        var first = await service.ProcessAsync(message, CancellationToken.None);
+        var duplicate = await service.ProcessAsync(message, CancellationToken.None);
+
+        Assert.Equal(EmailIngestionOutcome.CreatedTicket, first.Outcome);
+        Assert.Equal(EmailIngestionOutcome.Duplicate, duplicate.Outcome);
+        var dbContext = scope.ServiceProvider.GetRequiredService<HelpdeskDbContext>();
+        var ticket = await dbContext.Tickets.SingleAsync(item => item.Id == first.TicketId);
+        Assert.Equal(message.Body, ticket.Description);
+        Assert.Equal(message.Sender, ticket.RequesterId);
+        Assert.Single(await dbContext.TicketAttachments.Where(item => item.TicketId == ticket.Id).ToListAsync());
+        Assert.Single(await dbContext.TicketEmails.Where(item => item.TicketId == ticket.Id).ToListAsync());
+    }
+
+    [Fact]
+    public async Task EmailIngestion_ReplyHeaderAddsPublicCommentToExistingTicket()
+    {
+        await using var scope = _application.Services.CreateAsyncScope();
+        var service = scope.ServiceProvider.GetRequiredService<IEmailIngestionService>();
+        var original = await service.ProcessAsync(new InboundEmailMessage(
+            "201", $"mail-{Guid.NewGuid():N}@example.test", "thread@example.test", "VPN unavailable",
+            "Cannot connect.", DateTimeOffset.UtcNow, [], []), CancellationToken.None);
+        var ticketId = Assert.IsType<Guid>(original.TicketId);
+
+        var reply = await service.ProcessAsync(new InboundEmailMessage(
+            "202", $"mail-{Guid.NewGuid():N}@example.test", "thread@example.test", "Re: VPN unavailable",
+            "It fails with error 720.", DateTimeOffset.UtcNow,
+            [$"<ticket-{ticketId:N}@it-platform.local>"], []), CancellationToken.None);
+
+        Assert.Equal(EmailIngestionOutcome.AddedComment, reply.Outcome);
+        var dbContext = scope.ServiceProvider.GetRequiredService<HelpdeskDbContext>();
+        var comment = await dbContext.TicketComments.SingleAsync(item => item.TicketId == ticketId);
+        Assert.Equal("It fails with error 720.", comment.Body);
+        Assert.False(comment.IsInternal);
+    }
+
+    [Fact]
+    public async Task EmailIngestion_MissingBodyRejectsWithoutCreatingTicket()
+    {
+        await using var scope = _application.Services.CreateAsyncScope();
+        var service = scope.ServiceProvider.GetRequiredService<IEmailIngestionService>();
+        var dbContext = scope.ServiceProvider.GetRequiredService<HelpdeskDbContext>();
+        var before = await dbContext.Tickets.CountAsync();
+
+        var result = await service.ProcessAsync(new InboundEmailMessage(
+            "301", $"mail-{Guid.NewGuid():N}@example.test", "invalid@example.test", "Empty", "",
+            DateTimeOffset.UtcNow, [], []), CancellationToken.None);
+
+        Assert.Equal(EmailIngestionOutcome.Rejected, result.Outcome);
+        Assert.Equal(before, await dbContext.Tickets.CountAsync());
     }
 
     [Fact]
@@ -155,6 +219,20 @@ public sealed class TicketApiIntegrationTests : IAsyncLifetime
         Assert.Contains(
             await platformContext.Set<OutboxMessage>().ToListAsync(),
             message => message.MessageType.Contains(nameof(Contracts.Events.TicketStatusChanged), StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task StatusWorkflow_Resolved_SendsResolvedNotification()
+    {
+        var created = await CreateTicketAsync("resolved@example.test");
+        await TransitionAsync(created.Id, "Triage");
+        await TransitionAsync(created.Id, "InProgress");
+        await TransitionAsync(created.Id, "Pending");
+        var resolved = await TransitionAsync(created.Id, "Resolved", "Connectivity restored.");
+
+        Assert.Equal("Resolved", resolved.Status);
+        Assert.Contains(_application.Notifications.Messages,
+            message => message.Template.Name == "TicketResolved" && message.Recipient == "resolved@example.test");
     }
 
     [Fact]

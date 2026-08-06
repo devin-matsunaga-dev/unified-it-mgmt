@@ -44,6 +44,19 @@ var minio = builder.AddContainer("minio", "quay.io/minio/minio", "RELEASE.2025-0
     .WithVolume("it-platform-minio-data", "/data")
     .WithHttpHealthCheck("/minio/health/live", endpointName: "api");
 
+var inboundMail = builder.AddContainer("inbound-mail", "greenmail/standalone", "2.1.11")
+    .WithEnvironment(
+        "GREENMAIL_OPTS",
+        "-Dgreenmail.setup.test.all -Dgreenmail.hostname=0.0.0.0 " +
+        "-Dgreenmail.users=helpdesk:helpdesk@it-platform.local -Dgreenmail.users.login=email")
+    .WithEndpoint(targetPort: 3025, name: "smtp")
+    .WithEndpoint(targetPort: 3143, name: "imap")
+    .WithHttpEndpoint(targetPort: 8080, name: "api");
+
+var mailhog = builder.AddContainer("mailhog", "mailhog/mailhog", "v1.0.1")
+    .WithEndpoint(targetPort: 1025, name: "smtp")
+    .WithHttpEndpoint(targetPort: 8025, name: "http");
+
 var webHost = builder.AddProject<Projects.Web_Host>("web-host")
     .WithReference(database)
     .WithReference(redis)
@@ -55,11 +68,21 @@ var webHost = builder.AddProject<Projects.Web_Host>("web-host")
     .WithEnvironment("ConnectionStrings__minio", minio.GetEndpoint("api"))
     .WithEnvironment("ObjectStorage__AccessKey", minioAccessKey)
     .WithEnvironment("ObjectStorage__SecretKey", minioSecretKey)
+    .WithEnvironment("Email__Smtp__Enabled", "true")
+    .WithEnvironment("Email__Smtp__Host", mailhog.GetEndpoint("smtp").Property(EndpointProperty.Host))
+    .WithEnvironment("Email__Smtp__Port", mailhog.GetEndpoint("smtp").Property(EndpointProperty.Port))
+    .WithEnvironment("Email__Imap__Enabled", "true")
+    .WithEnvironment("Email__Imap__Host", inboundMail.GetEndpoint("imap").Property(EndpointProperty.Host))
+    .WithEnvironment("Email__Imap__Port", inboundMail.GetEndpoint("imap").Property(EndpointProperty.Port))
+    .WithEnvironment("Email__Imap__Username", "helpdesk@it-platform.local")
+    .WithEnvironment("Email__Imap__Password", "helpdesk")
     .WaitFor(database)
     .WaitFor(redis)
     .WaitFor(rabbitMq)
     .WaitFor(keycloak)
     .WaitFor(minio)
+    .WaitFor(inboundMail)
+    .WaitFor(mailhog)
     .WithHttpHealthCheck("/health");
 
 builder.AddProject<Projects.Seeder>("seeder")

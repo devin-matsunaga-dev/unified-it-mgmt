@@ -56,7 +56,7 @@ public static class PlatformServiceCollectionExtensions
                 });
             }
         });
-        services.AddSingleton<INotificationService, LoggingNotificationService>();
+        services.AddScoped<INotificationService, SmtpNotificationService>();
         services.AddQuartz(quartz =>
         {
             var jobKey = new JobKey("platform-heartbeat");

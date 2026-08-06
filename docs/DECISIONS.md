@@ -22,3 +22,6 @@
 - WP-1.5: chose a per-policy warning percentage constrained to 1–99 because different service tiers need configurable lead time before breach (2026-08-07)
 - WP-1.5: chose priority-only matching for currently uncategorized tickets while persisting an optional category selector because ticket categories are introduced by WP-1.9 (2026-08-07)
 - WP-1.5: chose resolution-breach reassignment to the next ordered queue technician because it extends the established round-robin ownership model without adding a second escalation topology (2026-08-07)
+- WP-1.6: chose MailKit 4.17.0 for IMAP, MIME parsing, and SMTP because it provides maintained protocol support and passes the repository vulnerability gate (2026-08-07)
+- WP-1.6: chose unique RFC Message-ID persistence with stable ticket Message-ID headers and subject-token fallback because retries must be idempotent and replies must thread across mail clients (2026-08-07)
+- WP-1.6: chose MailHog for outbound capture plus GreenMail for the development IMAP inbox because MailHog does not provide IMAP retrieval (2026-08-07)

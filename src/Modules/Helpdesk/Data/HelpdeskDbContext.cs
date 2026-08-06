@@ -19,6 +19,7 @@ public sealed class HelpdeskDbContext(DbContextOptions<HelpdeskDbContext> option
     public DbSet<BusinessHoursCalendar> BusinessHoursCalendars => Set<BusinessHoursCalendar>();
     public DbSet<SlaPolicy> SlaPolicies => Set<SlaPolicy>();
     public DbSet<TicketSla> TicketSlas => Set<TicketSla>();
+    public DbSet<TicketEmail> TicketEmails => Set<TicketEmail>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

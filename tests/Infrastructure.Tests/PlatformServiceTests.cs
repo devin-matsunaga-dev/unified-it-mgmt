@@ -1,4 +1,5 @@
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Configuration;
 
 using Platform.Notifications;
 using Platform.Scheduling;
@@ -10,8 +11,9 @@ public sealed class PlatformServiceTests
     [Fact]
     public async Task SendAsync_NotificationTemplate_LogsRecipientAndTemplate()
     {
-        var logger = new RecordingLogger<LoggingNotificationService>();
-        var service = new LoggingNotificationService(logger);
+        var logger = new RecordingLogger<SmtpNotificationService>();
+        var configuration = new ConfigurationBuilder().AddInMemoryCollection().Build();
+        var service = new SmtpNotificationService(configuration, logger);
         var message = new NotificationMessage(
             "admin@example.test",
             new NotificationTemplate("TestTemplate", "Test subject", "Hello {{Name}}"),

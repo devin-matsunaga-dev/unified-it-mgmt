@@ -5,6 +5,7 @@ using MassTransit;
 using Microsoft.EntityFrameworkCore;
 using Modules.Helpdesk.Data;
 using Platform.Auditing;
+using Platform.Notifications;
 using Modules.Helpdesk.Features.Sla;
 
 namespace Modules.Helpdesk.Features.Tickets;
@@ -13,7 +14,8 @@ public sealed class TicketService(
     HelpdeskDbContext dbContext,
     IPublishEndpoint publishEndpoint,
     IAuditService auditService,
-    ISlaService slaService) : ITicketService
+    ISlaService slaService,
+    INotificationService notificationService) : ITicketService
 {
     public async Task<TicketResponse?> CreateAsync(
         CreateTicketRequest request,
@@ -85,6 +87,7 @@ public sealed class TicketService(
 
         var response = Map(ticket);
         await auditService.WriteAsync(actor, "Created", "Ticket", ticket.Id.ToString(), null, response, cancellationToken);
+        await NotifyAsync(ticket, "TicketCreated", "created", cancellationToken);
         return response;
     }
 
@@ -140,6 +143,7 @@ public sealed class TicketService(
 
         var after = Map(ticket);
         await auditService.WriteAsync(actor, "Updated", "Ticket", ticket.Id.ToString(), before, after, cancellationToken);
+        await NotifyAsync(ticket, "TicketUpdated", "updated", cancellationToken);
         return after;
     }
 
@@ -211,6 +215,10 @@ public sealed class TicketService(
         var after = Map(ticket);
         await auditService.WriteAsync(
             actor, "StatusChanged", "Ticket", ticket.Id.ToString(), before, after, cancellationToken);
+        if (targetStatus.Name.Equals("Resolved", StringComparison.OrdinalIgnoreCase))
+        {
+            await NotifyAsync(ticket, "TicketResolved", "resolved", cancellationToken);
+        }
         return new(TransitionTicketOutcome.Success, after);
     }
 
@@ -250,6 +258,20 @@ public sealed class TicketService(
     private static string GetActorId(ClaimsPrincipal actor) =>
         actor.FindFirstValue("sub") ?? actor.FindFirstValue(ClaimTypes.NameIdentifier)
         ?? throw new InvalidOperationException("An authenticated actor identifier is required.");
+
+    private Task NotifyAsync(Ticket ticket, string templateName, string action, CancellationToken cancellationToken) =>
+        notificationService.SendAsync(new NotificationMessage(
+            ticket.RequesterId,
+            new NotificationTemplate(
+                templateName,
+                $"[{ticket.Number}] Ticket {action}: {ticket.Title}",
+                $"Your ticket {ticket.Number} has been {action}. Reply to this email to add a comment."),
+            new { TicketId = ticket.Id, TicketNumber = ticket.Number, ticket.Title },
+            new Dictionary<string, string>
+            {
+                ["Message-Id"] = $"<ticket-{ticket.Id:N}@it-platform.local>",
+                ["X-IT-Platform-Ticket-Id"] = ticket.Id.ToString(),
+            }), cancellationToken);
 
     internal static TicketResponse Map(Ticket ticket) => new(
         ticket.Id,
