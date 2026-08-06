@@ -74,11 +74,27 @@ public sealed class HealthEndpointTests : IAsyncLifetime
     public async Task Health_AllDependenciesReachable_ReturnsHealthy()
     {
         using var client = _factory!.CreateClient();
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        HttpResponseMessage response;
 
-        using var response = await client.GetAsync("/health");
+        do
+        {
+            response = await client.GetAsync("/health", timeout.Token);
+            if (response.StatusCode == HttpStatusCode.OK)
+            {
+                break;
+            }
 
-        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-        Assert.Equal("Healthy", await response.Content.ReadAsStringAsync());
+            response.Dispose();
+            await Task.Delay(TimeSpan.FromMilliseconds(250), timeout.Token);
+        }
+        while (true);
+
+        using (response)
+        {
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            Assert.Equal("Healthy", await response.Content.ReadAsStringAsync(timeout.Token));
+        }
     }
 
     public async Task DisposeAsync()

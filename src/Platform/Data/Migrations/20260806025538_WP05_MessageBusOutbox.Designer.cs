@@ -2,6 +2,7 @@
 using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 using Platform.Data;
@@ -11,9 +12,11 @@ using Platform.Data;
 namespace Platform.Data.Migrations
 {
     [DbContext(typeof(PlatformDbContext))]
-    partial class PlatformDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260806025538_WP05_MessageBusOutbox")]
+    partial class WP05_MessageBusOutbox
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -186,12 +189,6 @@ namespace Platform.Data.Migrations
                     b.HasKey("SequenceNumber")
                         .HasName("pk_outbox_messages");
 
-                    b.HasIndex("EnqueueTime")
-                        .HasDatabaseName("ix_outbox_messages_enqueue_time");
-
-                    b.HasIndex("ExpirationTime")
-                        .HasDatabaseName("ix_outbox_messages_expiration_time");
-
                     b.HasIndex("OutboxId", "SequenceNumber")
                         .IsUnique()
                         .HasDatabaseName("ix_outbox_messages_outbox_id_sequence_number");
@@ -209,6 +206,11 @@ namespace Platform.Data.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uuid")
                         .HasColumnName("outbox_id");
+
+                    b.Property<string>("BusName")
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)")
+                        .HasColumnName("bus_name");
 
                     b.Property<DateTime>("Created")
                         .HasColumnType("timestamp with time zone")
@@ -235,8 +237,8 @@ namespace Platform.Data.Migrations
                     b.HasKey("OutboxId")
                         .HasName("pk_outbox_states");
 
-                    b.HasIndex("Created")
-                        .HasDatabaseName("ix_outbox_states_created");
+                    b.HasIndex("BusName", "Created")
+                        .HasDatabaseName("ix_outbox_states_bus_name_created");
 
                     b.ToTable("outbox_states", "platform");
                 });

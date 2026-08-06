@@ -38,6 +38,7 @@ app.MapGet("/", () => Results.Ok(new { service = "IT Platform" }));
 app.MapHealthChecks("/health");
 app.MapAuthenticationEndpoints();
 app.MapPlatformEndpoints();
+app.MapSystemPingEndpoints();
 
 app.Run();
 

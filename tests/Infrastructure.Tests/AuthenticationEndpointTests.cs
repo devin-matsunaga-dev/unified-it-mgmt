@@ -89,6 +89,31 @@ public sealed class AuthenticationEndpointTests : IClassFixture<AuthenticationEn
     }
 
     [Fact]
+    public async Task SystemPing_MissingDedupeKey_ReturnsValidationProblem()
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/api/dev/ping");
+        request.Headers.Add(TestAuthenticationHandler.RoleHeader, "Admin");
+        request.Content = JsonContent.Create(new { dedupeKey = "" });
+
+        using var response = await _client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Equal("application/problem+json", response.Content.Headers.ContentType?.MediaType);
+    }
+
+    [Fact]
+    public async Task SystemPing_EndUser_ReturnsForbidden()
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/api/dev/ping");
+        request.Headers.Add(TestAuthenticationHandler.RoleHeader, "EndUser");
+        request.Content = JsonContent.Create(new { dedupeKey = "forbidden-ping" });
+
+        using var response = await _client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+    }
+
+    [Fact]
     public async Task Logout_Requested_RedirectsToConfiguredIdentityProvider()
     {
         using var response = await _client.GetAsync("/api/auth/logout");
@@ -107,6 +132,7 @@ public sealed class AuthenticationEndpointTests : IClassFixture<AuthenticationEn
             Environment.SetEnvironmentVariable(
                 "ConnectionStrings__database",
                 "Host=localhost;Database=unused;Username=unused;Password=unused");
+            Environment.SetEnvironmentVariable("Platform__EnableMessageBus", "false");
         }
 
         protected override void ConfigureWebHost(IWebHostBuilder builder)
@@ -121,6 +147,7 @@ public sealed class AuthenticationEndpointTests : IClassFixture<AuthenticationEn
                     ["Authentication:RequireHttpsMetadata"] = "true",
                     ["ConnectionStrings:database"] = "Host=localhost;Database=unused;Username=unused;Password=unused",
                     ["Platform:ApplyMigrations"] = "false",
+                    ["Platform:EnableMessageBus"] = "false",
                     ["Platform:EnableScheduler"] = "false",
                 }));
             builder.ConfigureServices(services => services
@@ -139,6 +166,7 @@ public sealed class AuthenticationEndpointTests : IClassFixture<AuthenticationEn
         {
             base.Dispose(disposing);
             Environment.SetEnvironmentVariable("ConnectionStrings__database", null);
+            Environment.SetEnvironmentVariable("Platform__EnableMessageBus", null);
         }
     }
 

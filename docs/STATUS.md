@@ -5,9 +5,9 @@
 ## Current position
 
 - **Phase:** 0 — Foundation
-- **Last completed WP:** WP-0.4 (Audit log + platform services)
-- **Current WP:** WP-0.5 (Message bus + transactional outbox)
-- **Current branch:** feat/wp-0.5-message-bus-outbox
+- **Last completed WP:** WP-0.5 (Message bus + transactional outbox)
+- **Current WP:** WP-0.6 (React shell + auth)
+- **Current branch:** feat/wp-0.6-react-shell-auth
 - **Last tag:** —
 
 ## Platform versions (law — see WORKFLOW.md table for EOL dates)
@@ -29,7 +29,7 @@
 - [x] WP-0.2 Aspire AppHost + infrastructure (2026-08-06)
 - [x] WP-0.3 Auth + RBAC (2026-08-06)
 - [x] WP-0.4 Audit + platform services (2026-08-06)
-- [ ] WP-0.5 Bus + outbox
+- [x] WP-0.5 Bus + outbox (2026-08-06)
 - [ ] WP-0.6 React shell + auth (styled per DESIGN.md)
 - [ ] WP-0.7 CI + test harness
 - [ ] WP-0.8 Seeder v1

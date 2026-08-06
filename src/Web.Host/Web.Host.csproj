@@ -11,6 +11,10 @@
     <PackageReference Include="Aspire.RabbitMQ.Client" Version="13.4.6" />
     <PackageReference Include="Aspire.StackExchange.Redis" Version="13.4.6" />
     <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="10.0.10" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="10.0.0">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
     <PackageReference Include="OpenTelemetry.Api" Version="1.17.0" />
   </ItemGroup>
 

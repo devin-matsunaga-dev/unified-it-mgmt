@@ -7,7 +7,9 @@ using Platform.Auditing;
 using Platform.Data;
 using Platform.Notifications;
 using Platform.Scheduling;
+using Platform.Messaging;
 
+using MassTransit;
 using Quartz;
 
 namespace Platform;
@@ -26,6 +28,34 @@ public static class PlatformServiceCollectionExtensions
             options.UseNpgsql(connectionString);
         });
         services.AddScoped<IAuditService, AuditService>();
+        services.AddScoped<IConsumerIdempotencyService, ConsumerIdempotencyService>();
+        services.AddScoped<ISystemPingPublisher, SystemPingPublisher>();
+        services.AddMassTransit(bus =>
+        {
+            bus.AddConsumer<SystemPingConsumer>();
+            bus.AddConfigureEndpointsCallback((context, _, endpoint) =>
+                endpoint.UseEntityFrameworkOutbox<PlatformDbContext>(context));
+            bus.AddEntityFrameworkOutbox<PlatformDbContext>(outbox =>
+            {
+                outbox.UsePostgres();
+                outbox.UseBusOutbox();
+            });
+            if (!configuration.GetValue("Platform:EnableMessageBus", true))
+            {
+                bus.UsingInMemory((context, inMemory) => inMemory.ConfigureEndpoints(context));
+            }
+            else
+            {
+                bus.UsingRabbitMq((context, rabbit) =>
+                {
+                    var connectionString = context.GetRequiredService<IConfiguration>()
+                        .GetConnectionString("rabbitmq")
+                        ?? throw new InvalidOperationException("Connection string 'rabbitmq' is required.");
+                    rabbit.Host(new Uri(connectionString));
+                    rabbit.ConfigureEndpoints(context);
+                });
+            }
+        });
         services.AddSingleton<INotificationService, LoggingNotificationService>();
         services.AddQuartz(quartz =>
         {
