@@ -11,3 +11,4 @@
 - WP-0.4: no new architectural decisions; append-only auditing, notification logging, and scheduled jobs follow the existing platform-service architecture (2026-08-06)
 - WP-0.5: chose MassTransit 8.5.10 over 9.x because 9.x requires a commercial runtime license; EF transactional outbox and deterministic consumer deduplication remain unchanged (2026-08-06)
 - WP-0.6: chose oidc-client-ts with authorization-code PKCE and automatic silent renewal because it keeps the SPA provider-neutral and stores tokens only in session storage (2026-08-06)
+- WP-0.7: chose GitHub Actions with GHCR tag publishing because the repository is hosted on GitHub and can authenticate image pushes without additional credentials (2026-08-06)
