@@ -12,6 +12,7 @@ public sealed class SolutionStructureTests
         "src/Platform/Platform.csproj",
         "src/Web.Host/Web.Host.csproj",
         "tests/Architecture.Tests/Architecture.Tests.csproj",
+        "tests/Infrastructure.Tests/Infrastructure.Tests.csproj",
     ];
 
     [Fact]

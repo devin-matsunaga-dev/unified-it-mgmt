@@ -5,9 +5,9 @@
 ## Current position
 
 - **Phase:** 0 — Foundation
-- **Last completed WP:** WP-0.1 (solution skeleton — net10.0 solution and steering-doc layout verified)
-- **Current WP:** WP-0.2 (Aspire AppHost + infrastructure resources)
-- **Current branch:** feat/wp-0.2-infrastructure
+- **Last completed WP:** WP-0.2 (Aspire AppHost + infrastructure resources)
+- **Current WP:** WP-0.3 (Authentication + RBAC)
+- **Current branch:** feat/wp-0.3-auth-rbac
 - **Last tag:** —
 
 ## Platform versions (law — see WORKFLOW.md table for EOL dates)
@@ -26,7 +26,7 @@
 
 ### Phase 0 — Foundation
 - [x] WP-0.1 Solution skeleton (net10.0) + docs verified (2026-08-06)
-- [ ] WP-0.2 Aspire AppHost + infrastructure
+- [x] WP-0.2 Aspire AppHost + infrastructure (2026-08-06)
 - [ ] WP-0.3 Auth + RBAC
 - [ ] WP-0.4 Audit + platform services
 - [ ] WP-0.5 Bus + outbox
