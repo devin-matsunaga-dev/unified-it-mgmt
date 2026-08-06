@@ -125,6 +125,31 @@ public sealed class AuthenticationEndpointTests : IClassFixture<AuthenticationEn
             response.Headers.Location?.AbsoluteUri);
     }
 
+    [Fact]
+    public async Task Cors_WebClientOrigin_AllowsApiRequest()
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Options, "/api/me");
+        request.Headers.Add("Origin", "http://localhost:5173");
+        request.Headers.Add("Access-Control-Request-Method", "GET");
+
+        using var response = await _client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.NoContent, response.StatusCode);
+        Assert.Equal("http://localhost:5173", response.Headers.GetValues("Access-Control-Allow-Origin").Single());
+    }
+
+    [Fact]
+    public async Task Cors_UnknownOrigin_DoesNotAllowApiRequest()
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Options, "/api/me");
+        request.Headers.Add("Origin", "https://untrusted.example.test");
+        request.Headers.Add("Access-Control-Request-Method", "GET");
+
+        using var response = await _client.SendAsync(request);
+
+        Assert.False(response.Headers.Contains("Access-Control-Allow-Origin"));
+    }
+
     public sealed class AuthenticatedApplication : WebApplicationFactory<Program>
     {
         public AuthenticatedApplication()

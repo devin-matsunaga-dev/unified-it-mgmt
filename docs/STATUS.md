@@ -5,9 +5,9 @@
 ## Current position
 
 - **Phase:** 0 — Foundation
-- **Last completed WP:** WP-0.5 (Message bus + transactional outbox)
-- **Current WP:** WP-0.6 (React shell + auth)
-- **Current branch:** feat/wp-0.6-react-shell-auth
+- **Last completed WP:** WP-0.6 (React shell + auth)
+- **Current WP:** WP-0.7 (CI + test harness)
+- **Current branch:** feat/wp-0.7-ci-test-harness
 - **Last tag:** —
 
 ## Platform versions (law — see WORKFLOW.md table for EOL dates)
@@ -18,7 +18,7 @@
 
 <!-- Anything unfinished, known-broken, or deferred from the last session that the next session must know. Keep to a few lines; delete when resolved. -->
 
-- (empty)
+- `npm audit` reports one high advisory inherited through React Router 7.18.2 for React Server Components action handling; the Vite SPA does not enable RSC/server actions, and no published 7.x release currently clears it. Recheck during WP-0.7 dependency automation.
 
 ## Completed work packages
 
@@ -30,7 +30,7 @@
 - [x] WP-0.3 Auth + RBAC (2026-08-06)
 - [x] WP-0.4 Audit + platform services (2026-08-06)
 - [x] WP-0.5 Bus + outbox (2026-08-06)
-- [ ] WP-0.6 React shell + auth (styled per DESIGN.md)
+- [x] WP-0.6 React shell + auth (styled per DESIGN.md) (2026-08-06)
 - [ ] WP-0.7 CI + test harness
 - [ ] WP-0.8 Seeder v1
 

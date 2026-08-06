@@ -43,7 +43,7 @@ var minio = builder.AddContainer("minio", "quay.io/minio/minio", "RELEASE.2025-0
     .WithVolume("it-platform-minio-data", "/data")
     .WithHttpHealthCheck("/minio/health/live", endpointName: "api");
 
-builder.AddProject<Projects.Web_Host>("web-host")
+var webHost = builder.AddProject<Projects.Web_Host>("web-host")
     .WithReference(database)
     .WithReference(redis)
     .WithReference(rabbitMq)
@@ -58,6 +58,17 @@ builder.AddProject<Projects.Web_Host>("web-host")
     .WaitFor(keycloak)
     .WaitFor(minio)
     .WithHttpHealthCheck("/health");
+
+builder.AddViteApp("web", "../../web")
+    .WithReference(webHost)
+    .WithEnvironment("VITE_API_BASE_URL", webHost.GetEndpoint("http"))
+    .WithEnvironment(
+        "VITE_OIDC_AUTHORITY",
+        ReferenceExpression.Create($"{keycloak.GetEndpoint("http")}/realms/it-platform"))
+    .WithEnvironment("VITE_OIDC_CLIENT_ID", "it-platform-web")
+    .WithEndpoint("http", endpoint => endpoint.Port = 5173)
+    .WaitFor(webHost)
+    .WaitFor(keycloak);
 
 builder.Build().Run();
 

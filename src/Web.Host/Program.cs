@@ -12,6 +12,10 @@ builder.AddNpgsqlDataSource("database");
 builder.AddRedisClient("redis");
 builder.AddRabbitMQClient("rabbitmq");
 builder.Services.AddHttpClient();
+builder.Services.AddCors(options => options.AddPolicy("WebClient", policy => policy
+    .WithOrigins(builder.Configuration["WebClient:Origin"] ?? "http://localhost:5173")
+    .AllowAnyHeader()
+    .AllowAnyMethod()));
 builder.Services.AddPlatformAuthentication(builder.Configuration);
 builder.Services.AddPlatformServices(builder.Configuration);
 builder.Services.AddHealthChecks()
@@ -31,6 +35,7 @@ if (app.Configuration.GetValue("Platform:ApplyMigrations", true))
 }
 
 app.UseMiddleware<CorrelationIdMiddleware>();
+app.UseCors("WebClient");
 app.UseAuthentication();
 app.UseAuthorization();
 

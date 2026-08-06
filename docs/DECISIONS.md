@@ -10,3 +10,4 @@
 - WP-0.3: no new architectural decisions; bearer authentication, policy authorization, and provider-neutral configuration follow the existing authentication architecture (2026-08-06)
 - WP-0.4: no new architectural decisions; append-only auditing, notification logging, and scheduled jobs follow the existing platform-service architecture (2026-08-06)
 - WP-0.5: chose MassTransit 8.5.10 over 9.x because 9.x requires a commercial runtime license; EF transactional outbox and deterministic consumer deduplication remain unchanged (2026-08-06)
+- WP-0.6: chose oidc-client-ts with authorization-code PKCE and automatic silent renewal because it keeps the SPA provider-neutral and stores tokens only in session storage (2026-08-06)
