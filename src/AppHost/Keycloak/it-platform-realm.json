@@ -1,0 +1,61 @@
+{
+  "realm": "it-platform",
+  "enabled": true,
+  "displayName": "IT Platform",
+  "registrationAllowed": false,
+  "resetPasswordAllowed": true,
+  "roles": {
+    "realm": [
+      { "name": "Admin" },
+      { "name": "Technician" },
+      { "name": "Manager" },
+      { "name": "EndUser" }
+    ]
+  },
+  "clients": [
+    {
+      "clientId": "it-platform-api",
+      "name": "IT Platform API",
+      "enabled": true,
+      "bearerOnly": true,
+      "protocol": "openid-connect"
+    },
+    {
+      "clientId": "it-platform-web",
+      "name": "IT Platform Web",
+      "enabled": true,
+      "publicClient": true,
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": true,
+      "protocol": "openid-connect",
+      "redirectUris": ["http://localhost:5173/*"],
+      "webOrigins": ["http://localhost:5173"],
+      "attributes": {
+        "pkce.code.challenge.method": "S256",
+        "post.logout.redirect.uris": "http://localhost:5173/*"
+      },
+      "protocolMappers": [
+        {
+          "name": "API audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.client.audience": "it-platform-api",
+            "access.token.claim": "true"
+          }
+        }
+      ]
+    }
+  ],
+  "users": [
+    { "username": "admin1", "enabled": true, "emailVerified": true, "email": "admin1@example.test", "firstName": "Admin", "lastName": "One", "credentials": [{ "type": "password", "value": "ChangeMe-Admin1!", "temporary": false }], "realmRoles": ["Admin"] },
+    { "username": "admin2", "enabled": true, "emailVerified": true, "email": "admin2@example.test", "firstName": "Admin", "lastName": "Two", "credentials": [{ "type": "password", "value": "ChangeMe-Admin2!", "temporary": false }], "realmRoles": ["Admin"] },
+    { "username": "technician1", "enabled": true, "emailVerified": true, "email": "technician1@example.test", "firstName": "Technician", "lastName": "One", "credentials": [{ "type": "password", "value": "ChangeMe-Technician1!", "temporary": false }], "realmRoles": ["Technician"] },
+    { "username": "technician2", "enabled": true, "emailVerified": true, "email": "technician2@example.test", "firstName": "Technician", "lastName": "Two", "credentials": [{ "type": "password", "value": "ChangeMe-Technician2!", "temporary": false }], "realmRoles": ["Technician"] },
+    { "username": "manager1", "enabled": true, "emailVerified": true, "email": "manager1@example.test", "firstName": "Manager", "lastName": "One", "credentials": [{ "type": "password", "value": "ChangeMe-Manager1!", "temporary": false }], "realmRoles": ["Manager"] },
+    { "username": "manager2", "enabled": true, "emailVerified": true, "email": "manager2@example.test", "firstName": "Manager", "lastName": "Two", "credentials": [{ "type": "password", "value": "ChangeMe-Manager2!", "temporary": false }], "realmRoles": ["Manager"] },
+    { "username": "enduser1", "enabled": true, "emailVerified": true, "email": "enduser1@example.test", "firstName": "End User", "lastName": "One", "credentials": [{ "type": "password", "value": "ChangeMe-EndUser1!", "temporary": false }], "realmRoles": ["EndUser"] },
+    { "username": "enduser2", "enabled": true, "emailVerified": true, "email": "enduser2@example.test", "firstName": "End User", "lastName": "Two", "credentials": [{ "type": "password", "value": "ChangeMe-EndUser2!", "temporary": false }], "realmRoles": ["EndUser"] }
+  ]
+}

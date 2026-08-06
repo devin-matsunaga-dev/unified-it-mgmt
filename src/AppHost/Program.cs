@@ -1,3 +1,4 @@
+using System.IO;
 using Aspire.Hosting.ApplicationModel;
 
 var builder = DistributedApplication.CreateBuilder(args);
@@ -19,11 +20,15 @@ var rabbitMq = builder.AddRabbitMQ("rabbitmq", rabbitMqUsername, rabbitMqPasswor
 var keycloakAdmin = builder.AddParameter("keycloak-admin", "admin");
 var keycloakPassword = AddGeneratedPassword(builder, "keycloak-password");
 var keycloak = builder.AddContainer("keycloak", "quay.io/keycloak/keycloak", "26.3")
-    .WithArgs("start-dev", "--health-enabled=true")
+    .WithArgs("start-dev", "--health-enabled=true", "--import-realm")
     .WithEnvironment("KC_BOOTSTRAP_ADMIN_USERNAME", keycloakAdmin)
     .WithEnvironment("KC_BOOTSTRAP_ADMIN_PASSWORD", keycloakPassword)
     .WithHttpEndpoint(targetPort: 8080, name: "http")
     .WithHttpEndpoint(targetPort: 9000, name: "management")
+    .WithBindMount(
+        Path.Combine(builder.Environment.ContentRootPath, "Keycloak", "it-platform-realm.json"),
+        "/opt/keycloak/data/import/it-platform-realm.json",
+        isReadOnly: true)
     .WithVolume("it-platform-keycloak-data", "/opt/keycloak/data")
     .WithHttpHealthCheck("/health/ready", endpointName: "management");
 
@@ -43,6 +48,9 @@ builder.AddProject<Projects.Web_Host>("web-host")
     .WithReference(redis)
     .WithReference(rabbitMq)
     .WithEnvironment("ConnectionStrings__keycloak", keycloak.GetEndpoint("http"))
+    .WithEnvironment(
+        "Authentication__Authority",
+        ReferenceExpression.Create($"{keycloak.GetEndpoint("http")}/realms/it-platform"))
     .WithEnvironment("ConnectionStrings__minio", minio.GetEndpoint("api"))
     .WaitFor(database)
     .WaitFor(redis)
