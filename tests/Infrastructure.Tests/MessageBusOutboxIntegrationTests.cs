@@ -12,32 +12,20 @@ using Platform;
 using Platform.Data;
 using Platform.Messaging;
 
-using Testcontainers.PostgreSql;
-using Testcontainers.RabbitMq;
-
 namespace Infrastructure.Tests;
 
-public sealed class MessageBusOutboxIntegrationTests : IAsyncLifetime
+[Collection(InfrastructureCollection.Name)]
+public sealed class MessageBusOutboxIntegrationTests(InfrastructureFixture infrastructure) : IAsyncLifetime
 {
-    private readonly PostgreSqlContainer _postgres = new PostgreSqlBuilder("timescale/timescaledb-ha:pg17")
-        .WithDatabase("it_platform")
-        .WithUsername("postgres")
-        .WithPassword("postgres")
-        .Build();
-    private readonly RabbitMqContainer _rabbitMq = new RabbitMqBuilder("rabbitmq:4-management")
-        .WithUsername("itplatform")
-        .WithPassword("itplatform-test-password")
-        .Build();
     private ServiceProvider? _services;
 
     public async Task InitializeAsync()
     {
-        await Task.WhenAll(_postgres.StartAsync(), _rabbitMq.StartAsync());
         var configuration = new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?>
             {
-                ["ConnectionStrings:database"] = _postgres.GetConnectionString(),
-                ["ConnectionStrings:rabbitmq"] = _rabbitMq.GetConnectionString(),
+                ["ConnectionStrings:database"] = infrastructure.PostgresConnectionString,
+                ["ConnectionStrings:rabbitmq"] = infrastructure.RabbitMqConnectionString,
                 ["Platform:EnableScheduler"] = "false",
             })
             .Build();
@@ -144,7 +132,5 @@ public sealed class MessageBusOutboxIntegrationTests : IAsyncLifetime
         {
             await _services.DisposeAsync();
         }
-
-        await Task.WhenAll(_postgres.DisposeAsync().AsTask(), _rabbitMq.DisposeAsync().AsTask());
     }
 }
