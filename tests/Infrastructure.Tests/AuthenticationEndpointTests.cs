@@ -76,6 +76,19 @@ public sealed class AuthenticationEndpointTests : IClassFixture<AuthenticationEn
     }
 
     [Fact]
+    public async Task AuditTest_MissingValue_ReturnsValidationProblem()
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/api/dev/audit-test");
+        request.Headers.Add(TestAuthenticationHandler.RoleHeader, "Admin");
+        request.Content = JsonContent.Create(new { id = Guid.CreateVersion7(), value = "" });
+
+        using var response = await _client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Equal("application/problem+json", response.Content.Headers.ContentType?.MediaType);
+    }
+
+    [Fact]
     public async Task Logout_Requested_RedirectsToConfiguredIdentityProvider()
     {
         using var response = await _client.GetAsync("/api/auth/logout");
@@ -89,6 +102,13 @@ public sealed class AuthenticationEndpointTests : IClassFixture<AuthenticationEn
 
     public sealed class AuthenticatedApplication : WebApplicationFactory<Program>
     {
+        public AuthenticatedApplication()
+        {
+            Environment.SetEnvironmentVariable(
+                "ConnectionStrings__database",
+                "Host=localhost;Database=unused;Username=unused;Password=unused");
+        }
+
         protected override void ConfigureWebHost(IWebHostBuilder builder)
         {
             builder.ConfigureAppConfiguration(configuration => configuration.AddInMemoryCollection(
@@ -99,6 +119,9 @@ public sealed class AuthenticationEndpointTests : IClassFixture<AuthenticationEn
                     ["Authentication:ClientId"] = "it-platform-web",
                     ["Authentication:PostLogoutRedirectUri"] = "https://app.example.test/",
                     ["Authentication:RequireHttpsMetadata"] = "true",
+                    ["ConnectionStrings:database"] = "Host=localhost;Database=unused;Username=unused;Password=unused",
+                    ["Platform:ApplyMigrations"] = "false",
+                    ["Platform:EnableScheduler"] = "false",
                 }));
             builder.ConfigureServices(services => services
                 .AddAuthentication(options =>
@@ -110,6 +133,12 @@ public sealed class AuthenticationEndpointTests : IClassFixture<AuthenticationEn
                 .AddScheme<AuthenticationSchemeOptions, TestAuthenticationHandler>(
                     TestAuthenticationHandler.TestScheme,
                     _ => { }));
+        }
+
+        protected override void Dispose(bool disposing)
+        {
+            base.Dispose(disposing);
+            Environment.SetEnvironmentVariable("ConnectionStrings__database", null);
         }
     }
 

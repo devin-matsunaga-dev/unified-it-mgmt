@@ -56,6 +56,7 @@ public sealed class HealthEndpointTests : IAsyncLifetime
             ["ConnectionStrings:rabbitmq"] = _rabbitMq.GetConnectionString(),
             ["ConnectionStrings:keycloak"] = address,
             ["ConnectionStrings:minio"] = address,
+            ["Platform:EnableScheduler"] = "false",
         };
 
         foreach (var setting in settings)
