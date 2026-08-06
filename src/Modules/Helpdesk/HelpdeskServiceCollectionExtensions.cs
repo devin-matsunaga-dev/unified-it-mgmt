@@ -3,6 +3,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Modules.Helpdesk.Data;
 using Modules.Helpdesk.Features.Tickets;
+using Modules.Helpdesk.Features.Assignments;
 
 namespace Modules.Helpdesk;
 
@@ -19,6 +20,7 @@ public static class HelpdeskServiceCollectionExtensions
             options.UseNpgsql(connectionString);
         });
         services.AddScoped<ITicketService, TicketService>();
+        services.AddScoped<IAssignmentService, AssignmentService>();
 
         return services;
     }

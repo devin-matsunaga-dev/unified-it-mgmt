@@ -28,7 +28,9 @@ public static class TicketEndpoints
             }
 
             var ticket = await service.CreateAsync(request, user, cancellationToken);
-            return Results.Created($"/api/tickets/{ticket.Id}", ticket);
+            return ticket is null
+                ? Results.Problem(statusCode: StatusCodes.Status404NotFound, title: "Queue not found.")
+                : Results.Created($"/api/tickets/{ticket.Id}", ticket);
         });
 
         group.MapGet("/{id:guid}", async (

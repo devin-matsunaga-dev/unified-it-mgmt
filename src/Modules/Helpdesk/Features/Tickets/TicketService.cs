@@ -13,13 +13,36 @@ public sealed class TicketService(
     IPublishEndpoint publishEndpoint,
     IAuditService auditService) : ITicketService
 {
-    public async Task<TicketResponse> CreateAsync(
+    public async Task<TicketResponse?> CreateAsync(
         CreateTicketRequest request,
         ClaimsPrincipal actor,
         CancellationToken cancellationToken)
     {
         var now = DateTimeOffset.UtcNow;
         var requesterId = IsEndUser(actor) ? GetActorId(actor) : request.RequesterId ?? GetActorId(actor);
+        TicketQueue? queue = null;
+        string? assignedTechnicianId = null;
+        if (request.QueueId is not null)
+        {
+            queue = await dbContext.TicketQueues.Include(item => item.Team).ThenInclude(team => team.Members)
+                .SingleOrDefaultAsync(item => item.Id == request.QueueId, cancellationToken);
+            if (queue is null)
+            {
+                return null;
+            }
+
+            var technicians = queue.Team.Members.Select(member => member.TechnicianId)
+                .OrderBy(id => id, StringComparer.Ordinal).ToList();
+            if (technicians.Count > 0)
+            {
+                var lastIndex = queue.LastAssignedTechnicianId is null
+                    ? -1
+                    : technicians.FindIndex(id => id == queue.LastAssignedTechnicianId);
+                assignedTechnicianId = technicians[(lastIndex + 1) % technicians.Count];
+                queue.LastAssignedTechnicianId = assignedTechnicianId;
+            }
+        }
+
         var ticket = new Ticket
         {
             Id = Guid.CreateVersion7(),
@@ -31,12 +54,24 @@ public sealed class TicketService(
             Priority = TicketPriorityMatrix.Calculate(request.Urgency, request.Impact),
             StatusId = DefaultTicketStatuses.NewId,
             RequesterId = requesterId,
+            QueueId = queue?.Id,
+            Queue = queue,
+            AssignedTechnicianId = assignedTechnicianId,
             CreatedAt = now,
             UpdatedAt = now,
         };
 
         await using var transaction = await dbContext.Database.BeginTransactionAsync(cancellationToken);
         dbContext.Tickets.Add(ticket);
+        if (queue is not null && assignedTechnicianId is not null)
+        {
+            dbContext.TicketAssignmentHistory.Add(new TicketAssignmentHistory
+            {
+                Id = Guid.CreateVersion7(), TicketId = ticket.Id, QueueId = queue.Id,
+                ToTechnicianId = assignedTechnicianId, Kind = AssignmentKind.Automatic,
+                ActorId = GetActorId(actor), OccurredAt = now,
+            });
+        }
         await dbContext.SaveChangesAsync(cancellationToken);
         await dbContext.Entry(ticket).Reference(item => item.Status).LoadAsync(cancellationToken);
         await publishEndpoint.Publish(new TicketCreated(
@@ -201,7 +236,7 @@ public sealed class TicketService(
 
     private IQueryable<Ticket> VisibleTickets(ClaimsPrincipal actor)
     {
-        var query = dbContext.Tickets.Include(ticket => ticket.Status).AsQueryable();
+        var query = dbContext.Tickets.Include(ticket => ticket.Status).Include(ticket => ticket.Queue).AsQueryable();
         return IsEndUser(actor) ? query.Where(ticket => ticket.RequesterId == GetActorId(actor)) : query;
     }
 
@@ -211,7 +246,7 @@ public sealed class TicketService(
         actor.FindFirstValue("sub") ?? actor.FindFirstValue(ClaimTypes.NameIdentifier)
         ?? throw new InvalidOperationException("An authenticated actor identifier is required.");
 
-    private static TicketResponse Map(Ticket ticket) => new(
+    internal static TicketResponse Map(Ticket ticket) => new(
         ticket.Id,
         ticket.Number,
         ticket.Title,
@@ -222,6 +257,9 @@ public sealed class TicketService(
         ticket.Priority,
         ticket.Status.Name,
         ticket.RequesterId,
+        ticket.QueueId,
+        ticket.Queue?.Name,
+        ticket.AssignedTechnicianId,
         ticket.CreatedAt,
         ticket.UpdatedAt);
 }

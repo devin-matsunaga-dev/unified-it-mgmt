@@ -200,6 +200,74 @@ public sealed class TicketApiIntegrationTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task QueueAssignment_ThreeTicketsAcrossTwoTechnicians_AlternatesAndSupportsReassignmentAndMine()
+    {
+        var queueId = await CreateQueueWithMembersAsync("tech-a", "tech-b");
+
+        var first = await CreateTicketAsync("queue-requester-1", queueId);
+        var second = await CreateTicketAsync("queue-requester-2", queueId);
+        var third = await CreateTicketAsync("queue-requester-3", queueId);
+
+        Assert.Equal("tech-a", first.AssignedTechnicianId);
+        Assert.Equal("tech-b", second.AssignedTechnicianId);
+        Assert.Equal("tech-a", third.AssignedTechnicianId);
+
+        using var reassignRequest = Authenticated(
+            HttpMethod.Post, $"/api/tickets/{first.Id}/assignments", userId: "lead-tech");
+        reassignRequest.Content = JsonContent.Create(new { technicianId = "tech-b" });
+        using var reassignResponse = await _client!.SendAsync(reassignRequest);
+        Assert.Equal(HttpStatusCode.OK, reassignResponse.StatusCode);
+
+        using var historyRequest = Authenticated(HttpMethod.Get, $"/api/tickets/{first.Id}/assignments");
+        using var historyResponse = await _client.SendAsync(historyRequest);
+        var history = await historyResponse.Content.ReadFromJsonAsync<List<AssignmentDto>>();
+        Assert.Equal(HttpStatusCode.OK, historyResponse.StatusCode);
+        Assert.Collection(
+            Assert.IsType<List<AssignmentDto>>(history),
+            assignment =>
+            {
+                Assert.Null(assignment.FromTechnicianId);
+                Assert.Equal("tech-a", assignment.ToTechnicianId);
+                Assert.Equal("Automatic", assignment.Kind);
+            },
+            assignment =>
+            {
+                Assert.Equal("tech-a", assignment.FromTechnicianId);
+                Assert.Equal("tech-b", assignment.ToTechnicianId);
+                Assert.Equal("Manual", assignment.Kind);
+            });
+
+        var techATickets = await GetMineAsync("tech-a");
+        var techBTickets = await GetMineAsync("tech-b");
+        Assert.Equal([third.Id], techATickets.Items.Select(ticket => ticket.Id));
+        Assert.Equal(2, techBTickets.Total);
+        Assert.Contains(techBTickets.Items, ticket => ticket.Id == first.Id);
+        Assert.Contains(techBTickets.Items, ticket => ticket.Id == second.Id);
+
+        await using var scope = _application.Services.CreateAsyncScope();
+        var audits = await scope.ServiceProvider.GetRequiredService<PlatformDbContext>().AuditEntries
+            .Where(entry => entry.EntityType == "Ticket" && entry.EntityId == first.Id.ToString()).ToListAsync();
+        Assert.Contains(audits, entry => entry.Action == "Assigned");
+    }
+
+    [Fact]
+    public async Task QueueAssignment_TechnicianOutsideQueueTeam_ReturnsValidationProblemWithoutHistoryEntry()
+    {
+        var queueId = await CreateQueueWithMembersAsync("member-tech");
+        var ticket = await CreateTicketAsync("invalid-assignment-requester", queueId);
+        using var request = Authenticated(HttpMethod.Post, $"/api/tickets/{ticket.Id}/assignments");
+        request.Content = JsonContent.Create(new { technicianId = "outside-tech" });
+
+        using var response = await _client!.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Equal("application/problem+json", response.Content.Headers.ContentType?.MediaType);
+        await using var scope = _application.Services.CreateAsyncScope();
+        Assert.Equal(1, await scope.ServiceProvider.GetRequiredService<HelpdeskDbContext>()
+            .TicketAssignmentHistory.CountAsync(history => history.TicketId == ticket.Id));
+    }
+
+    [Fact]
     public async Task HelpdeskMigrations_CurrentModel_HasNoPendingChanges()
     {
         await using var scope = _application.Services.CreateAsyncScope();
@@ -208,7 +276,7 @@ public sealed class TicketApiIntegrationTests : IAsyncLifetime
         Assert.False(dbContext.Database.HasPendingModelChanges());
     }
 
-    private async Task<TicketDto> CreateTicketAsync(string requesterId)
+    private async Task<TicketDto> CreateTicketAsync(string requesterId, Guid? queueId = null)
     {
         using var request = Authenticated(HttpMethod.Post, "/api/tickets");
         request.Content = JsonContent.Create(new
@@ -219,12 +287,47 @@ public sealed class TicketApiIntegrationTests : IAsyncLifetime
             urgency = "High",
             impact = "High",
             requesterId,
+            queueId,
         });
         using var response = await _client!.SendAsync(request);
         var ticket = await response.Content.ReadFromJsonAsync<TicketDto>();
 
         Assert.Equal(HttpStatusCode.Created, response.StatusCode);
         return Assert.IsType<TicketDto>(ticket);
+    }
+
+    private async Task<Guid> CreateQueueWithMembersAsync(params string[] technicianIds)
+    {
+        var suffix = Guid.NewGuid().ToString("N");
+        using var teamRequest = Authenticated(HttpMethod.Post, "/api/teams");
+        teamRequest.Content = JsonContent.Create(new { name = $"Team {suffix}" });
+        using var teamResponse = await _client!.SendAsync(teamRequest);
+        var team = await teamResponse.Content.ReadFromJsonAsync<TeamDto>();
+        Assert.Equal(HttpStatusCode.Created, teamResponse.StatusCode);
+
+        foreach (var technicianId in technicianIds)
+        {
+            using var memberRequest = Authenticated(HttpMethod.Post, $"/api/teams/{team!.Id}/members");
+            memberRequest.Content = JsonContent.Create(new { technicianId });
+            using var memberResponse = await _client.SendAsync(memberRequest);
+            Assert.Equal(HttpStatusCode.NoContent, memberResponse.StatusCode);
+        }
+
+        using var queueRequest = Authenticated(HttpMethod.Post, "/api/queues");
+        queueRequest.Content = JsonContent.Create(new { name = $"Queue {suffix}", teamId = team!.Id });
+        using var queueResponse = await _client.SendAsync(queueRequest);
+        var queue = await queueResponse.Content.ReadFromJsonAsync<QueueDto>();
+        Assert.Equal(HttpStatusCode.Created, queueResponse.StatusCode);
+        return Assert.IsType<QueueDto>(queue).Id;
+    }
+
+    private async Task<TicketPageDto> GetMineAsync(string userId)
+    {
+        using var request = Authenticated(HttpMethod.Get, "/api/tickets/mine", userId: userId);
+        using var response = await _client!.SendAsync(request);
+        var page = await response.Content.ReadFromJsonAsync<TicketPageDto>();
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        return Assert.IsType<TicketPageDto>(page);
     }
 
     private async Task<TicketDto> TransitionAsync(Guid ticketId, string targetStatus, string? resolutionNote = null)
@@ -238,10 +341,12 @@ public sealed class TicketApiIntegrationTests : IAsyncLifetime
         return Assert.IsType<TicketDto>(ticket);
     }
 
-    private static HttpRequestMessage Authenticated(HttpMethod method, string uri, string role = "Technician")
+    private static HttpRequestMessage Authenticated(
+        HttpMethod method, string uri, string role = "Technician", string userId = "test-user-id")
     {
         var request = new HttpRequestMessage(method, uri);
         request.Headers.Add(TicketAuthenticationHandler.RoleHeader, role);
+        request.Headers.Add(TicketAuthenticationHandler.UserIdHeader, userId);
         return request;
     }
 
@@ -251,7 +356,12 @@ public sealed class TicketApiIntegrationTests : IAsyncLifetime
         await _application.DisposeAsync();
     }
 
-    private sealed record TicketDto(Guid Id, string Number, string Priority, string Status);
+    private sealed record TicketDto(Guid Id, string Number, string Priority, string Status, string? AssignedTechnicianId);
+
+    private sealed record TeamDto(Guid Id);
+    private sealed record QueueDto(Guid Id);
+    private sealed record TicketPageDto(IReadOnlyList<TicketDto> Items, int Total);
+    private sealed record AssignmentDto(string? FromTechnicianId, string ToTechnicianId, string Kind);
 
     private sealed record TransitionDto(string FromStatus, string ToStatus, string? ResolutionNote);
 
@@ -316,6 +426,7 @@ public sealed class TicketApiIntegrationTests : IAsyncLifetime
     {
         public const string TestScheme = "TicketTest";
         public const string RoleHeader = "X-Test-Role";
+        public const string UserIdHeader = "X-Test-User-Id";
 
         protected override Task<AuthenticateResult> HandleAuthenticateAsync()
         {
@@ -324,9 +435,12 @@ public sealed class TicketApiIntegrationTests : IAsyncLifetime
                 return Task.FromResult(AuthenticateResult.NoResult());
             }
 
+            var userId = Request.Headers.TryGetValue(UserIdHeader, out var requestedUserId)
+                ? requestedUserId.ToString()
+                : "test-user-id";
             var claims = new[]
             {
-                new Claim("sub", "test-user-id"),
+                new Claim("sub", userId),
                 new Claim(ClaimTypes.Name, "test-user"),
                 new Claim(ClaimTypes.Role, role.ToString()),
             };

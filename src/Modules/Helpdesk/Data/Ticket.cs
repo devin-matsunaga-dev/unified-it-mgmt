@@ -13,6 +13,9 @@ public sealed class Ticket
     public Guid StatusId { get; set; }
     public TicketStatus Status { get; set; } = null!;
     public string RequesterId { get; set; } = string.Empty;
+    public Guid? QueueId { get; set; }
+    public TicketQueue? Queue { get; set; }
+    public string? AssignedTechnicianId { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset UpdatedAt { get; set; }
 

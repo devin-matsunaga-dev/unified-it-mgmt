@@ -4,7 +4,7 @@ namespace Modules.Helpdesk.Features.Tickets;
 
 public interface ITicketService
 {
-    Task<TicketResponse> CreateAsync(
+    Task<TicketResponse?> CreateAsync(
         CreateTicketRequest request,
         ClaimsPrincipal actor,
         CancellationToken cancellationToken);

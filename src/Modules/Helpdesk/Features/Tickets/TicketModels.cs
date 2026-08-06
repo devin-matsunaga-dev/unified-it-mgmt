@@ -8,7 +8,8 @@ public sealed record CreateTicketRequest(
     TicketType Type,
     TicketLevel Urgency,
     TicketLevel Impact,
-    string? RequesterId);
+    string? RequesterId,
+    Guid? QueueId);
 
 public sealed record UpdateTicketRequest(
     string Title,
@@ -28,6 +29,9 @@ public sealed record TicketResponse(
     TicketPriority Priority,
     string Status,
     string RequesterId,
+    Guid? QueueId,
+    string? QueueName,
+    string? AssignedTechnicianId,
     DateTimeOffset CreatedAt,
     DateTimeOffset UpdatedAt);
 

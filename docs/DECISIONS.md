@@ -15,3 +15,4 @@
 - WP-0.8: no new architectural decisions; the console seeder and realm-import users follow the existing Platform and Keycloak development topology (2026-08-06)
 - WP-1.1: no new architectural decisions; ticket storage, auditing, and event publication follow the existing module-schema and Platform outbox architecture (2026-08-06)
 - WP-1.2: no new architectural decisions; persisted workflow configuration, guarded transitions, history, auditing, and outbox publication follow the existing Helpdesk and Platform patterns (2026-08-06)
+- WP-1.3: no new architectural decisions; team-owned queues, persisted round-robin state, assignment history, auditing, and technician-scoped queries follow the existing Helpdesk patterns (2026-08-06)

@@ -3,6 +3,7 @@ using System.Text.Json.Serialization;
 using Modules.Helpdesk;
 using Modules.Helpdesk.Data;
 using Modules.Helpdesk.Features.Tickets;
+using Modules.Helpdesk.Features.Assignments;
 using Platform;
 using Platform.Auditing;
 using Platform.Data;
@@ -53,6 +54,7 @@ app.MapAuthenticationEndpoints();
 app.MapPlatformEndpoints();
 app.MapSystemPingEndpoints();
 app.MapTicketEndpoints();
+app.MapAssignmentEndpoints();
 
 app.Run();
 

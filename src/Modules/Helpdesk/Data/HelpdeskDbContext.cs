@@ -9,6 +9,10 @@ public sealed class HelpdeskDbContext(DbContextOptions<HelpdeskDbContext> option
     public DbSet<TicketStatus> TicketStatuses => Set<TicketStatus>();
     public DbSet<TicketStatusTransition> TicketStatusTransitions => Set<TicketStatusTransition>();
     public DbSet<TicketTransitionHistory> TicketTransitionHistory => Set<TicketTransitionHistory>();
+    public DbSet<Team> Teams => Set<Team>();
+    public DbSet<TeamMember> TeamMembers => Set<TeamMember>();
+    public DbSet<TicketQueue> TicketQueues => Set<TicketQueue>();
+    public DbSet<TicketAssignmentHistory> TicketAssignmentHistory => Set<TicketAssignmentHistory>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
