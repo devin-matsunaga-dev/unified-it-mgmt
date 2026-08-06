@@ -53,7 +53,8 @@ public sealed class MessageBusOutboxIntegrationTests(InfrastructureFixture infra
         await using (var beforeBusScope = _services!.CreateAsyncScope())
         {
             var dbContext = beforeBusScope.ServiceProvider.GetRequiredService<PlatformDbContext>();
-            Assert.Equal(2, await dbContext.Set<OutboxMessage>().CountAsync());
+            Assert.Equal(2, await dbContext.Set<OutboxMessage>().CountAsync(message =>
+                message.Body.Contains(dedupeKey)));
             Assert.Empty(await dbContext.ConsumerDedupeEntries.ToListAsync());
         }
 

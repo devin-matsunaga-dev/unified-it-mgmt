@@ -1,4 +1,8 @@
 using Microsoft.EntityFrameworkCore;
+using System.Text.Json.Serialization;
+using Modules.Helpdesk;
+using Modules.Helpdesk.Data;
+using Modules.Helpdesk.Features.Tickets;
 using Platform;
 using Platform.Auditing;
 using Platform.Data;
@@ -12,12 +16,15 @@ builder.AddNpgsqlDataSource("database");
 builder.AddRedisClient("redis");
 builder.AddRabbitMQClient("rabbitmq");
 builder.Services.AddHttpClient();
+builder.Services.ConfigureHttpJsonOptions(options =>
+    options.SerializerOptions.Converters.Add(new JsonStringEnumConverter()));
 builder.Services.AddCors(options => options.AddPolicy("WebClient", policy => policy
     .WithOrigins(builder.Configuration["WebClient:Origin"] ?? "http://localhost:5173")
     .AllowAnyHeader()
     .AllowAnyMethod()));
 builder.Services.AddPlatformAuthentication(builder.Configuration);
 builder.Services.AddPlatformServices(builder.Configuration);
+builder.Services.AddHelpdeskServices(builder.Configuration);
 builder.Services.AddHealthChecks()
     .AddTypeActivatedCheck<DependencyEndpointHealthCheck>(
         "keycloak",
@@ -32,6 +39,7 @@ if (app.Configuration.GetValue("Platform:ApplyMigrations", true))
 {
     await using var scope = app.Services.CreateAsyncScope();
     await scope.ServiceProvider.GetRequiredService<PlatformDbContext>().Database.MigrateAsync();
+    await scope.ServiceProvider.GetRequiredService<HelpdeskDbContext>().Database.MigrateAsync();
 }
 
 app.UseMiddleware<CorrelationIdMiddleware>();
@@ -44,6 +52,7 @@ app.MapHealthChecks("/health");
 app.MapAuthenticationEndpoints();
 app.MapPlatformEndpoints();
 app.MapSystemPingEndpoints();
+app.MapTicketEndpoints();
 
 app.Run();
 

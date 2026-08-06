@@ -19,7 +19,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="../Platform/Platform.csproj" />
+    <ProjectReference Include="../Modules/Helpdesk/Modules.Helpdesk.csproj" />
   </ItemGroup>
 
 </Project>

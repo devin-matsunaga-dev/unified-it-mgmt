@@ -35,7 +35,12 @@ public static class AuthenticationServiceCollectionExtensions
             });
         services.AddTransient<IClaimsTransformation, KeycloakRoleClaimsTransformation>();
         services.AddAuthorizationBuilder()
-            .AddPolicy(AuthorizationPolicies.AdminOnly, policy => policy.RequireRole(PlatformRoles.Admin));
+            .AddPolicy(AuthorizationPolicies.AdminOnly, policy => policy.RequireRole(PlatformRoles.Admin))
+            .AddPolicy(AuthorizationPolicies.CanManageTickets, policy => policy.RequireRole(
+                PlatformRoles.Admin,
+                PlatformRoles.Technician,
+                PlatformRoles.Manager,
+                PlatformRoles.EndUser));
 
         return services;
     }

@@ -1,0 +1,25 @@
+using System.Security.Claims;
+
+namespace Modules.Helpdesk.Features.Tickets;
+
+public interface ITicketService
+{
+    Task<TicketResponse> CreateAsync(
+        CreateTicketRequest request,
+        ClaimsPrincipal actor,
+        CancellationToken cancellationToken);
+
+    Task<TicketResponse?> GetAsync(Guid id, ClaimsPrincipal actor, CancellationToken cancellationToken);
+
+    Task<TicketPageResponse> ListAsync(
+        int page,
+        int pageSize,
+        ClaimsPrincipal actor,
+        CancellationToken cancellationToken);
+
+    Task<TicketResponse?> UpdateAsync(
+        Guid id,
+        UpdateTicketRequest request,
+        ClaimsPrincipal actor,
+        CancellationToken cancellationToken);
+}

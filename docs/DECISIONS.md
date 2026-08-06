@@ -13,3 +13,4 @@
 - WP-0.6: chose oidc-client-ts with authorization-code PKCE and automatic silent renewal because it keeps the SPA provider-neutral and stores tokens only in session storage (2026-08-06)
 - WP-0.7: chose GitHub Actions with GHCR tag publishing because the repository is hosted on GitHub and can authenticate image pushes without additional credentials (2026-08-06)
 - WP-0.8: no new architectural decisions; the console seeder and realm-import users follow the existing Platform and Keycloak development topology (2026-08-06)
+- WP-1.1: no new architectural decisions; ticket storage, auditing, and event publication follow the existing module-schema and Platform outbox architecture (2026-08-06)

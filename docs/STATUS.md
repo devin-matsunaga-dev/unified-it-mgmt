@@ -5,9 +5,9 @@
 ## Current position
 
 - **Phase:** 1 — Helpdesk
-- **Last completed WP:** WP-0.8 (Demo-data seeder v1)
-- **Current WP:** WP-1.1 (Ticket domain + CRUD)
-- **Current branch:** feat/wp-1.1-ticket-domain-crud
+- **Last completed WP:** WP-1.1 (Ticket domain + CRUD)
+- **Current WP:** WP-1.2 (Status workflow engine)
+- **Current branch:** feat/wp-1.2-status-workflow
 - **Last tag:** —
 
 ## Platform versions (law — see WORKFLOW.md table for EOL dates)
@@ -35,7 +35,7 @@
 - [x] WP-0.8 Seeder v1 (2026-08-06)
 
 ### Phase 1 — Helpdesk
-- [ ] WP-1.1 Ticket domain + CRUD
+- [x] WP-1.1 Ticket domain + CRUD (2026-08-06)
 - [ ] WP-1.2 Status workflow
 - [ ] WP-1.3 Queues + assignment
 - [ ] WP-1.4 Comments/worklogs/attachments

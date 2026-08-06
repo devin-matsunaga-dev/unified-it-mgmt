@@ -3,6 +3,7 @@ namespace Web.Host.Authentication;
 public static class AuthorizationPolicies
 {
     public const string AdminOnly = "AdminOnly";
+    public const string CanManageTickets = "CanManageTickets";
 }
 
 public static class PlatformRoles
