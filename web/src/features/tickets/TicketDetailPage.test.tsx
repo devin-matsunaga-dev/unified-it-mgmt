@@ -11,7 +11,7 @@ vi.mock('../../api/helpdesk', async (original) => {
   return { ...actual, helpdeskApi: Object.fromEntries(Object.entries(actual.helpdeskApi).map(([name, value]) => [name, typeof value === 'function' ? vi.fn() : value])) }
 })
 
-const ticket: Ticket = { id: 'ticket-1', number: 'INC-000001', title: 'VPN unavailable', description: 'Cannot connect', type: 'Incident', urgency: 'High', impact: 'Medium', priority: 'High', status: 'New', requesterId: 'requester-1', requesterName: 'Requester One', queueId: 'queue-1', queueName: 'Service desk', assignedTechnicianId: null, createdAt: '2026-08-07T00:00:00Z', updatedAt: '2026-08-07T01:00:00Z' }
+const ticket: Ticket = { id: 'ticket-1', number: 'INC-000001', title: 'VPN unavailable', description: 'Cannot connect', type: 'Incident', urgency: 'High', impact: 'Medium', priority: 'High', status: 'New', requesterId: 'requester-1', requesterName: 'Requester One', queueId: 'queue-1', queueName: 'Service desk', assignedTechnicianId: null, createdAt: '2026-08-07T00:00:00Z', updatedAt: '2026-08-07T01:00:00Z', categoryId: 'category-laptop', categoryName: 'Laptop issue', customFields: [{ fieldId: 'field-asset-tag', key: 'asset_tag', label: 'Asset tag', type: 'Text', value: 'LT-4417' }] }
 
 function renderPage() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
@@ -39,6 +39,8 @@ describe('TicketDetailPage', () => {
     expect(screen.getByRole('button', { name: 'In progress' })).toBeDisabled()
     expect(screen.getByText('Urgency').parentElement).toHaveTextContent('High')
     expect(screen.getByText('Impact').parentElement).toHaveTextContent('Medium')
+    expect(screen.getByText('Category').parentElement).toHaveTextContent('Laptop issue')
+    expect(screen.getByText('Asset tag').parentElement).toHaveTextContent('LT-4417')
     expect(screen.getByText('Investigating credentials').closest('li')).toHaveClass('border-amber-400')
     expect(screen.getByText(/Technician One/)).toBeInTheDocument()
     expect(screen.getAllByText('Internal note').length).toBeGreaterThan(0)

@@ -5,9 +5,9 @@
 ## Current position
 
 - **Phase:** 1 — Helpdesk
-- **Last completed WP:** WP-1.8 (Self-service portal)
-- **Current WP:** WP-1.9 (Categories + custom fields)
-- **Current branch:** feat/wp-1.9-categories-custom-fields
+- **Last completed WP:** WP-1.9 (Categories + custom fields)
+- **Current WP:** WP-1.10 (Search, saved views, canned responses)
+- **Current branch:** feat/wp-1.10-search-views-canned-responses
 - **Last tag:** —
 
 ## Platform versions (law — see WORKFLOW.md table for EOL dates)
@@ -19,8 +19,11 @@
 <!-- Anything unfinished, known-broken, or deferred from the last session that the next session must know. Keep to a few lines; delete when resolved. -->
 
 - `npm audit` reports two high findings inherited through React Router 7.18.2 for RSC action handling; this Vite SPA does not enable RSC/server actions. The offered fix is a forced downgrade to 7.11.0, so Dependabot will monitor for a non-breaking patched release.
-- WP-1.8 left the portal submit form using the Incident/ServiceRequest type as its request picker. WP-1.9 must replace that fieldset in `web/src/features/portal/NewRequestPage.tsx` with the real category tree and carry the selected category into `CreateTicketRequest`.
 - The portal has no attachment upload; requesters can only attach files by replying to the ticket email. Add it to a later helpdesk WP if it is wanted in the browser.
+- Categories and their custom fields are managed through the API only (`/api/ticket-categories`, AdminOnly) — there is no admin screen. Add one if the tree ever needs editing outside a REST client.
+- SLA policies still match on their own free-text `Category` string and are looked up by priority alone; they are not wired to the WP-1.9 category tree. Worth a dedicated WP.
+- Custom fields are not inherited from parent categories: a field attaches to exactly the category it was created on.
+- Dev Postgres resets between `aspire run`s whenever AppHost configuration changes (the unnamed `.WithDataVolume()` name embeds a config hash, so a new empty volume is mounted). This is **intentional** — see DECISIONS.md. Consequence: anything created through the API by hand is gone after a restart, so demo/verification fixtures must live in the seeder.
 
 ## Completed work packages
 
@@ -45,7 +48,7 @@
 - [x] WP-1.6 Email-to-ticket + outbound mail (2026-08-07)
 - [x] WP-1.7 Agent ticket UI (2026-08-07)
 - [x] WP-1.8 Self-service portal (2026-08-07)
-- [ ] WP-1.9 Categories + custom fields
+- [x] WP-1.9 Categories + custom fields (2026-08-07)
 - [ ] WP-1.10 Search/views/canned responses
 - [ ] WP-1.11 Seeder: ticket history
 

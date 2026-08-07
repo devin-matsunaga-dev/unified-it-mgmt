@@ -20,6 +20,9 @@ public sealed class HelpdeskDbContext(DbContextOptions<HelpdeskDbContext> option
     public DbSet<SlaPolicy> SlaPolicies => Set<SlaPolicy>();
     public DbSet<TicketSla> TicketSlas => Set<TicketSla>();
     public DbSet<TicketEmail> TicketEmails => Set<TicketEmail>();
+    public DbSet<TicketCategory> TicketCategories => Set<TicketCategory>();
+    public DbSet<TicketCustomField> TicketCustomFields => Set<TicketCustomField>();
+    public DbSet<TicketCustomFieldValue> TicketCustomFieldValues => Set<TicketCustomFieldValue>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

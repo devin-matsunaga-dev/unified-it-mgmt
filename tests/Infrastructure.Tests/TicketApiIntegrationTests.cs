@@ -599,6 +599,212 @@ public sealed class TicketApiIntegrationTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Categories_TreeWithRequiredField_ValidatesAndPersistsTicketValues()
+    {
+        var parentId = await CreateCategoryAsync("Hardware");
+        var categoryId = await CreateCategoryAsync("Laptop issue", parentId);
+        await CreateFieldAsync(categoryId, new { key = "asset_tag", label = "Asset tag", type = "Text", isRequired = true });
+        await CreateFieldAsync(categoryId, new
+        {
+            key = "floor", label = "Floor", type = "Select", isRequired = false, options = new[] { "First", "Second" },
+        });
+
+        using var treeRequest = Authenticated(HttpMethod.Get, "/api/ticket-categories", "EndUser");
+        using var treeResponse = await _client!.SendAsync(treeRequest);
+        var tree = await treeResponse.Content.ReadFromJsonAsync<List<CategoryDto>>();
+        Assert.Equal(HttpStatusCode.OK, treeResponse.StatusCode);
+        var parent = Assert.Single(Assert.IsType<List<CategoryDto>>(tree), item => item.Id == parentId);
+        var child = Assert.Single(parent.Children);
+        Assert.Equal("Laptop issue", child.Name);
+        Assert.Equal(["asset_tag", "floor"], child.Fields.Select(field => field.Key).Order());
+        Assert.Equal(["First", "Second"], Assert.Single(child.Fields, field => field.Key == "floor").Options);
+
+        var created = await CreateTicketAsync(
+            "category-requester", categoryId: categoryId,
+            customFields: new Dictionary<string, string> { ["asset_tag"] = " LT-4417 ", ["floor"] = "first" });
+
+        Assert.Equal(categoryId, created.CategoryId);
+        Assert.Equal("Laptop issue", created.CategoryName);
+        Assert.Equal("LT-4417", Assert.Single(created.CustomFields, field => field.Key == "asset_tag").Value);
+        Assert.Equal("First", Assert.Single(created.CustomFields, field => field.Key == "floor").Value);
+
+        using var getRequest = Authenticated(HttpMethod.Get, $"/api/tickets/{created.Id}");
+        using var getResponse = await _client.SendAsync(getRequest);
+        var fetched = await getResponse.Content.ReadFromJsonAsync<TicketDto>();
+        Assert.Equal("LT-4417", Assert.Single(
+            Assert.IsType<TicketDto>(fetched).CustomFields, field => field.Key == "asset_tag").Value);
+    }
+
+    [Fact]
+    public async Task CreateTicket_MissingRequiredCustomField_ReturnsValidationProblemWithoutTicket()
+    {
+        var categoryId = await CreateCategoryAsync($"Required field {Guid.NewGuid():N}");
+        await CreateFieldAsync(categoryId, new { key = "asset_tag", label = "Asset tag", type = "Text", isRequired = true });
+        using var request = Authenticated(HttpMethod.Post, "/api/tickets");
+        request.Content = JsonContent.Create(new
+        {
+            title = "Laptop will not boot", description = "Black screen since this morning.", type = "Incident",
+            urgency = "High", impact = "High", requesterId = "missing-field-requester", categoryId,
+            customFields = new Dictionary<string, string>(),
+        });
+
+        using var response = await _client!.SendAsync(request);
+        var problem = await response.Content.ReadAsStringAsync();
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Equal("application/problem+json", response.Content.Headers.ContentType?.MediaType);
+        Assert.Contains("Asset tag is required.", problem, StringComparison.Ordinal);
+        await using var scope = _application.Services.CreateAsyncScope();
+        Assert.False(await scope.ServiceProvider.GetRequiredService<HelpdeskDbContext>()
+            .Tickets.AnyAsync(ticket => ticket.RequesterId == "missing-field-requester"));
+    }
+
+    [Fact]
+    public async Task CreateTicket_SelectValueOutsideOptions_ReturnsValidationProblem()
+    {
+        var categoryId = await CreateCategoryAsync($"Select field {Guid.NewGuid():N}");
+        await CreateFieldAsync(categoryId, new
+        {
+            key = "floor", label = "Floor", type = "Select", isRequired = true, options = new[] { "First", "Second" },
+        });
+        using var request = Authenticated(HttpMethod.Post, "/api/tickets");
+        request.Content = JsonContent.Create(new
+        {
+            title = "Printer jam", description = "Paper keeps jamming.", type = "Incident", urgency = "Low",
+            impact = "Low", requesterId = "select-field-requester", categoryId,
+            customFields = new Dictionary<string, string> { ["floor"] = "Third" },
+        });
+
+        using var response = await _client!.SendAsync(request);
+        var problem = await response.Content.ReadAsStringAsync();
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Contains("Floor must be one of: First, Second.", problem, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task CreateTicket_UnknownCategory_ReturnsValidationProblem()
+    {
+        using var request = Authenticated(HttpMethod.Post, "/api/tickets");
+        request.Content = JsonContent.Create(new
+        {
+            title = "Unknown category", description = "Category was deleted.", type = "Incident", urgency = "Low",
+            impact = "Low", requesterId = "unknown-category-requester", categoryId = Guid.NewGuid(),
+        });
+
+        using var response = await _client!.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Equal("application/problem+json", response.Content.Headers.ContentType?.MediaType);
+    }
+
+    [Fact]
+    public async Task UpdateTicket_ClearingCategory_RemovesStoredCustomFieldValues()
+    {
+        var categoryId = await CreateCategoryAsync($"Recategorised {Guid.NewGuid():N}");
+        await CreateFieldAsync(categoryId, new { key = "asset_tag", label = "Asset tag", type = "Text", isRequired = false });
+        var ticket = await CreateTicketAsync(
+            "recategorise-requester", categoryId: categoryId,
+            customFields: new Dictionary<string, string> { ["asset_tag"] = "LT-1" });
+        Assert.Single(ticket.CustomFields);
+
+        using var request = Authenticated(HttpMethod.Put, $"/api/tickets/{ticket.Id}");
+        request.Content = JsonContent.Create(new
+        {
+            title = "Now uncategorised", description = "Category removed by an agent.", type = "Incident",
+            urgency = "Low", impact = "Low",
+        });
+        using var response = await _client!.SendAsync(request);
+        var updated = await response.Content.ReadFromJsonAsync<TicketDto>();
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Null(Assert.IsType<TicketDto>(updated).CategoryId);
+        Assert.Empty(updated.CustomFields);
+        await using var scope = _application.Services.CreateAsyncScope();
+        Assert.False(await scope.ServiceProvider.GetRequiredService<HelpdeskDbContext>()
+            .TicketCustomFieldValues.AnyAsync(value => value.TicketId == ticket.Id));
+    }
+
+    [Fact]
+    public async Task Categories_TechnicianCreatesCategory_ReturnsForbidden()
+    {
+        using var request = Authenticated(HttpMethod.Post, "/api/ticket-categories");
+        request.Content = JsonContent.Create(new { name = $"Not allowed {Guid.NewGuid():N}", parentId = (Guid?)null });
+
+        using var response = await _client!.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Categories_DeletingCategoryWithTickets_ReturnsConflict()
+    {
+        var categoryId = await CreateCategoryAsync($"In use {Guid.NewGuid():N}");
+        await CreateTicketAsync("in-use-requester", categoryId: categoryId);
+
+        using var request = Authenticated(HttpMethod.Delete, $"/api/ticket-categories/{categoryId}", "Admin");
+        using var response = await _client!.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+        Assert.Equal("application/problem+json", response.Content.Headers.ContentType?.MediaType);
+    }
+
+    [Fact]
+    public async Task Categories_CreateWithDuplicateNameUnderSameParent_ReturnsConflictAndAudits()
+    {
+        var name = $"Duplicate {Guid.NewGuid():N}";
+        var categoryId = await CreateCategoryAsync(name);
+        using var request = Authenticated(HttpMethod.Post, "/api/ticket-categories", "Admin");
+        request.Content = JsonContent.Create(new { name, parentId = (Guid?)null });
+
+        using var response = await _client!.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+        await using var scope = _application.Services.CreateAsyncScope();
+        Assert.Contains(
+            await scope.ServiceProvider.GetRequiredService<PlatformDbContext>().AuditEntries
+                .Where(entry => entry.EntityType == "TicketCategory" && entry.EntityId == categoryId.ToString())
+                .ToListAsync(),
+            entry => entry.Action == "Created");
+    }
+
+    [Fact]
+    public async Task Categories_MovingCategoryUnderItsOwnChild_ReturnsValidationProblem()
+    {
+        var parentId = await CreateCategoryAsync($"Cycle parent {Guid.NewGuid():N}");
+        var childId = await CreateCategoryAsync("Cycle child", parentId);
+        using var request = Authenticated(HttpMethod.Put, $"/api/ticket-categories/{parentId}", "Admin");
+        request.Content = JsonContent.Create(new
+        {
+            name = "Cycle parent renamed", parentId = childId, isActive = true, sortOrder = 0,
+        });
+
+        using var response = await _client!.SendAsync(request);
+        var problem = await response.Content.ReadAsStringAsync();
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Contains("cannot be nested inside itself", problem, StringComparison.Ordinal);
+    }
+
+    private async Task<Guid> CreateCategoryAsync(string name, Guid? parentId = null)
+    {
+        using var request = Authenticated(HttpMethod.Post, "/api/ticket-categories", "Admin");
+        request.Content = JsonContent.Create(new { name, parentId });
+        using var response = await _client!.SendAsync(request);
+        var category = await response.Content.ReadFromJsonAsync<CategoryDto>();
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        return Assert.IsType<CategoryDto>(category).Id;
+    }
+
+    private async Task CreateFieldAsync(Guid categoryId, object field)
+    {
+        using var request = Authenticated(HttpMethod.Post, $"/api/ticket-categories/{categoryId}/fields", "Admin");
+        request.Content = JsonContent.Create(field);
+        using var response = await _client!.SendAsync(request);
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+    }
+
+    [Fact]
     public async Task HelpdeskMigrations_CurrentModel_HasNoPendingChanges()
     {
         await using var scope = _application.Services.CreateAsyncScope();
@@ -708,7 +914,11 @@ public sealed class TicketApiIntegrationTests : IAsyncLifetime
         return Assert.IsType<SlaDto>(sla);
     }
 
-    private async Task<TicketDto> CreateTicketAsync(string requesterId, Guid? queueId = null)
+    private async Task<TicketDto> CreateTicketAsync(
+        string requesterId,
+        Guid? queueId = null,
+        Guid? categoryId = null,
+        IReadOnlyDictionary<string, string>? customFields = null)
     {
         using var request = Authenticated(HttpMethod.Post, "/api/tickets");
         request.Content = JsonContent.Create(new
@@ -720,6 +930,8 @@ public sealed class TicketApiIntegrationTests : IAsyncLifetime
             impact = "High",
             requesterId,
             queueId,
+            categoryId,
+            customFields,
         });
         using var response = await _client!.SendAsync(request);
         var ticket = await response.Content.ReadFromJsonAsync<TicketDto>();
@@ -807,7 +1019,14 @@ public sealed class TicketApiIntegrationTests : IAsyncLifetime
 
     private sealed record TicketDto(
         Guid Id, string Number, string Priority, string Status, string RequesterId,
-        string RequesterName, string? AssignedTechnicianId);
+        string RequesterName, string? AssignedTechnicianId, Guid? CategoryId, string? CategoryName,
+        IReadOnlyList<CustomFieldValueDto> CustomFields);
+
+    private sealed record CustomFieldValueDto(Guid FieldId, string Key, string Label, string Type, string Value);
+    private sealed record CategoryFieldDto(Guid Id, string Key, string Label, string Type, bool IsRequired, IReadOnlyList<string> Options);
+    private sealed record CategoryDto(
+        Guid Id, string Name, Guid? ParentId, bool IsActive,
+        IReadOnlyList<CategoryFieldDto> Fields, IReadOnlyList<CategoryDto> Children);
 
     private sealed record TeamDto(Guid Id);
     private sealed record QueueDto(Guid Id);

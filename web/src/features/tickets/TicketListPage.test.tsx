@@ -8,10 +8,10 @@ import { TicketListPage } from './TicketListPage'
 
 vi.mock('../../api/helpdesk', async (original) => {
   const actual = await original<typeof import('../../api/helpdesk')>()
-  return { ...actual, helpdeskApi: { ...actual.helpdeskApi, listTickets: vi.fn(), listQueues: vi.fn(), createTicket: vi.fn() } }
+  return { ...actual, helpdeskApi: { ...actual.helpdeskApi, listTickets: vi.fn(), listQueues: vi.fn(), listCategories: vi.fn(), createTicket: vi.fn() } }
 })
 
-const ticket: Ticket = { id: 'ticket-1', number: 'INC-000001', title: 'VPN unavailable', description: 'Cannot connect', type: 'Incident', urgency: 'High', impact: 'Medium', priority: 'High', status: 'New', requesterId: 'requester-1', requesterName: 'Requester One', queueId: null, queueName: null, assignedTechnicianId: null, createdAt: '2026-08-07T00:00:00Z', updatedAt: '2026-08-07T01:00:00Z' }
+const ticket: Ticket = { id: 'ticket-1', number: 'INC-000001', title: 'VPN unavailable', description: 'Cannot connect', type: 'Incident', urgency: 'High', impact: 'Medium', priority: 'High', status: 'New', requesterId: 'requester-1', requesterName: 'Requester One', queueId: null, queueName: null, assignedTechnicianId: null, createdAt: '2026-08-07T00:00:00Z', updatedAt: '2026-08-07T01:00:00Z', categoryId: null, categoryName: null, customFields: [] }
 
 function renderPage() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })
@@ -19,7 +19,7 @@ function renderPage() {
 }
 
 describe('TicketListPage', () => {
-  beforeEach(() => { vi.clearAllMocks(); localStorage.clear(); vi.mocked(helpdeskApi.listQueues).mockResolvedValue([{ id: 'queue-1', name: 'Service desk', teamId: 'team-1' }]) })
+  beforeEach(() => { vi.clearAllMocks(); localStorage.clear(); vi.mocked(helpdeskApi.listQueues).mockResolvedValue([{ id: 'queue-1', name: 'Service desk', teamId: 'team-1' }]); vi.mocked(helpdeskApi.listCategories).mockResolvedValue([]) })
 
   it('shows tickets and filters them by text', async () => {
     vi.mocked(helpdeskApi.listTickets).mockResolvedValue({ items: [ticket], total: 1, page: 1, pageSize: 200 })

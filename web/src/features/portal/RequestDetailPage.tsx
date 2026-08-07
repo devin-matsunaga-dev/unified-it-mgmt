@@ -70,7 +70,11 @@ export function RequestDetailPage() {
 
     <section className="rounded-xl border border-slate-200 bg-white p-6 dark:border-slate-800 dark:bg-slate-900">
       <h2 className="text-base font-semibold">What you told us</h2>
+      {item.categoryName && <p className="mt-2 text-sm text-slate-500">Category: {item.categoryName}</p>}
       <p className="mt-3 whitespace-pre-wrap text-[15px] leading-7 text-slate-600 dark:text-slate-300">{item.description}</p>
+      {item.customFields.length > 0 && <dl className="mt-5 grid gap-3 border-t border-slate-200 pt-5 text-sm sm:grid-cols-2 dark:border-slate-800">
+        {item.customFields.map((field) => <div key={field.fieldId}><dt className="text-slate-500">{field.label}</dt><dd className="mt-0.5 font-medium">{field.value}</dd></div>)}
+      </dl>}
     </section>
 
     <section className="rounded-xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">

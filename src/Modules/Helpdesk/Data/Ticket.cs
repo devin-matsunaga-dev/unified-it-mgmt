@@ -18,6 +18,9 @@ public sealed class Ticket
     public Guid? QueueId { get; set; }
     public TicketQueue? Queue { get; set; }
     public string? AssignedTechnicianId { get; set; }
+    public Guid? CategoryId { get; set; }
+    public TicketCategory? Category { get; set; }
+    public ICollection<TicketCustomFieldValue> CustomFieldValues { get; set; } = [];
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset UpdatedAt { get; set; }
 

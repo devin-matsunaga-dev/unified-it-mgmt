@@ -4,7 +4,7 @@ namespace Modules.Helpdesk.Features.Tickets;
 
 public interface ITicketService
 {
-    Task<TicketResponse?> CreateAsync(
+    Task<TicketWriteResult> CreateAsync(
         CreateTicketRequest request,
         ClaimsPrincipal actor,
         CancellationToken cancellationToken);
@@ -17,7 +17,7 @@ public interface ITicketService
         ClaimsPrincipal actor,
         CancellationToken cancellationToken);
 
-    Task<TicketResponse?> UpdateAsync(
+    Task<TicketWriteResult> UpdateAsync(
         Guid id,
         UpdateTicketRequest request,
         ClaimsPrincipal actor,
@@ -34,6 +34,20 @@ public interface ITicketService
         ClaimsPrincipal actor,
         CancellationToken cancellationToken);
 }
+
+public enum TicketWriteOutcome
+{
+    Success,
+    TicketNotFound,
+    QueueNotFound,
+    CategoryNotFound,
+    InvalidCustomFields,
+}
+
+public sealed record TicketWriteResult(
+    TicketWriteOutcome Outcome,
+    TicketResponse? Ticket = null,
+    IReadOnlyDictionary<string, string[]>? Errors = null);
 
 public enum TransitionTicketOutcome
 {

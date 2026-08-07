@@ -8,6 +8,7 @@ using Modules.Helpdesk.Data;
 using Platform.Auditing;
 using Platform.Notifications;
 using Modules.Helpdesk.Features.Sla;
+using Modules.Helpdesk.Features.Categories;
 
 namespace Modules.Helpdesk.Features.Tickets;
 
@@ -18,12 +19,24 @@ public sealed class TicketService(
     ISlaService slaService,
     INotificationService notificationService) : ITicketService
 {
-    public async Task<TicketResponse?> CreateAsync(
+    public async Task<TicketWriteResult> CreateAsync(
         CreateTicketRequest request,
         ClaimsPrincipal actor,
         CancellationToken cancellationToken)
     {
         var now = DateTimeOffset.UtcNow;
+        var category = await ResolveCategoryAsync(request.CategoryId, cancellationToken);
+        if (request.CategoryId is not null && category is null)
+        {
+            return new(TicketWriteOutcome.CategoryNotFound);
+        }
+
+        var bound = CustomFieldValueBinder.Bind([.. category?.Fields ?? []], request.CustomFields);
+        if (bound.Errors.Count > 0)
+        {
+            return new(TicketWriteOutcome.InvalidCustomFields, Errors: bound.Errors);
+        }
+
         var requesterId = IsEndUser(actor) ? GetActorId(actor) : request.RequesterId ?? GetActorId(actor);
         var requesterName = request.RequesterId is null || IsEndUser(actor)
             ? GetActorDisplayName(actor)
@@ -38,7 +51,7 @@ public sealed class TicketService(
                 .SingleOrDefaultAsync(item => item.Id == request.QueueId, cancellationToken);
             if (queue is null)
             {
-                return null;
+                return new(TicketWriteOutcome.QueueNotFound);
             }
 
             var technicians = queue.Team.Members.Select(member => member.TechnicianId)
@@ -69,9 +82,19 @@ public sealed class TicketService(
             QueueId = queue?.Id,
             Queue = queue,
             AssignedTechnicianId = assignedTechnicianId,
+            CategoryId = category?.Id,
+            Category = category,
             CreatedAt = now,
             UpdatedAt = now,
         };
+        foreach (var (fieldId, value) in bound.Values)
+        {
+            ticket.CustomFieldValues.Add(new TicketCustomFieldValue
+            {
+                Id = Guid.CreateVersion7(), TicketId = ticket.Id, FieldId = fieldId,
+                Field = category!.Fields.Single(field => field.Id == fieldId), Value = value, UpdatedAt = now,
+            });
+        }
 
         await using var transaction = await dbContext.Database.BeginTransactionAsync(cancellationToken);
         dbContext.Tickets.Add(ticket);
@@ -96,7 +119,7 @@ public sealed class TicketService(
         var response = Map(ticket);
         await auditService.WriteAsync(actor, "Created", "Ticket", ticket.Id.ToString(), null, response, cancellationToken);
         await NotifyAsync(ticket, "TicketCreated", "created", cancellationToken);
-        return response;
+        return new(TicketWriteOutcome.Success, response);
     }
 
     public async Task<TicketResponse?> GetAsync(
@@ -123,7 +146,7 @@ public sealed class TicketService(
         return new TicketPageResponse(tickets.Select(Map).ToList(), total, page, pageSize);
     }
 
-    public async Task<TicketResponse?> UpdateAsync(
+    public async Task<TicketWriteResult> UpdateAsync(
         Guid id,
         UpdateTicketRequest request,
         ClaimsPrincipal actor,
@@ -132,7 +155,19 @@ public sealed class TicketService(
         var ticket = await VisibleTickets(actor).SingleOrDefaultAsync(item => item.Id == id, cancellationToken);
         if (ticket is null)
         {
-            return null;
+            return new(TicketWriteOutcome.TicketNotFound);
+        }
+
+        var category = await ResolveCategoryAsync(request.CategoryId, cancellationToken);
+        if (request.CategoryId is not null && category is null)
+        {
+            return new(TicketWriteOutcome.CategoryNotFound);
+        }
+
+        var bound = CustomFieldValueBinder.Bind([.. category?.Fields ?? []], request.CustomFields);
+        if (bound.Errors.Count > 0)
+        {
+            return new(TicketWriteOutcome.InvalidCustomFields, Errors: bound.Errors);
         }
 
         var before = Map(ticket);
@@ -142,7 +177,10 @@ public sealed class TicketService(
         ticket.Urgency = request.Urgency;
         ticket.Impact = request.Impact;
         ticket.Priority = TicketPriorityMatrix.Calculate(request.Urgency, request.Impact);
+        ticket.CategoryId = category?.Id;
+        ticket.Category = category;
         ticket.UpdatedAt = DateTimeOffset.UtcNow;
+        ApplyCustomFieldValues(ticket, category, bound.Values);
 
         await publishEndpoint.Publish(new TicketUpdated(
             Guid.CreateVersion7(), ticket.UpdatedAt, ticket.Id, ticket.Number, ticket.RequesterId,
@@ -152,7 +190,44 @@ public sealed class TicketService(
         var after = Map(ticket);
         await auditService.WriteAsync(actor, "Updated", "Ticket", ticket.Id.ToString(), before, after, cancellationToken);
         await NotifyAsync(ticket, "TicketUpdated", "updated", cancellationToken);
-        return after;
+        return new(TicketWriteOutcome.Success, after);
+    }
+
+    private async Task<TicketCategory?> ResolveCategoryAsync(Guid? categoryId, CancellationToken cancellationToken) =>
+        categoryId is null
+            ? null
+            : await dbContext.TicketCategories.Include(category => category.Fields)
+                .SingleOrDefaultAsync(category => category.Id == categoryId && category.IsActive, cancellationToken);
+
+    private void ApplyCustomFieldValues(
+        Ticket ticket,
+        TicketCategory? category,
+        IReadOnlyDictionary<Guid, string> values)
+    {
+        foreach (var existing in ticket.CustomFieldValues.ToList())
+        {
+            if (values.TryGetValue(existing.FieldId, out var value))
+            {
+                existing.Value = value;
+                existing.UpdatedAt = ticket.UpdatedAt;
+            }
+            else
+            {
+                dbContext.TicketCustomFieldValues.Remove(existing);
+                ticket.CustomFieldValues.Remove(existing);
+            }
+        }
+
+        foreach (var (fieldId, value) in values.Where(
+                     entry => ticket.CustomFieldValues.All(item => item.FieldId != entry.Key)))
+        {
+            ticket.CustomFieldValues.Add(new TicketCustomFieldValue
+            {
+                Id = Guid.CreateVersion7(), TicketId = ticket.Id, FieldId = fieldId,
+                Field = category!.Fields.Single(field => field.Id == fieldId), Value = value,
+                UpdatedAt = ticket.UpdatedAt,
+            });
+        }
     }
 
     public async Task<TransitionTicketResult> TransitionAsync(
@@ -265,7 +340,10 @@ public sealed class TicketService(
 
     private IQueryable<Ticket> VisibleTickets(ClaimsPrincipal actor)
     {
-        var query = dbContext.Tickets.Include(ticket => ticket.Status).Include(ticket => ticket.Queue).AsQueryable();
+        var query = dbContext.Tickets.Include(ticket => ticket.Status).Include(ticket => ticket.Queue)
+            .Include(ticket => ticket.Category)
+            .Include(ticket => ticket.CustomFieldValues).ThenInclude(value => value.Field)
+            .AsQueryable();
         return IsEndUser(actor) ? query.Where(ticket => ticket.RequesterId == GetActorId(actor)) : query;
     }
 
@@ -315,5 +393,11 @@ public sealed class TicketService(
         ticket.Queue?.Name,
         ticket.AssignedTechnicianId,
         ticket.CreatedAt,
-        ticket.UpdatedAt);
+        ticket.UpdatedAt,
+        ticket.CategoryId,
+        ticket.Category?.Name,
+        [.. ticket.CustomFieldValues
+            .OrderBy(value => value.Field.SortOrder).ThenBy(value => value.Field.Label)
+            .Select(value => new TicketCustomFieldValueResponse(
+                value.FieldId, value.Field.Key, value.Field.Label, value.Field.Type, value.Value))]);
 }

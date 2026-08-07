@@ -27,10 +27,20 @@ public static class TicketEndpoints
                 return Results.ValidationProblem(validation.ToDictionary());
             }
 
-            var ticket = await service.CreateAsync(request, user, cancellationToken);
-            return ticket is null
-                ? Results.Problem(statusCode: StatusCodes.Status404NotFound, title: "Queue not found.")
-                : Results.Created($"/api/tickets/{ticket.Id}", ticket);
+            var result = await service.CreateAsync(request, user, cancellationToken);
+            return result.Outcome switch
+            {
+                TicketWriteOutcome.Success => Results.Created($"/api/tickets/{result.Ticket!.Id}", result.Ticket),
+                TicketWriteOutcome.QueueNotFound => Results.Problem(
+                    statusCode: StatusCodes.Status404NotFound, title: "Queue not found."),
+                TicketWriteOutcome.CategoryNotFound => Results.ValidationProblem(
+                    new Dictionary<string, string[]>
+                    {
+                        [nameof(request.CategoryId)] = ["Category not found or inactive."],
+                    }),
+                TicketWriteOutcome.InvalidCustomFields => Results.ValidationProblem(result.Errors!),
+                var outcome => throw new InvalidOperationException($"Unknown ticket write outcome '{outcome}'."),
+            };
         });
 
         group.MapGet("/{id:guid}", async (
@@ -87,10 +97,20 @@ public static class TicketEndpoints
                 return Results.ValidationProblem(validation.ToDictionary());
             }
 
-            var ticket = await service.UpdateAsync(id, request, user, cancellationToken);
-            return ticket is null
-                ? Results.Problem(statusCode: StatusCodes.Status404NotFound, title: "Ticket not found.")
-                : Results.Ok(ticket);
+            var result = await service.UpdateAsync(id, request, user, cancellationToken);
+            return result.Outcome switch
+            {
+                TicketWriteOutcome.Success => Results.Ok(result.Ticket),
+                TicketWriteOutcome.TicketNotFound => Results.Problem(
+                    statusCode: StatusCodes.Status404NotFound, title: "Ticket not found."),
+                TicketWriteOutcome.CategoryNotFound => Results.ValidationProblem(
+                    new Dictionary<string, string[]>
+                    {
+                        [nameof(request.CategoryId)] = ["Category not found or inactive."],
+                    }),
+                TicketWriteOutcome.InvalidCustomFields => Results.ValidationProblem(result.Errors!),
+                var outcome => throw new InvalidOperationException($"Unknown ticket write outcome '{outcome}'."),
+            };
         });
 
         group.MapPost("/{id:guid}/transitions", async (

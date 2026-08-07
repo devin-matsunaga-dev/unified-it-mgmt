@@ -53,11 +53,11 @@ public sealed partial class EmailIngestionService(
                 CleanSubject(message.Subject), message.Body[..Math.Min(message.Body.Length, 10_000)],
                 TicketType.Incident, TicketLevel.Medium, TicketLevel.Medium, message.Sender, null),
                 actor, cancellationToken);
-            if (created is null)
+            if (created.Ticket is null)
             {
                 return new(EmailIngestionOutcome.Rejected, Error: "The ticket could not be created.");
             }
-            ticket = await dbContext.Tickets.SingleAsync(item => item.Id == created.Id, cancellationToken);
+            ticket = await dbContext.Tickets.SingleAsync(item => item.Id == created.Ticket.Id, cancellationToken);
             outcome = EmailIngestionOutcome.CreatedTicket;
         }
         else

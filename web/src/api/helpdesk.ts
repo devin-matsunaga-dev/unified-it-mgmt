@@ -4,6 +4,37 @@ export type TicketLevel = 'Low' | 'Medium' | 'High'
 export type TicketType = 'Incident' | 'ServiceRequest'
 export type TicketPriority = 'Low' | 'Medium' | 'High' | 'Critical'
 
+export type CustomFieldType = 'Text' | 'Number' | 'Date' | 'Select'
+
+export type TicketCustomField = {
+  id: string
+  categoryId: string
+  key: string
+  label: string
+  type: CustomFieldType
+  isRequired: boolean
+  options: string[]
+  sortOrder: number
+}
+
+export type TicketCategory = {
+  id: string
+  name: string
+  parentId: string | null
+  isActive: boolean
+  sortOrder: number
+  fields: TicketCustomField[]
+  children: TicketCategory[]
+}
+
+export type TicketCustomFieldValue = {
+  fieldId: string
+  key: string
+  label: string
+  type: CustomFieldType
+  value: string
+}
+
 export type Ticket = {
   id: string
   number: string
@@ -21,6 +52,9 @@ export type Ticket = {
   assignedTechnicianId: string | null
   createdAt: string
   updatedAt: string
+  categoryId: string | null
+  categoryName: string | null
+  customFields: TicketCustomFieldValue[]
 }
 
 export type TicketPage = { items: Ticket[]; total: number; page: number; pageSize: number }
@@ -32,6 +66,8 @@ export type CreateTicketInput = {
   impact: TicketLevel
   requesterId: string | null
   queueId: string | null
+  categoryId: string | null
+  customFields: Record<string, string>
 }
 export type Comment = { id: string; ticketId: string; body: string; isInternal: boolean; authorId: string; authorName: string; createdAt: string }
 export type Transition = { id: string; ticketId: string; fromStatus: string; toStatus: string; resolutionNote: string | null; actorId: string; occurredAt: string }
@@ -53,6 +89,7 @@ export type SlaRemaining = {
 export const helpdeskApi = {
   listTickets: () => apiRequest<TicketPage>('/api/tickets?page=1&pageSize=200'),
   listQueues: () => apiRequest<TicketQueue[]>('/api/queues'),
+  listCategories: () => apiRequest<TicketCategory[]>('/api/ticket-categories'),
   getTicket: (id: string) => apiRequest<Ticket>(`/api/tickets/${id}`),
   createTicket: (input: CreateTicketInput) => apiRequest<Ticket>('/api/tickets', { method: 'POST', body: JSON.stringify(input) }),
   getComments: (id: string) => apiRequest<Comment[]>(`/api/tickets/${id}/comments`),

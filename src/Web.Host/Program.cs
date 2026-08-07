@@ -4,6 +4,7 @@ using Modules.Helpdesk;
 using Modules.Helpdesk.Data;
 using Modules.Helpdesk.Features.Tickets;
 using Modules.Helpdesk.Features.Assignments;
+using Modules.Helpdesk.Features.Categories;
 using Modules.Helpdesk.Features.Interactions;
 using Modules.Helpdesk.Features.Sla;
 using Platform;
@@ -59,6 +60,7 @@ app.MapTicketEndpoints();
 app.MapAssignmentEndpoints();
 app.MapInteractionEndpoints();
 app.MapSlaEndpoints();
+app.MapCategoryEndpoints();
 
 app.Run();
 
