@@ -20,6 +20,8 @@ public sealed class TicketConfiguration : IEntityTypeConfiguration<Ticket>
         builder.Property(ticket => ticket.StatusId).HasDefaultValue(DefaultTicketStatuses.NewId);
         builder.HasOne(ticket => ticket.Status).WithMany().HasForeignKey(ticket => ticket.StatusId).OnDelete(DeleteBehavior.Restrict);
         builder.Property(ticket => ticket.RequesterId).HasMaxLength(200).IsRequired();
+        builder.Property(ticket => ticket.RequesterDisplayName).HasMaxLength(200);
+        builder.Property(ticket => ticket.RequesterEmail).HasMaxLength(320);
         builder.Property(ticket => ticket.AssignedTechnicianId).HasMaxLength(200);
         builder.HasOne(ticket => ticket.Queue).WithMany().HasForeignKey(ticket => ticket.QueueId)
             .OnDelete(DeleteBehavior.Restrict);

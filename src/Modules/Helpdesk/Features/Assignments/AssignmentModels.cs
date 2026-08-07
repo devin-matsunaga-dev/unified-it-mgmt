@@ -7,8 +7,10 @@ public sealed record CreateTeamRequest(string Name);
 public sealed record AddTeamMemberRequest(string TechnicianId);
 public sealed record CreateQueueRequest(string Name, Guid TeamId);
 public sealed record AssignTicketRequest(string TechnicianId);
+public sealed record PlaceTicketInQueueRequest(Guid QueueId);
 public sealed record TeamResponse(Guid Id, string Name);
 public sealed record QueueResponse(Guid Id, string Name, Guid TeamId);
+public sealed record EligibleTechnicianResponse(string Id);
 public sealed record TicketAssignmentResponse(
     Guid Id,
     Guid TicketId,
@@ -26,6 +28,17 @@ public enum AssignmentOutcome
     TicketHasNoQueue,
     TechnicianNotInQueueTeam,
 }
+
+public enum QueuePlacementOutcome
+{
+    Success,
+    TicketNotFound,
+    QueueNotFound,
+}
+
+public sealed record QueuePlacementResult(
+    QueuePlacementOutcome Outcome,
+    TicketResponse? Ticket = null);
 
 public sealed record AssignmentResult(
     AssignmentOutcome Outcome,

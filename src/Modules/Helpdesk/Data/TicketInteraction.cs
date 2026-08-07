@@ -8,6 +8,7 @@ public sealed class TicketComment
     public string Body { get; set; } = string.Empty;
     public bool IsInternal { get; set; }
     public string AuthorId { get; set; } = string.Empty;
+    public string? AuthorDisplayName { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
 }
 

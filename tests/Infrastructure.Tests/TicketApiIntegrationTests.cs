@@ -88,6 +88,29 @@ public sealed class TicketApiIntegrationTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Tickets_CreateForCurrentActor_ReturnsHumanReadableRequesterName()
+    {
+        using var request = Authenticated(HttpMethod.Post, "/api/tickets", userId: "requester-subject-id");
+        request.Content = JsonContent.Create(new
+        {
+            title = "Current requester ticket",
+            description = "Created without an explicit requester.",
+            type = "Incident",
+            urgency = "Low",
+            impact = "Low",
+        });
+
+        using var response = await _client!.SendAsync(request);
+        var ticket = await response.Content.ReadFromJsonAsync<TicketDto>();
+
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        Assert.Equal("requester-subject-id", Assert.IsType<TicketDto>(ticket).RequesterId);
+        Assert.Equal("test-user", ticket.RequesterName);
+        Assert.Contains(_application.Notifications.Messages, message =>
+            message.Template.Name == "TicketCreated" && message.Recipient == "requester-subject-id@example.test");
+    }
+
+    [Fact]
     public async Task EmailIngestion_NewMessageCreatesTicketAttachmentAndDeduplicates()
     {
         await using var scope = _application.Services.CreateAsyncScope();
@@ -106,6 +129,7 @@ public sealed class TicketApiIntegrationTests : IAsyncLifetime
         var ticket = await dbContext.Tickets.SingleAsync(item => item.Id == first.TicketId);
         Assert.Equal(message.Body, ticket.Description);
         Assert.Equal(message.Sender, ticket.RequesterId);
+        Assert.Equal(message.Sender, ticket.RequesterEmail);
         Assert.Single(await dbContext.TicketAttachments.Where(item => item.TicketId == ticket.Id).ToListAsync());
         Assert.Single(await dbContext.TicketEmails.Where(item => item.TicketId == ticket.Id).ToListAsync());
     }
@@ -130,6 +154,8 @@ public sealed class TicketApiIntegrationTests : IAsyncLifetime
         var comment = await dbContext.TicketComments.SingleAsync(item => item.TicketId == ticketId);
         Assert.Equal("It fails with error 720.", comment.Body);
         Assert.False(comment.IsInternal);
+        Assert.DoesNotContain(_application.Notifications.Messages,
+            message => message.Template.Name == "TicketCommentAdded" && message.Model.ToString()!.Contains(ticketId.ToString(), StringComparison.Ordinal));
     }
 
     [Fact]
@@ -349,9 +375,75 @@ public sealed class TicketApiIntegrationTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task EligibleTechnicians_QueuedTicket_ReturnsOnlyQueueTeamMembersInStableOrder()
+    {
+        var queueId = await CreateQueueWithMembersAsync("tech-z", "tech-a");
+        var ticket = await CreateTicketAsync("eligible-requester", queueId);
+        using var request = Authenticated(HttpMethod.Get, $"/api/tickets/{ticket.Id}/eligible-technicians");
+
+        using var response = await _client!.SendAsync(request);
+        var technicians = await response.Content.ReadFromJsonAsync<List<EligibleTechnicianDto>>();
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(["tech-a", "tech-z"], Assert.IsType<List<EligibleTechnicianDto>>(technicians).Select(item => item.Id));
+    }
+
+    [Fact]
+    public async Task EligibleTechnicians_MissingTicket_ReturnsProblemDetails()
+    {
+        using var request = Authenticated(HttpMethod.Get, $"/api/tickets/{Guid.NewGuid()}/eligible-technicians");
+
+        using var response = await _client!.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+        Assert.Equal("application/problem+json", response.Content.Headers.ContentType?.MediaType);
+    }
+
+    [Fact]
+    public async Task QueuePlacement_UnqueuedTicket_AssignsFirstTeamMemberAndAuditsChange()
+    {
+        var queueId = await CreateQueueWithMembersAsync("queue-tech-b", "queue-tech-a");
+        var ticket = await CreateTicketAsync("queue-placement-requester");
+        using var listRequest = Authenticated(HttpMethod.Get, "/api/queues");
+        using var listResponse = await _client!.SendAsync(listRequest);
+        var queues = await listResponse.Content.ReadFromJsonAsync<List<QueueDto>>();
+        Assert.Contains(Assert.IsType<List<QueueDto>>(queues), queue => queue.Id == queueId);
+
+        using var request = Authenticated(HttpMethod.Post, $"/api/tickets/{ticket.Id}/queue");
+        request.Content = JsonContent.Create(new { queueId });
+        using var response = await _client.SendAsync(request);
+        var updated = await response.Content.ReadFromJsonAsync<TicketDto>();
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal("queue-tech-a", Assert.IsType<TicketDto>(updated).AssignedTechnicianId);
+        await using var scope = _application.Services.CreateAsyncScope();
+        Assert.Contains(await scope.ServiceProvider.GetRequiredService<PlatformDbContext>().AuditEntries
+            .Where(entry => entry.EntityId == ticket.Id.ToString()).ToListAsync(),
+            entry => entry.Action == "QueueChanged");
+    }
+
+    [Fact]
+    public async Task QueuePlacement_UnknownQueue_ReturnsValidationProblemWithoutChangingTicket()
+    {
+        var ticket = await CreateTicketAsync("unknown-queue-requester");
+        using var request = Authenticated(HttpMethod.Post, $"/api/tickets/{ticket.Id}/queue");
+        request.Content = JsonContent.Create(new { queueId = Guid.NewGuid() });
+
+        using var response = await _client!.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Equal("application/problem+json", response.Content.Headers.ContentType?.MediaType);
+        await using var scope = _application.Services.CreateAsyncScope();
+        var unchanged = await scope.ServiceProvider.GetRequiredService<HelpdeskDbContext>()
+            .Tickets.SingleAsync(item => item.Id == ticket.Id);
+        Assert.Null(unchanged.QueueId);
+        Assert.Null(unchanged.AssignedTechnicianId);
+    }
+
+    [Fact]
     public async Task Comments_InternalAndPublic_EndUserReadsOnlyPublicComment()
     {
-        var ticket = await CreateTicketAsync("comment-requester");
+        var ticket = await CreateTicketAsync("comment-requester@example.test");
         await AddCommentAsync(ticket.Id, "Visible reply", false);
         await AddCommentAsync(ticket.Id, "Technician-only note", true);
 
@@ -359,9 +451,10 @@ public sealed class TicketApiIntegrationTests : IAsyncLifetime
         using var technicianResponse = await _client!.SendAsync(technicianRequest);
         var technicianComments = await technicianResponse.Content.ReadFromJsonAsync<List<CommentDto>>();
         Assert.Equal(2, technicianComments?.Count);
+        Assert.All(Assert.IsType<List<CommentDto>>(technicianComments), comment => Assert.Equal("test-user", comment.AuthorName));
 
         using var endUserRequest = Authenticated(
-            HttpMethod.Get, $"/api/tickets/{ticket.Id}/comments", "EndUser", "comment-requester");
+            HttpMethod.Get, $"/api/tickets/{ticket.Id}/comments", "EndUser", "comment-requester@example.test");
         using var endUserResponse = await _client.SendAsync(endUserRequest);
         var endUserComments = await endUserResponse.Content.ReadFromJsonAsync<List<CommentDto>>();
 
@@ -369,6 +462,9 @@ public sealed class TicketApiIntegrationTests : IAsyncLifetime
         var comment = Assert.Single(Assert.IsType<List<CommentDto>>(endUserComments));
         Assert.Equal("Visible reply", comment.Body);
         Assert.False(comment.IsInternal);
+        var notification = Assert.Single(_application.Notifications.Messages, message =>
+            message.Template.Name == "TicketCommentAdded" && message.Recipient == "comment-requester@example.test");
+        Assert.Equal("Visible reply", notification.Template.Body);
     }
 
     [Fact]
@@ -649,13 +745,16 @@ public sealed class TicketApiIntegrationTests : IAsyncLifetime
         await _application.DisposeAsync();
     }
 
-    private sealed record TicketDto(Guid Id, string Number, string Priority, string Status, string? AssignedTechnicianId);
+    private sealed record TicketDto(
+        Guid Id, string Number, string Priority, string Status, string RequesterId,
+        string RequesterName, string? AssignedTechnicianId);
 
     private sealed record TeamDto(Guid Id);
     private sealed record QueueDto(Guid Id);
     private sealed record TicketPageDto(IReadOnlyList<TicketDto> Items, int Total);
     private sealed record AssignmentDto(string? FromTechnicianId, string ToTechnicianId, string Kind);
-    private sealed record CommentDto(string Body, bool IsInternal);
+    private sealed record EligibleTechnicianDto(string Id);
+    private sealed record CommentDto(string Body, bool IsInternal, string AuthorName);
     private sealed record WorklogDto(int Minutes);
     private sealed record AttachmentDto(Guid Id, long Size, string DownloadUrl);
 
@@ -758,6 +857,7 @@ public sealed class TicketApiIntegrationTests : IAsyncLifetime
             {
                 new Claim("sub", userId),
                 new Claim(ClaimTypes.Name, "test-user"),
+                new Claim(ClaimTypes.Email, $"{userId}@example.test"),
                 new Claim(ClaimTypes.Role, role.ToString()),
             };
             var principal = new ClaimsPrincipal(new ClaimsIdentity(claims, TestScheme));

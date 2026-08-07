@@ -1,6 +1,6 @@
 import { Bell, Boxes, ChevronRight, CircleHelp, Gauge, Headphones, LogOut, Mail, Menu, MonitorCog, Search, Settings, ShieldCheck, Users, X } from 'lucide-react'
 import { useEffect, useRef, useState, type ComponentType } from 'react'
-import { NavLink, Outlet } from 'react-router-dom'
+import { NavLink, Outlet, useLocation } from 'react-router-dom'
 import { useAuth } from '../auth/AuthProvider'
 import type { AppRole } from '../auth/auth'
 import { cn } from '../lib/utils'
@@ -18,6 +18,7 @@ const navigation: NavItem[] = [
 ]
 
 export function AppShell() {
+  const { pathname } = useLocation()
   const { user, roles, signOut } = useAuth()
   const [open, setOpen] = useState(false)
   const [accountOpen, setAccountOpen] = useState(false)
@@ -25,6 +26,9 @@ export function AppShell() {
   const visibleNavigation = navigation.filter((item) => !item.roles || item.roles.some((role) => roles.includes(role)))
   const displayName = user?.profile.name ?? user?.profile.preferred_username ?? 'User'
   const email = user?.profile.email
+  const pageContext = pathname.startsWith('/tickets')
+    ? { title: 'Tickets', subtitle: 'Manage requests across the service desk.' }
+    : { title: 'Overview', subtitle: 'Your unified IT environment at a glance.' }
 
   useEffect(() => {
     if (!accountOpen) return
@@ -71,7 +75,7 @@ export function AppShell() {
     </aside>
     <main className="min-h-screen lg:ml-[232px]">
       <header className="flex min-h-20 items-center gap-3 border-b border-slate-200 bg-white px-6 dark:border-slate-800 dark:bg-slate-900 lg:px-7">
-        <div className="ml-12 lg:ml-0"><h1 className="text-xl font-bold sm:text-2xl">Overview</h1><p className="hidden text-sm text-slate-500 sm:block">Your unified IT environment at a glance.</p></div>
+        <div className="ml-12 lg:ml-0"><h1 className="text-xl font-bold sm:text-2xl">{pageContext.title}</h1><p className="hidden text-sm text-slate-500 sm:block">{pageContext.subtitle}</p></div>
         <div className="ml-auto hidden h-10 max-w-sm flex-1 items-center gap-2 rounded-lg border border-slate-200 px-3 text-slate-500 md:flex dark:border-slate-700"><Search size={18} /><input aria-label="Global search" className="w-full bg-transparent text-sm outline-none" placeholder="Search..." /></div>
         <ThemeToggle /><Button variant="ghost" className="relative size-10 p-0" aria-label="Notifications"><Bell size={20} /><span className="absolute right-1 top-1 grid size-4 place-items-center rounded-full bg-blue-600 text-[10px] text-white">3</span></Button><Button variant="ghost" className="hidden size-10 p-0 sm:inline-flex" aria-label="Help"><CircleHelp size={20} /></Button>
       </header>

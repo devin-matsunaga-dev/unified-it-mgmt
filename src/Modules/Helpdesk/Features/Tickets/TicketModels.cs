@@ -29,6 +29,7 @@ public sealed record TicketResponse(
     TicketPriority Priority,
     string Status,
     string RequesterId,
+    string RequesterName,
     Guid? QueueId,
     string? QueueName,
     string? AssignedTechnicianId,

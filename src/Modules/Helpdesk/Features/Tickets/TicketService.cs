@@ -1,4 +1,5 @@
 using System.Security.Claims;
+using System.Net.Mail;
 
 using Contracts.Events;
 using MassTransit;
@@ -24,6 +25,11 @@ public sealed class TicketService(
     {
         var now = DateTimeOffset.UtcNow;
         var requesterId = IsEndUser(actor) ? GetActorId(actor) : request.RequesterId ?? GetActorId(actor);
+        var requesterName = request.RequesterId is null || IsEndUser(actor)
+            ? GetActorDisplayName(actor)
+            : request.RequesterId;
+        var requesterEmail = ValidEmailOrNull(request.RequesterId)
+            ?? (request.RequesterId is null || IsEndUser(actor) ? GetActorEmail(actor) : null);
         TicketQueue? queue = null;
         string? assignedTechnicianId = null;
         if (request.QueueId is not null)
@@ -58,6 +64,8 @@ public sealed class TicketService(
             Priority = TicketPriorityMatrix.Calculate(request.Urgency, request.Impact),
             StatusId = DefaultTicketStatuses.NewId,
             RequesterId = requesterId,
+            RequesterDisplayName = requesterName,
+            RequesterEmail = requesterEmail,
             QueueId = queue?.Id,
             Queue = queue,
             AssignedTechnicianId = assignedTechnicianId,
@@ -259,9 +267,19 @@ public sealed class TicketService(
         actor.FindFirstValue("sub") ?? actor.FindFirstValue(ClaimTypes.NameIdentifier)
         ?? throw new InvalidOperationException("An authenticated actor identifier is required.");
 
+    private static string GetActorDisplayName(ClaimsPrincipal actor) =>
+        actor.FindFirstValue("name") ?? actor.Identity?.Name ?? actor.FindFirstValue("preferred_username")
+        ?? GetActorId(actor);
+
+    private static string? GetActorEmail(ClaimsPrincipal actor) =>
+        ValidEmailOrNull(actor.FindFirstValue(ClaimTypes.Email) ?? actor.FindFirstValue("email"));
+
+    private static string? ValidEmailOrNull(string? value) =>
+        MailAddress.TryCreate(value, out var address) ? address.Address : null;
+
     private Task NotifyAsync(Ticket ticket, string templateName, string action, CancellationToken cancellationToken) =>
         notificationService.SendAsync(new NotificationMessage(
-            ticket.RequesterId,
+            ticket.RequesterEmail ?? string.Empty,
             new NotificationTemplate(
                 templateName,
                 $"[{ticket.Number}] Ticket {action}: {ticket.Title}",
@@ -284,6 +302,7 @@ public sealed class TicketService(
         ticket.Priority,
         ticket.Status.Name,
         ticket.RequesterId,
+        ticket.RequesterDisplayName ?? ticket.RequesterId,
         ticket.QueueId,
         ticket.Queue?.Name,
         ticket.AssignedTechnicianId,

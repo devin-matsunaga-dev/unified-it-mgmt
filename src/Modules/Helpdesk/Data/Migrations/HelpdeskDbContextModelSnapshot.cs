@@ -220,6 +220,16 @@ namespace Modules.Helpdesk.Data.Migrations
                         .HasColumnType("character varying(200)")
                         .HasColumnName("requester_id");
 
+                    b.Property<string>("RequesterDisplayName")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)")
+                        .HasColumnName("requester_display_name");
+
+                    b.Property<string>("RequesterEmail")
+                        .HasMaxLength(320)
+                        .HasColumnType("character varying(320)")
+                        .HasColumnName("requester_email");
+
                     b.Property<long>("SequenceNumber")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("bigint")
@@ -396,6 +406,11 @@ namespace Modules.Helpdesk.Data.Migrations
                         .HasMaxLength(200)
                         .HasColumnType("character varying(200)")
                         .HasColumnName("author_id");
+
+                    b.Property<string>("AuthorDisplayName")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)")
+                        .HasColumnName("author_display_name");
 
                     b.Property<string>("Body")
                         .IsRequired()

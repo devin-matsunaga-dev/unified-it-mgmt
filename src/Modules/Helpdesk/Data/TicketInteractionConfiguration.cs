@@ -10,6 +10,7 @@ public sealed class TicketCommentConfiguration : IEntityTypeConfiguration<Ticket
         builder.HasKey(comment => comment.Id);
         builder.Property(comment => comment.Body).HasMaxLength(10_000).IsRequired();
         builder.Property(comment => comment.AuthorId).HasMaxLength(200).IsRequired();
+        builder.Property(comment => comment.AuthorDisplayName).HasMaxLength(200);
         builder.HasOne(comment => comment.Ticket).WithMany().HasForeignKey(comment => comment.TicketId)
             .OnDelete(DeleteBehavior.Cascade);
         builder.HasIndex(comment => new { comment.TicketId, comment.CreatedAt });

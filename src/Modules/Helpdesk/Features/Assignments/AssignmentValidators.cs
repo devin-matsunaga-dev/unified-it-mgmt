@@ -25,3 +25,8 @@ public sealed class AssignTicketRequestValidator : AbstractValidator<AssignTicke
 {
     public AssignTicketRequestValidator() => RuleFor(request => request.TechnicianId).NotEmpty().MaximumLength(200);
 }
+
+public sealed class PlaceTicketInQueueRequestValidator : AbstractValidator<PlaceTicketInQueueRequest>
+{
+    public PlaceTicketInQueueRequestValidator() => RuleFor(request => request.QueueId).NotEmpty();
+}

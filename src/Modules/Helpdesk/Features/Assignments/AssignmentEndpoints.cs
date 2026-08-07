@@ -42,6 +42,26 @@ public static class AssignmentEndpoints
                 : Results.Created($"/api/queues/{queue.Id}", queue);
         });
 
+        group.MapGet("/queues", async (IAssignmentService service, CancellationToken cancellationToken) =>
+            Results.Ok(await service.ListQueuesAsync(cancellationToken)));
+
+        group.MapPost("/tickets/{ticketId:guid}/queue", async (Guid ticketId, PlaceTicketInQueueRequest request,
+            ClaimsPrincipal user, IAssignmentService service, CancellationToken cancellationToken) =>
+        {
+            var validation = await new PlaceTicketInQueueRequestValidator().ValidateAsync(request, cancellationToken);
+            if (!validation.IsValid) return Results.ValidationProblem(validation.ToDictionary());
+            var result = await service.PlaceInQueueAsync(ticketId, request, user, cancellationToken);
+            return result.Outcome switch
+            {
+                QueuePlacementOutcome.Success => Results.Ok(result.Ticket),
+                QueuePlacementOutcome.TicketNotFound => Results.Problem(
+                    statusCode: StatusCodes.Status404NotFound, title: "Ticket not found."),
+                QueuePlacementOutcome.QueueNotFound => Results.ValidationProblem(
+                    new Dictionary<string, string[]> { [nameof(request.QueueId)] = ["Queue not found."] }),
+                _ => throw new InvalidOperationException($"Unknown queue placement outcome '{result.Outcome}'."),
+            };
+        });
+
         group.MapPost("/tickets/{ticketId:guid}/assignments", async (Guid ticketId, AssignTicketRequest request,
             ClaimsPrincipal user, IAssignmentService service, CancellationToken cancellationToken) =>
         {
@@ -68,6 +88,15 @@ public static class AssignmentEndpoints
             return history is null
                 ? Results.Problem(statusCode: StatusCodes.Status404NotFound, title: "Ticket not found.")
                 : Results.Ok(history);
+        });
+
+        group.MapGet("/tickets/{ticketId:guid}/eligible-technicians", async (Guid ticketId, ClaimsPrincipal user,
+            IAssignmentService service, CancellationToken cancellationToken) =>
+        {
+            var technicians = await service.GetEligibleTechniciansAsync(ticketId, user, cancellationToken);
+            return technicians is null
+                ? Results.Problem(statusCode: StatusCodes.Status404NotFound, title: "Ticket not found.")
+                : Results.Ok(technicians);
         });
 
         group.MapGet("/tickets/mine", async (int? page, int? pageSize, ClaimsPrincipal user,

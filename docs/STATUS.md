@@ -5,9 +5,9 @@
 ## Current position
 
 - **Phase:** 1 — Helpdesk
-- **Last completed WP:** WP-1.6 (Email-to-ticket + outbound mail)
-- **Current WP:** WP-1.7 (Agent ticket UI)
-- **Current branch:** feat/wp-1.7-agent-ticket-ui
+- **Last completed WP:** WP-1.7 (Agent ticket UI)
+- **Current WP:** WP-1.8 (Self-service portal)
+- **Current branch:** feat/wp-1.8-self-service-portal
 - **Last tag:** —
 
 ## Platform versions (law — see WORKFLOW.md table for EOL dates)
@@ -41,7 +41,7 @@
 - [x] WP-1.4 Comments/worklogs/attachments (2026-08-06)
 - [x] WP-1.5 SLA engine (2026-08-07)
 - [x] WP-1.6 Email-to-ticket + outbound mail (2026-08-07)
-- [ ] WP-1.7 Agent ticket UI
+- [x] WP-1.7 Agent ticket UI (2026-08-07)
 - [ ] WP-1.8 Self-service portal
 - [ ] WP-1.9 Categories + custom fields
 - [ ] WP-1.10 Search/views/canned responses

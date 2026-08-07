@@ -13,6 +13,8 @@ public sealed class Ticket
     public Guid StatusId { get; set; }
     public TicketStatus Status { get; set; } = null!;
     public string RequesterId { get; set; } = string.Empty;
+    public string? RequesterDisplayName { get; set; }
+    public string? RequesterEmail { get; set; }
     public Guid? QueueId { get; set; }
     public TicketQueue? Queue { get; set; }
     public string? AssignedTechnicianId { get; set; }

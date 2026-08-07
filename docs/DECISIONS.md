@@ -25,3 +25,8 @@
 - WP-1.6: chose MailKit 4.17.0 for IMAP, MIME parsing, and SMTP because it provides maintained protocol support and passes the repository vulnerability gate (2026-08-07)
 - WP-1.6: chose unique RFC Message-ID persistence with stable ticket Message-ID headers and subject-token fallback because retries must be idempotent and replies must thread across mail clients (2026-08-07)
 - WP-1.6: chose MailHog for outbound capture plus GreenMail for the development IMAP inbox because MailHog does not provide IMAP retrieval (2026-08-07)
+- WP-1.7: chose an idempotently seeded Service Desk queue with development technician usernames because agent assignment must be verifiable in a fresh Aspire environment without manual API setup (2026-08-07)
+- WP-1.7: chose to persist a comment-author display-name snapshot alongside the immutable identity ID because timelines need human-readable attribution without coupling Helpdesk reads to an identity provider (2026-08-07)
+- WP-1.7: chose the same display-name snapshot pattern for ticket requesters because ticket headers need readable attribution while ownership checks continue using immutable identity IDs (2026-08-07)
+- WP-1.7: chose to snapshot the requester email separately from the identity ID because lifecycle notifications require a stable SMTP recipient and must never treat an OIDC subject as an address (2026-08-07)
+- WP-1.7: chose to email only public comments authored by agents because internal notes must remain private and EndUser/inbound-email comments must not create mail loops (2026-08-07)

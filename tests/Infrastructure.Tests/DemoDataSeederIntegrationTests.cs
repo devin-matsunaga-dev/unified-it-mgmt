@@ -2,6 +2,8 @@ using Microsoft.EntityFrameworkCore;
 
 using Platform.Data;
 using Platform.Seeding;
+using Modules.Helpdesk.Data;
+using Modules.Helpdesk.Seeding;
 
 using Testcontainers.PostgreSql;
 
@@ -15,6 +17,7 @@ public sealed class DemoDataSeederIntegrationTests : IAsyncLifetime
         .WithPassword("postgres")
         .Build();
     private PlatformDbContext? _dbContext;
+    private HelpdeskDbContext? _helpdeskDbContext;
 
     public async Task InitializeAsync()
     {
@@ -24,6 +27,11 @@ public sealed class DemoDataSeederIntegrationTests : IAsyncLifetime
             .Options;
         _dbContext = new PlatformDbContext(options);
         await _dbContext.Database.MigrateAsync();
+        var helpdeskOptions = new DbContextOptionsBuilder<HelpdeskDbContext>()
+            .UseNpgsql(_postgres.GetConnectionString())
+            .Options;
+        _helpdeskDbContext = new HelpdeskDbContext(helpdeskOptions);
+        await _helpdeskDbContext.Database.MigrateAsync();
     }
 
     [Fact]
@@ -64,11 +72,33 @@ public sealed class DemoDataSeederIntegrationTests : IAsyncLifetime
         Assert.Contains("ck_user_profiles_role", exception.InnerException?.Message, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public async Task HelpdeskSeedAsync_RunTwice_CreatesServiceDeskQueueAndMembersOnce()
+    {
+        var seeder = new HelpdeskDemoDataSeeder(_helpdeskDbContext!);
+
+        var first = await seeder.SeedAsync();
+        var second = await seeder.SeedAsync();
+
+        Assert.Equal(new HelpdeskSeedResult(1, 1, 4), first);
+        Assert.Equal(new HelpdeskSeedResult(0, 0, 0), second);
+        Assert.Equal("Service Desk", await _helpdeskDbContext!.TicketQueues.Select(queue => queue.Name).SingleAsync());
+        Assert.Equal(
+            ["technician1", "technician2", "technician3", "technician4"],
+            await _helpdeskDbContext.TeamMembers.OrderBy(member => member.TechnicianId)
+                .Select(member => member.TechnicianId).ToListAsync());
+    }
+
     public async Task DisposeAsync()
     {
         if (_dbContext is not null)
         {
             await _dbContext.DisposeAsync();
+        }
+
+        if (_helpdeskDbContext is not null)
+        {
+            await _helpdeskDbContext.DisposeAsync();
         }
 
         await _postgres.DisposeAsync();

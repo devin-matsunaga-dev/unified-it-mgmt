@@ -66,6 +66,62 @@ public sealed class AssignmentService(HelpdeskDbContext dbContext, IAuditService
         return response;
     }
 
+    public async Task<IReadOnlyList<QueueResponse>> ListQueuesAsync(CancellationToken cancellationToken) =>
+        await dbContext.TicketQueues.OrderBy(queue => queue.Name).ThenBy(queue => queue.Id)
+            .Select(queue => new QueueResponse(queue.Id, queue.Name, queue.TeamId))
+            .ToListAsync(cancellationToken);
+
+    public async Task<QueuePlacementResult> PlaceInQueueAsync(
+        Guid ticketId, PlaceTicketInQueueRequest request, ClaimsPrincipal actor, CancellationToken cancellationToken)
+    {
+        var ticket = await VisibleTickets(actor).SingleOrDefaultAsync(item => item.Id == ticketId, cancellationToken);
+        if (ticket is null)
+        {
+            return new(QueuePlacementOutcome.TicketNotFound);
+        }
+
+        var queue = await dbContext.TicketQueues.Include(item => item.Team).ThenInclude(team => team.Members)
+            .SingleOrDefaultAsync(item => item.Id == request.QueueId, cancellationToken);
+        if (queue is null)
+        {
+            return new(QueuePlacementOutcome.QueueNotFound);
+        }
+
+        var before = TicketService.Map(ticket);
+        var previousTechnicianId = ticket.AssignedTechnicianId;
+        var technicians = queue.Team.Members.Select(member => member.TechnicianId)
+            .OrderBy(id => id, StringComparer.Ordinal).ToList();
+        string? assignedTechnicianId = null;
+        if (technicians.Count > 0)
+        {
+            var lastIndex = queue.LastAssignedTechnicianId is null
+                ? -1
+                : technicians.FindIndex(id => id == queue.LastAssignedTechnicianId);
+            assignedTechnicianId = technicians[(lastIndex + 1) % technicians.Count];
+            queue.LastAssignedTechnicianId = assignedTechnicianId;
+        }
+
+        var occurredAt = DateTimeOffset.UtcNow;
+        ticket.QueueId = queue.Id;
+        ticket.Queue = queue;
+        ticket.AssignedTechnicianId = assignedTechnicianId;
+        ticket.UpdatedAt = occurredAt;
+        if (assignedTechnicianId is not null)
+        {
+            dbContext.TicketAssignmentHistory.Add(new TicketAssignmentHistory
+            {
+                Id = Guid.CreateVersion7(), TicketId = ticket.Id, QueueId = queue.Id,
+                FromTechnicianId = previousTechnicianId, ToTechnicianId = assignedTechnicianId,
+                Kind = AssignmentKind.Automatic, ActorId = ActorId(actor), OccurredAt = occurredAt,
+            });
+        }
+
+        await dbContext.SaveChangesAsync(cancellationToken);
+        var after = TicketService.Map(ticket);
+        await auditService.WriteAsync(actor, "QueueChanged", "Ticket", ticket.Id.ToString(), before, after, cancellationToken);
+        return new(QueuePlacementOutcome.Success, after);
+    }
+
     public async Task<AssignmentResult> AssignAsync(
         Guid ticketId, AssignTicketRequest request, ClaimsPrincipal actor, CancellationToken cancellationToken)
     {
@@ -105,6 +161,30 @@ public sealed class AssignmentService(HelpdeskDbContext dbContext, IAuditService
         var after = TicketService.Map(ticket);
         await auditService.WriteAsync(actor, "Assigned", "Ticket", ticket.Id.ToString(), before, after, cancellationToken);
         return new(AssignmentOutcome.Success, after);
+    }
+
+    public async Task<IReadOnlyList<EligibleTechnicianResponse>?> GetEligibleTechniciansAsync(
+        Guid ticketId, ClaimsPrincipal actor, CancellationToken cancellationToken)
+    {
+        var ticket = await VisibleTickets(actor)
+            .Select(item => new { item.Id, item.QueueId })
+            .SingleOrDefaultAsync(item => item.Id == ticketId, cancellationToken);
+        if (ticket is null)
+        {
+            return null;
+        }
+
+        if (ticket.QueueId is null)
+        {
+            return [];
+        }
+
+        return await dbContext.TicketQueues
+            .Where(queue => queue.Id == ticket.QueueId)
+            .SelectMany(queue => queue.Team.Members)
+            .OrderBy(member => member.TechnicianId)
+            .Select(member => new EligibleTechnicianResponse(member.TechnicianId))
+            .ToListAsync(cancellationToken);
     }
 
     public async Task<IReadOnlyList<TicketAssignmentResponse>?> GetHistoryAsync(

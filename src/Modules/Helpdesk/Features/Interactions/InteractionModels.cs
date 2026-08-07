@@ -2,7 +2,7 @@ namespace Modules.Helpdesk.Features.Interactions;
 
 public sealed record CreateCommentRequest(string Body, bool IsInternal);
 public sealed record CommentResponse(
-    Guid Id, Guid TicketId, string Body, bool IsInternal, string AuthorId, DateTimeOffset CreatedAt);
+    Guid Id, Guid TicketId, string Body, bool IsInternal, string AuthorId, string AuthorName, DateTimeOffset CreatedAt);
 
 public sealed record CreateWorklogRequest(int Minutes, string? Note);
 public sealed record WorklogResponse(

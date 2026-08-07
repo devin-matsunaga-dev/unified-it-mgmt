@@ -13,5 +13,7 @@ export const queryClient = new QueryClient({
 })
 
 queryClient.getQueryCache().subscribe((event) => {
-  if (event.type === 'updated' && event.action.type === 'error') showError(event.action.error)
+  if (event.type === 'updated' && event.action.type === 'error' && !event.query.meta?.suppressErrorToast) {
+    showError(event.action.error)
+  }
 })

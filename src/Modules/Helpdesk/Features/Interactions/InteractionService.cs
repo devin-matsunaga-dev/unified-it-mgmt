@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
 using Modules.Helpdesk.Data;
 using Platform.Auditing;
+using Platform.Notifications;
 using Modules.Helpdesk.Features.Sla;
 
 namespace Modules.Helpdesk.Features.Interactions;
@@ -13,7 +14,8 @@ public sealed class InteractionService(
     IAttachmentStorage attachmentStorage,
     IAntivirusScanner antivirusScanner,
     IAuditService auditService,
-    ISlaService slaService) : IInteractionService
+    ISlaService slaService,
+    INotificationService notificationService) : IInteractionService
 {
     public const long MaximumAttachmentSize = 25 * 1024 * 1024;
     private static readonly HashSet<string> AllowedExtensions = new(StringComparer.OrdinalIgnoreCase)
@@ -38,7 +40,8 @@ public sealed class InteractionService(
     public async Task<InteractionResult<CommentResponse>> AddCommentAsync(
         Guid ticketId, CreateCommentRequest request, ClaimsPrincipal actor, CancellationToken cancellationToken)
     {
-        if (!await VisibleTickets(actor).AnyAsync(ticket => ticket.Id == ticketId, cancellationToken))
+        var ticket = await VisibleTickets(actor).SingleOrDefaultAsync(ticket => ticket.Id == ticketId, cancellationToken);
+        if (ticket is null)
         {
             return new(InteractionOutcome.NotFound);
         }
@@ -51,13 +54,26 @@ public sealed class InteractionService(
         var comment = new TicketComment
         {
             Id = Guid.CreateVersion7(), TicketId = ticketId, Body = request.Body.Trim(),
-            IsInternal = request.IsInternal, AuthorId = ActorId(actor), CreatedAt = DateTimeOffset.UtcNow,
+            IsInternal = request.IsInternal, AuthorId = ActorId(actor),
+            AuthorDisplayName = ActorDisplayName(actor), CreatedAt = DateTimeOffset.UtcNow,
         };
         dbContext.TicketComments.Add(comment);
         await dbContext.SaveChangesAsync(cancellationToken);
         if (!request.IsInternal && !IsEndUser(actor))
         {
             await slaService.MarkRespondedAsync(ticketId, comment.CreatedAt, cancellationToken);
+            await notificationService.SendAsync(new NotificationMessage(
+                ticket.RequesterEmail ?? string.Empty,
+                new NotificationTemplate(
+                    "TicketCommentAdded",
+                    $"[{ticket.Number}] Ticket updated: {ticket.Title}",
+                    request.Body.Trim()),
+                new { TicketId = ticket.Id, TicketNumber = ticket.Number, ticket.Title },
+                new Dictionary<string, string>
+                {
+                    ["Message-Id"] = $"<ticket-{ticket.Id:N}@it-platform.local>",
+                    ["X-IT-Platform-Ticket-Id"] = ticket.Id.ToString(),
+                }), cancellationToken);
         }
         var response = Map(comment);
         await auditService.WriteAsync(
@@ -81,7 +97,8 @@ public sealed class InteractionService(
 
         return await query.OrderBy(comment => comment.CreatedAt).ThenBy(comment => comment.Id)
             .Select(comment => new CommentResponse(
-                comment.Id, comment.TicketId, comment.Body, comment.IsInternal, comment.AuthorId, comment.CreatedAt))
+                comment.Id, comment.TicketId, comment.Body, comment.IsInternal, comment.AuthorId,
+                comment.AuthorDisplayName ?? comment.AuthorId, comment.CreatedAt))
             .ToListAsync(cancellationToken);
     }
 
@@ -225,7 +242,12 @@ public sealed class InteractionService(
         ?? throw new InvalidOperationException("An authenticated actor identifier is required.");
 
     private static CommentResponse Map(TicketComment comment) => new(
-        comment.Id, comment.TicketId, comment.Body, comment.IsInternal, comment.AuthorId, comment.CreatedAt);
+        comment.Id, comment.TicketId, comment.Body, comment.IsInternal, comment.AuthorId,
+        comment.AuthorDisplayName ?? comment.AuthorId, comment.CreatedAt);
+
+    private static string ActorDisplayName(ClaimsPrincipal actor) =>
+        actor.FindFirstValue("name") ?? actor.Identity?.Name ?? actor.FindFirstValue("preferred_username")
+        ?? ActorId(actor);
     private static WorklogResponse Map(TicketWorklog worklog) => new(
         worklog.Id, worklog.TicketId, worklog.Minutes, worklog.Note, worklog.AuthorId, worklog.CreatedAt);
     private static AttachmentResponse Map(TicketAttachment attachment) => new(

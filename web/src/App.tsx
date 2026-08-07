@@ -6,6 +6,8 @@ import { DashboardPage } from './pages/DashboardPage'
 import { ForbiddenPage } from './pages/ForbiddenPage'
 import { LoginPage } from './pages/LoginPage'
 import { PlaceholderPage } from './pages/PlaceholderPage'
+import { TicketDetailPage } from './features/tickets/TicketDetailPage'
+import { TicketListPage } from './features/tickets/TicketListPage'
 
 export function App() {
   return <Routes>
@@ -15,7 +17,8 @@ export function App() {
     <Route path="/forbidden" element={<ForbiddenPage />} />
     <Route element={<ProtectedRoute><AppShell /></ProtectedRoute>}>
       <Route index element={<DashboardPage />} />
-      <Route path="tickets" element={<PlaceholderPage title="Tickets" />} />
+      <Route path="tickets" element={<ProtectedRoute roles={['Admin', 'Technician', 'Manager']}><TicketListPage /></ProtectedRoute>} />
+      <Route path="tickets/:id" element={<ProtectedRoute roles={['Admin', 'Technician', 'Manager']}><TicketDetailPage /></ProtectedRoute>} />
       <Route path="assets" element={<ProtectedRoute roles={['Admin', 'Technician', 'Manager']}><PlaceholderPage title="Assets" /></ProtectedRoute>} />
       <Route path="monitoring" element={<ProtectedRoute roles={['Admin', 'Technician', 'Manager']}><PlaceholderPage title="Monitoring" /></ProtectedRoute>} />
       <Route path="admin/users" element={<ProtectedRoute roles={['Admin']}><PlaceholderPage title="Users" /></ProtectedRoute>} />
