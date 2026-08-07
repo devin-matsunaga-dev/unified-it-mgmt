@@ -116,6 +116,10 @@ public static class TicketEndpoints
                     new Dictionary<string, string[]> { [nameof(request.TargetStatus)] = [result.Error!] }),
                 TransitionTicketOutcome.ResolutionNoteRequired => Results.ValidationProblem(
                     new Dictionary<string, string[]> { [nameof(request.ResolutionNote)] = [result.Error!] }),
+                TransitionTicketOutcome.Forbidden => Results.Problem(
+                    statusCode: StatusCodes.Status403Forbidden,
+                    title: "Ticket transition is not allowed.",
+                    detail: result.Error),
                 TransitionTicketOutcome.IllegalTransition => Results.Problem(
                     statusCode: StatusCodes.Status409Conflict,
                     title: "Ticket transition is not allowed.",

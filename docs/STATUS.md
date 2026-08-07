@@ -5,9 +5,9 @@
 ## Current position
 
 - **Phase:** 1 — Helpdesk
-- **Last completed WP:** WP-1.7 (Agent ticket UI)
-- **Current WP:** WP-1.8 (Self-service portal)
-- **Current branch:** feat/wp-1.8-self-service-portal
+- **Last completed WP:** WP-1.8 (Self-service portal)
+- **Current WP:** WP-1.9 (Categories + custom fields)
+- **Current branch:** feat/wp-1.9-categories-custom-fields
 - **Last tag:** —
 
 ## Platform versions (law — see WORKFLOW.md table for EOL dates)
@@ -19,6 +19,8 @@
 <!-- Anything unfinished, known-broken, or deferred from the last session that the next session must know. Keep to a few lines; delete when resolved. -->
 
 - `npm audit` reports two high findings inherited through React Router 7.18.2 for RSC action handling; this Vite SPA does not enable RSC/server actions. The offered fix is a forced downgrade to 7.11.0, so Dependabot will monitor for a non-breaking patched release.
+- WP-1.8 left the portal submit form using the Incident/ServiceRequest type as its request picker. WP-1.9 must replace that fieldset in `web/src/features/portal/NewRequestPage.tsx` with the real category tree and carry the selected category into `CreateTicketRequest`.
+- The portal has no attachment upload; requesters can only attach files by replying to the ticket email. Add it to a later helpdesk WP if it is wanted in the browser.
 
 ## Completed work packages
 
@@ -42,7 +44,7 @@
 - [x] WP-1.5 SLA engine (2026-08-07)
 - [x] WP-1.6 Email-to-ticket + outbound mail (2026-08-07)
 - [x] WP-1.7 Agent ticket UI (2026-08-07)
-- [ ] WP-1.8 Self-service portal
+- [x] WP-1.8 Self-service portal (2026-08-07)
 - [ ] WP-1.9 Categories + custom fields
 - [ ] WP-1.10 Search/views/canned responses
 - [ ] WP-1.11 Seeder: ticket history

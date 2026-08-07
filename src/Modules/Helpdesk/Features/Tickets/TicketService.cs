@@ -174,6 +174,14 @@ public sealed class TicketService(
             return new(TransitionTicketOutcome.UnknownStatus, Error: $"Status '{request.TargetStatus}' does not exist.");
         }
 
+        if (IsEndUser(actor) && !(ticket.StatusId == DefaultTicketStatuses.ResolvedId
+                && targetStatus.Id == DefaultTicketStatuses.ClosedId))
+        {
+            return new(
+                TransitionTicketOutcome.Forbidden,
+                Error: "Requesters may only close a resolved ticket.");
+        }
+
         var allowed = await dbContext.TicketStatusTransitions.AnyAsync(
             transition => transition.FromStatusId == ticket.StatusId && transition.ToStatusId == targetStatus.Id,
             cancellationToken);

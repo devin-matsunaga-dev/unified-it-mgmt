@@ -30,3 +30,7 @@
 - WP-1.7: chose the same display-name snapshot pattern for ticket requesters because ticket headers need readable attribution while ownership checks continue using immutable identity IDs (2026-08-07)
 - WP-1.7: chose to snapshot the requester email separately from the identity ID because lifecycle notifications require a stable SMTP recipient and must never treat an OIDC subject as an address (2026-08-07)
 - WP-1.7: chose to email only public comments authored by agents because internal notes must remain private and EndUser/inbound-email comments must not create mail loops (2026-08-07)
+- WP-1.8: chose a separate `/portal` route tree with its own top-nav shell restricted to the EndUser role over reusing the agent AppShell because requester scoping only exists for EndUsers and an agent inside the portal would see every ticket as "mine" (2026-08-07)
+- WP-1.8: chose to render the portal submit form's request picker from the existing Incident/ServiceRequest type rather than adding a ticket category column because categories are WP-1.9's scope and a flat interim string would need rework (2026-08-07)
+- WP-1.8: chose to restrict EndUser transitions server-side to Resolved→Closed (403 ProblemDetails otherwise) because close-confirm must be enforced below the UI, not by hiding buttons (2026-08-07)
+- WP-1.8: chose to route portal submissions to the seeded Service Desk queue by name, falling back to the first queue then unqueued, because self-service tickets must enter round-robin assignment without asking requesters to pick a queue (2026-08-07)

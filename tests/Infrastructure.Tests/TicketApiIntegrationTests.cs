@@ -282,6 +282,66 @@ public sealed class TicketApiIntegrationTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task StatusWorkflow_EndUserConfirmsResolvedTicket_ClosesTicket()
+    {
+        const string requesterId = "portal-close-requester";
+        var created = await CreateTicketAsync(requesterId);
+        await TransitionAsync(created.Id, "Triage");
+        await TransitionAsync(created.Id, "InProgress");
+        await TransitionAsync(created.Id, "Pending");
+        await TransitionAsync(created.Id, "Resolved", "VPN profile reissued.");
+
+        using var request = Authenticated(
+            HttpMethod.Post, $"/api/tickets/{created.Id}/transitions", "EndUser", requesterId);
+        request.Content = JsonContent.Create(new { targetStatus = "Closed", resolutionNote = (string?)null });
+        using var response = await _client!.SendAsync(request);
+        var ticket = await response.Content.ReadFromJsonAsync<TicketDto>();
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal("Closed", Assert.IsType<TicketDto>(ticket).Status);
+    }
+
+    [Fact]
+    public async Task StatusWorkflow_EndUserDrivesAgentTransition_ReturnsForbiddenWithoutHistory()
+    {
+        const string requesterId = "portal-transition-requester";
+        var created = await CreateTicketAsync(requesterId);
+
+        using var request = Authenticated(
+            HttpMethod.Post, $"/api/tickets/{created.Id}/transitions", "EndUser", requesterId);
+        request.Content = JsonContent.Create(new { targetStatus = "Triage", resolutionNote = (string?)null });
+        using var response = await _client!.SendAsync(request);
+        var problem = await response.Content.ReadAsStringAsync();
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        Assert.Equal("application/problem+json", response.Content.Headers.ContentType?.MediaType);
+        Assert.Contains("Requesters may only close a resolved ticket.", problem, StringComparison.Ordinal);
+
+        await using var scope = _application.Services.CreateAsyncScope();
+        var historyCount = await scope.ServiceProvider.GetRequiredService<HelpdeskDbContext>()
+            .TicketTransitionHistory.CountAsync(history => history.TicketId == created.Id);
+        Assert.Equal(0, historyCount);
+    }
+
+    [Fact]
+    public async Task Tickets_EndUserListsTickets_SeesOnlyTheirOwnRequests()
+    {
+        const string requesterId = "portal-list-requester";
+        var own = await CreateTicketAsync(requesterId);
+        var other = await CreateTicketAsync("portal-list-other-requester");
+
+        using var request = Authenticated(
+            HttpMethod.Get, "/api/tickets?page=1&pageSize=200", "EndUser", requesterId);
+        using var response = await _client!.SendAsync(request);
+        var page = await response.Content.ReadFromJsonAsync<TicketPageDto>();
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var items = Assert.IsType<TicketPageDto>(page).Items;
+        Assert.Contains(items, ticket => ticket.Id == own.Id);
+        Assert.DoesNotContain(items, ticket => ticket.Id == other.Id);
+    }
+
+    [Fact]
     public async Task StatusWorkflow_ResolveWithoutNote_ReturnsValidationProblem()
     {
         var created = await CreateTicketAsync("resolution-requester");

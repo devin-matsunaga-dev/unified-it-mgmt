@@ -42,6 +42,7 @@ public enum TransitionTicketOutcome
     UnknownStatus,
     IllegalTransition,
     ResolutionNoteRequired,
+    Forbidden,
 }
 
 public sealed record TransitionTicketResult(
