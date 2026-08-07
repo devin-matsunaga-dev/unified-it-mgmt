@@ -4,6 +4,7 @@ import { AppShell } from './layout/AppShell'
 import { PortalShell } from './layout/PortalShell'
 import { AuthCallbackPage } from './pages/AuthCallbackPage'
 import { ForbiddenPage } from './pages/ForbiddenPage'
+import { CiListPage } from './features/assets/CiListPage'
 import { HomeRoute } from './pages/HomeRoute'
 import { LoginPage } from './pages/LoginPage'
 import { PlaceholderPage } from './pages/PlaceholderPage'
@@ -28,7 +29,7 @@ export function App() {
       <Route index element={<HomeRoute />} />
       <Route path="tickets" element={<ProtectedRoute roles={['Admin', 'Technician', 'Manager']}><TicketListPage /></ProtectedRoute>} />
       <Route path="tickets/:id" element={<ProtectedRoute roles={['Admin', 'Technician', 'Manager']}><TicketDetailPage /></ProtectedRoute>} />
-      <Route path="assets" element={<ProtectedRoute roles={['Admin', 'Technician', 'Manager']}><PlaceholderPage title="Assets" /></ProtectedRoute>} />
+      <Route path="assets" element={<ProtectedRoute roles={['Admin', 'Technician', 'Manager']}><CiListPage /></ProtectedRoute>} />
       <Route path="monitoring" element={<ProtectedRoute roles={['Admin', 'Technician', 'Manager']}><PlaceholderPage title="Monitoring" /></ProtectedRoute>} />
       <Route path="admin/users" element={<ProtectedRoute roles={['Admin']}><PlaceholderPage title="Users" /></ProtectedRoute>} />
       <Route path="admin/settings" element={<ProtectedRoute roles={['Admin']}><PlaceholderPage title="Settings" /></ProtectedRoute>} />

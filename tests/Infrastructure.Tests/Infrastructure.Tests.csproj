@@ -18,6 +18,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="../../src/Modules/Assets/Modules.Assets.csproj" />
     <ProjectReference Include="../../src/Modules/Helpdesk/Modules.Helpdesk.csproj" />
     <ProjectReference Include="../../src/Web.Host/Web.Host.csproj" />
   </ItemGroup>

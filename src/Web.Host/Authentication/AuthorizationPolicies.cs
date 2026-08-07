@@ -4,6 +4,7 @@ public static class AuthorizationPolicies
 {
     public const string AdminOnly = "AdminOnly";
     public const string CanManageTickets = "CanManageTickets";
+    public const string CanManageAssets = "CanManageAssets";
 }
 
 public static class PlatformRoles

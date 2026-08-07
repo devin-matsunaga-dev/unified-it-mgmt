@@ -4,11 +4,11 @@
 
 ## Current position
 
-- **Phase:** 1 — Helpdesk
-- **Last completed WP:** WP-1.11 (Seeder: helpdesk history)
-- **Current WP:** Phase 1 gate (run the helpdesk for one real day, tag `v0.2-phase1`), then WP-2.1 (CI registry + type schemas)
-- **Current branch:** feat/wp-2.1-ci-registry
-- **Last tag:** —
+- **Phase:** 2 — Assets/CMDB
+- **Last completed WP:** WP-2.1 (CI registry + type schemas)
+- **Current WP:** WP-2.2 (Lifecycle + ownership)
+- **Current branch:** feat/wp-2.2-lifecycle-ownership
+- **Last tag:** `v.0.2-phase1` (Phase 1 gate; note the stray dot — Phase 0 was tagged `v0.1-phase0`)
 
 ## Platform versions (law — see WORKFLOW.md table for EOL dates)
 
@@ -30,6 +30,12 @@
 - Full-text search uses the `english` dictionary for every ticket; there is no per-locale text-search configuration. Terms are prefix-matched and AND-ed, so it narrows as you type, but it is not fuzzy — a typo inside a word ("aurroa") still finds nothing. Trigram/`pg_trgm` similarity is the fix if that becomes a complaint.
 - Canned responses are managed from the "Manage" dialog in the ticket reply composer (any agent); saved views are managed inline on the ticket list. Neither has an admin screen under a settings area.
 - Status and priority list filters are single-select in the UI, although the API and the saved-view payload accept several of each.
+- The CMDB has no seeder yet, and the dev database resets on most AppHost restarts, so every CI and CI custom field must be created by hand for a demo. WP-2.8 (Seeder: infrastructure) owns fixing this; until then, verification of the assets screens starts from an empty list.
+- CI custom fields are managed through the API only (`POST/DELETE /api/ci-custom-fields`, AdminOnly) — there is no admin screen, same as the WP-1.9 ticket categories. The form reads them from `/api/ci-type-schemas`.
+- CI attributes are enforced above the database: TPH makes every per-type column nullable, so `CiTypeSchema` is the only thing stopping a Server row with no hostname. Anything writing CIs outside `CiService` (a seeder, an importer) must bind through `CiTypeSchema.Bind` or it will write half-populated rows.
+- `/api/cis` list search is `ILIKE` over name/asset tag/serial only — there is no full-text index on the assets schema like the one WP-1.10 added for tickets. Revisit if the CMDB grows past a few thousand rows.
+- Deleting a CI is currently unguarded because nothing references CIs yet. WP-2.3 (relationships) and WP-2.4 (ticket↔asset links) each need to add their own in-use check, or deletes will silently orphan links.
+- `CanManageAssets` (Admin/Technician/Manager) is a new authorization policy added by WP-2.1. It is additive — the existing `AdminOnly` and `CanManageTickets` policies are untouched.
 - Dev Postgres resets between `aspire run`s whenever AppHost configuration changes (the unnamed `.WithDataVolume()` name embeds a config hash, so a new empty volume is mounted). This is **intentional** — see DECISIONS.md. Consequence: anything created through the API by hand is gone after a restart, so demo/verification fixtures must live in the seeder.
 
 ## Completed work packages
@@ -60,7 +66,7 @@
 - [x] WP-1.11 Seeder: helpdesk history (2026-08-07) — branch was `feat/wp-1.11-seeder-helpdesk-history`, not the name recorded here
 
 ### Phase 2 — Assets/CMDB
-- [ ] WP-2.1 CI registry
+- [x] WP-2.1 CI registry (2026-08-07) — added the `CanManageAssets` policy (additive; existing policies untouched), which the WP text did not call for but the endpoints required
 - [ ] WP-2.2 Lifecycle + ownership
 - [ ] WP-2.3 Relationships + graph
 - [ ] WP-2.4 Ticket↔asset + 360 pages

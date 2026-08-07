@@ -1,5 +1,8 @@
 using Microsoft.EntityFrameworkCore;
 using System.Text.Json.Serialization;
+using Modules.Assets;
+using Modules.Assets.Data;
+using Modules.Assets.Features.Cis;
 using Modules.Helpdesk;
 using Modules.Helpdesk.Data;
 using Modules.Helpdesk.Features.Tickets;
@@ -31,6 +34,7 @@ builder.Services.AddCors(options => options.AddPolicy("WebClient", policy => pol
 builder.Services.AddPlatformAuthentication(builder.Configuration);
 builder.Services.AddPlatformServices(builder.Configuration);
 builder.Services.AddHelpdeskServices(builder.Configuration);
+builder.Services.AddAssetsServices(builder.Configuration);
 builder.Services.AddHealthChecks()
     .AddTypeActivatedCheck<DependencyEndpointHealthCheck>(
         "keycloak",
@@ -46,6 +50,7 @@ if (app.Configuration.GetValue("Platform:ApplyMigrations", true))
     await using var scope = app.Services.CreateAsyncScope();
     await scope.ServiceProvider.GetRequiredService<PlatformDbContext>().Database.MigrateAsync();
     await scope.ServiceProvider.GetRequiredService<HelpdeskDbContext>().Database.MigrateAsync();
+    await scope.ServiceProvider.GetRequiredService<AssetsDbContext>().Database.MigrateAsync();
 }
 
 app.UseMiddleware<CorrelationIdMiddleware>();
@@ -65,6 +70,7 @@ app.MapSlaEndpoints();
 app.MapCategoryEndpoints();
 app.MapTicketViewEndpoints();
 app.MapCannedResponseEndpoints();
+app.MapCiEndpoints();
 
 app.Run();
 

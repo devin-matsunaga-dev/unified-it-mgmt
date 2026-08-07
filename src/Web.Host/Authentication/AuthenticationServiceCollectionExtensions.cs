@@ -40,7 +40,13 @@ public static class AuthenticationServiceCollectionExtensions
                 PlatformRoles.Admin,
                 PlatformRoles.Technician,
                 PlatformRoles.Manager,
-                PlatformRoles.EndUser));
+                PlatformRoles.EndUser))
+            // Deliberately excludes EndUser: the CMDB is an agent surface, and CanManageTickets
+            // includes EndUser so that requesters can reach the portal.
+            .AddPolicy(AuthorizationPolicies.CanManageAssets, policy => policy.RequireRole(
+                PlatformRoles.Admin,
+                PlatformRoles.Technician,
+                PlatformRoles.Manager));
 
         return services;
     }

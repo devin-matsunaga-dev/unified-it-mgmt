@@ -19,6 +19,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="../Modules/Assets/Modules.Assets.csproj" />
     <ProjectReference Include="../Modules/Helpdesk/Modules.Helpdesk.csproj" />
   </ItemGroup>
 
