@@ -5,9 +5,9 @@
 ## Current position
 
 - **Phase:** 1 — Helpdesk
-- **Last completed WP:** WP-1.10 (Search, saved views, canned responses)
-- **Current WP:** WP-1.11 (Seeder: helpdesk history)
-- **Current branch:** feat/wp-1.11-seeder-ticket-history
+- **Last completed WP:** WP-1.11 (Seeder: helpdesk history)
+- **Current WP:** Phase 1 gate (run the helpdesk for one real day, tag `v0.2-phase1`), then WP-2.1 (CI registry + type schemas)
+- **Current branch:** feat/wp-2.1-ci-registry
 - **Last tag:** —
 
 ## Platform versions (law — see WORKFLOW.md table for EOL dates)
@@ -23,7 +23,10 @@
 - Categories and their custom fields are managed through the API only (`/api/ticket-categories`, AdminOnly) — there is no admin screen. Add one if the tree ever needs editing outside a REST client.
 - SLA policies still match on their own free-text `Category` string and are looked up by priority alone; they are not wired to the WP-1.9 category tree. Worth a dedicated WP.
 - Custom fields are not inherited from parent categories: a field attaches to exactly the category it was created on.
-- The ticket list is now filtered and searched on the server, but it still requests a single page of 200 (footer arrows remain disabled). Real pagination is still owed — it matters once WP-1.11 seeds 200 tickets.
+- The ticket list is now filtered and searched on the server, but it still requests a single page of 200 (footer arrows remain disabled). WP-1.11 has now seeded exactly 200 tickets, so the list is at its ceiling: the next ticket anyone creates falls off the end of an unfiltered list. Real pagination is the first thing to fix in Phase 2.
+- Seeded requester and assignee ids are usernames (`enduser1`, `technician1`), but a real Keycloak login presents a random `sub`. So the 200 seeded tickets fill the agent list, dashboards and search, while a requester logging into `/portal` sees only tickets they created themselves in this session. Fixing it means pinning user ids in the realm import (auth configuration — needs its own WP).
+- SLA policies and a business-hours calendar are now seeded, so every ticket created by hand starts an SLA clock. Before WP-1.11 a fresh database had no policy and `SlaService.StartAsync` silently did nothing.
+- Seeded SLA rows carry pre-set warning/breach flags so `SlaEvaluationJob` will not re-escalate them. If the seeded targets are ever changed, the flags must be recomputed with them or the job will reassign seeded tickets on its next pass.
 - Full-text search uses the `english` dictionary for every ticket; there is no per-locale text-search configuration. Terms are prefix-matched and AND-ed, so it narrows as you type, but it is not fuzzy — a typo inside a word ("aurroa") still finds nothing. Trigram/`pg_trgm` similarity is the fix if that becomes a complaint.
 - Canned responses are managed from the "Manage" dialog in the ticket reply composer (any agent); saved views are managed inline on the ticket list. Neither has an admin screen under a settings area.
 - Status and priority list filters are single-select in the UI, although the API and the saved-view payload accept several of each.
@@ -54,7 +57,7 @@
 - [x] WP-1.8 Self-service portal (2026-08-07)
 - [x] WP-1.9 Categories + custom fields (2026-08-07)
 - [x] WP-1.10 Search/views/canned responses (2026-08-07)
-- [ ] WP-1.11 Seeder: ticket history
+- [x] WP-1.11 Seeder: helpdesk history (2026-08-07) — branch was `feat/wp-1.11-seeder-helpdesk-history`, not the name recorded here
 
 ### Phase 2 — Assets/CMDB
 - [ ] WP-2.1 CI registry
