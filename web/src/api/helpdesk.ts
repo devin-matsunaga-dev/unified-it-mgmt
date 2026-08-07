@@ -68,6 +68,27 @@ export type TicketFilter = {
   assignedTechnicianId?: string
   categoryId?: string
   unassigned?: boolean
+  /** The 360° pages: every ticket about one CI, and every ticket raised by one person. */
+  ciId?: string
+  requesterId?: string
+}
+
+/** A CI a ticket is about. Everything but the ids is read live from the CMDB at request time. */
+export type TicketCiLink = {
+  id: string
+  ticketId: string
+  ciId: string
+  ciName: string
+  ciType: string
+  assetTag: string | null
+  serialNumber: string | null
+  lifecycleState: string
+  isActive: boolean
+  ownerName: string | null
+  siteName: string | null
+  linkedById: string
+  linkedByName: string
+  linkedAt: string
 }
 export type TicketView = {
   id: string
@@ -135,4 +156,7 @@ export const helpdeskApi = {
   assign: (id: string, technicianId: string) => apiRequest<Ticket>(`/api/tickets/${id}/assignments`, { method: 'POST', body: JSON.stringify({ technicianId }) }),
   placeInQueue: (id: string, queueId: string) => apiRequest<Ticket>(`/api/tickets/${id}/queue`, { method: 'POST', body: JSON.stringify({ queueId }) }),
   getSla: (id: string) => apiRequest<SlaRemaining>(`/api/tickets/${id}/sla`),
+  getTicketCis: (id: string) => apiRequest<TicketCiLink[]>(`/api/tickets/${id}/cis`),
+  linkTicketCi: (id: string, ciId: string) => apiRequest<TicketCiLink>(`/api/tickets/${id}/cis`, { method: 'POST', body: JSON.stringify({ ciId }) }),
+  unlinkTicketCi: (id: string, ciId: string) => apiRequest<void>(`/api/tickets/${id}/cis/${ciId}`, { method: 'DELETE' }),
 }

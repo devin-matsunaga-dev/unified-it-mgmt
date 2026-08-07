@@ -31,6 +31,7 @@ Correlation engine starts as a consumer inside `Modules.Monitoring`; it may be e
 - Each module owns its own Postgres **schema** (`helpdesk`, `assets`, `monitoring`, `platform`) and its own EF migrations.
 - Ownership map: Tickets/SLA/KB → Helpdesk. CIs/relationships/licenses/contracts → Assets. Devices/checks/alerts/metrics → Monitoring. Auth/audit/notifications/scheduler/outbox/credential-vault → Platform.
 - Ticket↔CI links are owned by Helpdesk (it stores CI ids); it renders CI context via the Assets service interface.
+- When two modules read each other, neither can hold a project reference to the other. The read interface then lives in `Platform/Integration` as a **port**, and the owning module implements it (`ICiDirectory` → Assets, `ITicketLinkDirectory` → Helpdesk). A port is a narrow read surface only — never a write path, and never a substitute for an event.
 
 ## 4. Communication
 

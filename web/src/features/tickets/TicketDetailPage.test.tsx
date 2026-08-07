@@ -1,15 +1,35 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { vi } from 'vitest'
-import { helpdeskApi, type Ticket } from '../../api/helpdesk'
+import { assetsApi, type Ci } from '../../api/assets'
+import { helpdeskApi, type Ticket, type TicketCiLink } from '../../api/helpdesk'
 import { TicketDetailPage } from './TicketDetailPage'
 
 vi.mock('../../api/helpdesk', async (original) => {
   const actual = await original<typeof import('../../api/helpdesk')>()
   return { ...actual, helpdeskApi: Object.fromEntries(Object.entries(actual.helpdeskApi).map(([name, value]) => [name, typeof value === 'function' ? vi.fn() : value])) }
 })
+
+vi.mock('../../api/assets', async (original) => {
+  const actual = await original<typeof import('../../api/assets')>()
+  return { ...actual, assetsApi: { ...actual.assetsApi, listCis: vi.fn() } }
+})
+
+const laptop: Ci = {
+  id: 'ci-1', type: 'Hardware', name: 'LT-4417', assetTag: 'AT-4417', serialNumber: 'SN-4417', description: null,
+  isActive: true, lifecycleState: 'Deployed',
+  ownership: { ownerUserId: 'user-1', ownerName: 'Requester One', departmentId: null, departmentName: 'Finance', siteId: null, siteName: 'Head Office', assignedAt: '2026-08-01T00:00:00Z' },
+  attributes: { manufacturer: 'Dell', model: 'Latitude' }, customFields: [],
+  createdAt: '2026-08-01T00:00:00Z', updatedAt: '2026-08-01T00:00:00Z',
+}
+
+const link: TicketCiLink = {
+  id: 'link-1', ticketId: 'ticket-1', ciId: 'ci-1', ciName: 'LT-4417', ciType: 'Hardware', assetTag: 'AT-4417',
+  serialNumber: 'SN-4417', lifecycleState: 'Deployed', isActive: true, ownerName: 'Requester One',
+  siteName: 'Head Office', linkedById: 'tech-1', linkedByName: 'Technician One', linkedAt: '2026-08-07T02:00:00Z',
+}
 
 const ticket: Ticket = { id: 'ticket-1', number: 'INC-000001', title: 'VPN unavailable', description: 'Cannot connect', type: 'Incident', urgency: 'High', impact: 'Medium', priority: 'High', status: 'New', requesterId: 'requester-1', requesterName: 'Requester One', queueId: 'queue-1', queueName: 'Service desk', assignedTechnicianId: null, createdAt: '2026-08-07T00:00:00Z', updatedAt: '2026-08-07T01:00:00Z', categoryId: 'category-laptop', categoryName: 'Laptop issue', customFields: [{ fieldId: 'field-asset-tag', key: 'asset_tag', label: 'Asset tag', type: 'Text', value: 'LT-4417' }] }
 
@@ -29,6 +49,8 @@ describe('TicketDetailPage', () => {
     vi.mocked(helpdeskApi.getEligibleTechnicians).mockResolvedValue([{ id: 'tech-1' }, { id: 'tech-2' }])
     vi.mocked(helpdeskApi.placeInQueue).mockResolvedValue(ticket)
     vi.mocked(helpdeskApi.getSla).mockRejectedValue(new Error('No SLA'))
+    vi.mocked(helpdeskApi.getTicketCis).mockResolvedValue([])
+    vi.mocked(assetsApi.listCis).mockResolvedValue({ items: [laptop], total: 1, page: 1, pageSize: 10 })
     vi.mocked(helpdeskApi.listCannedResponses).mockResolvedValue([
       { id: 'canned-1', name: 'Acknowledge receipt', body: 'Hi {{requester.name}}, {{ticket.number}} is with me.', createdById: 'seeder', createdAt: '2026-08-07T00:00:00Z', updatedAt: '2026-08-07T00:00:00Z' },
       { id: 'canned-2', name: 'Ask for more information', body: 'Hi {{requester.name}}, when did it start?', createdById: 'seeder', createdAt: '2026-08-07T00:00:00Z', updatedAt: '2026-08-07T00:00:00Z' },
@@ -73,6 +95,53 @@ describe('TicketDetailPage', () => {
     expect(screen.getByText(/Technician One/)).toBeInTheDocument()
     expect(screen.getAllByText('Internal note').length).toBeGreaterThan(0)
     expect(screen.getByRole('option', { name: 'tech-1' })).toBeInTheDocument()
+  })
+
+  it('links an asset from the picker and shows it on the ticket', async () => {
+    vi.mocked(helpdeskApi.linkTicketCi).mockResolvedValue(link)
+    renderPage()
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Link an asset' }))
+    const dialog = await screen.findByRole('dialog', { name: 'Link an asset' })
+    await waitFor(() => expect(within(dialog).getByText('LT-4417')).toBeInTheDocument())
+
+    // The next read of the ticket's links is the one that has to include what was just linked.
+    vi.mocked(helpdeskApi.getTicketCis).mockResolvedValue([link])
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Link' }))
+
+    await waitFor(() => expect(helpdeskApi.linkTicketCi).toHaveBeenCalledWith('ticket-1', 'ci-1'))
+    const card = (await screen.findByRole('heading', { name: 'Linked assets' })).closest('section')!
+    await waitFor(() => expect(within(card).getByRole('link', { name: 'LT-4417' })).toHaveAttribute('href', '/assets/ci-1'))
+    expect(within(card).getByText(/Linked by Technician One/)).toBeInTheDocument()
+  })
+
+  it('confirms before unlinking an asset', async () => {
+    vi.mocked(helpdeskApi.getTicketCis).mockResolvedValue([link])
+    vi.mocked(helpdeskApi.unlinkTicketCi).mockResolvedValue(undefined)
+    renderPage()
+
+    const card = (await screen.findByRole('heading', { name: 'Linked assets' })).closest('section')!
+    await userEvent.click(await within(card).findByRole('button', { name: 'Unlink' }))
+
+    expect(helpdeskApi.unlinkTicketCi).not.toHaveBeenCalled()
+    vi.mocked(helpdeskApi.getTicketCis).mockResolvedValue([])
+    await userEvent.click(within(card).getByRole('button', { name: 'Confirm unlink' }))
+
+    await waitFor(() => expect(helpdeskApi.unlinkTicketCi).toHaveBeenCalledWith('ticket-1', 'ci-1'))
+    await waitFor(() => expect(within(card).queryByRole('link', { name: 'LT-4417' })).not.toBeInTheDocument())
+  })
+
+  it('surfaces a rejected link without closing the picker', async () => {
+    vi.mocked(helpdeskApi.linkTicketCi).mockRejectedValue(new Error('CI is already linked to this ticket.'))
+    renderPage()
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Link an asset' }))
+    const dialog = await screen.findByRole('dialog', { name: 'Link an asset' })
+    await waitFor(() => expect(within(dialog).getByText('LT-4417')).toBeInTheDocument())
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Link' }))
+
+    expect(await within(dialog).findByRole('alert')).toHaveTextContent('CI is already linked to this ticket.')
+    expect(screen.getByRole('dialog', { name: 'Link an asset' })).toBeInTheDocument()
   })
 
   it('does not request eligible technicians for an unqueued ticket', async () => {

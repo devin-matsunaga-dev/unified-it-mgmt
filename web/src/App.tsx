@@ -4,7 +4,10 @@ import { AppShell } from './layout/AppShell'
 import { PortalShell } from './layout/PortalShell'
 import { AuthCallbackPage } from './pages/AuthCallbackPage'
 import { ForbiddenPage } from './pages/ForbiddenPage'
+import { CiDetailPage } from './features/assets/CiDetailPage'
 import { CiListPage } from './features/assets/CiListPage'
+import { PeopleListPage } from './features/people/PeopleListPage'
+import { UserDetailPage } from './features/people/UserDetailPage'
 import { HomeRoute } from './pages/HomeRoute'
 import { LoginPage } from './pages/LoginPage'
 import { PlaceholderPage } from './pages/PlaceholderPage'
@@ -30,6 +33,9 @@ export function App() {
       <Route path="tickets" element={<ProtectedRoute roles={['Admin', 'Technician', 'Manager']}><TicketListPage /></ProtectedRoute>} />
       <Route path="tickets/:id" element={<ProtectedRoute roles={['Admin', 'Technician', 'Manager']}><TicketDetailPage /></ProtectedRoute>} />
       <Route path="assets" element={<ProtectedRoute roles={['Admin', 'Technician', 'Manager']}><CiListPage /></ProtectedRoute>} />
+      <Route path="assets/:id" element={<ProtectedRoute roles={['Admin', 'Technician', 'Manager']}><CiDetailPage /></ProtectedRoute>} />
+      <Route path="people" element={<ProtectedRoute roles={['Admin', 'Technician', 'Manager']}><PeopleListPage /></ProtectedRoute>} />
+      <Route path="people/:userId" element={<ProtectedRoute roles={['Admin', 'Technician', 'Manager']}><UserDetailPage /></ProtectedRoute>} />
       <Route path="monitoring" element={<ProtectedRoute roles={['Admin', 'Technician', 'Manager']}><PlaceholderPage title="Monitoring" /></ProtectedRoute>} />
       <Route path="admin/users" element={<ProtectedRoute roles={['Admin']}><PlaceholderPage title="Users" /></ProtectedRoute>} />
       <Route path="admin/settings" element={<ProtectedRoute roles={['Admin']}><PlaceholderPage title="Settings" /></ProtectedRoute>} />

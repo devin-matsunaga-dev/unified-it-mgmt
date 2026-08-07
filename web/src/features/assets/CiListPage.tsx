@@ -1,6 +1,7 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { ChevronLeft, ChevronRight, Plus, Search, Server, SlidersHorizontal } from 'lucide-react'
+import { ChevronLeft, ChevronRight, Pencil, Plus, Search, Server, SlidersHorizontal } from 'lucide-react'
 import { useEffect, useState } from 'react'
+import { Link } from 'react-router-dom'
 import { toast } from 'sonner'
 import { ApiError } from '../../api/client'
 import { assetsApi, ciTypeLabel, ciTypes, type Ci, type CiFilter, type CiLifecycleState, type CiType } from '../../api/assets'
@@ -95,7 +96,7 @@ export function CiListPage() {
               </tr></thead>
               <tbody>
                 {cis.data!.items.map((ci) => <tr key={ci.id} className="border-t border-slate-200 hover:bg-slate-50 dark:border-slate-800 dark:hover:bg-slate-800/50">
-                  <td className="h-12 px-4"><button className="font-medium text-slate-900 hover:text-blue-600 dark:text-slate-100" onClick={() => { setEditing(ci); setDialogOpen(true) }}>{ci.name}</button></td>
+                  <td className="h-12 px-4"><Link to={`/assets/${ci.id}`} className="font-medium text-slate-900 hover:text-blue-600 dark:text-slate-100">{ci.name}</Link></td>
                   <td className="h-12 px-4 text-slate-600 dark:text-slate-300">{ciTypeLabel(ci.type)}</td>
                   <td className="h-12 px-4 font-mono text-xs text-slate-500">{ci.assetTag ?? '—'}</td>
                   <td className="h-12 px-4 font-mono text-xs text-slate-500">{ci.serialNumber ?? '—'}</td>
@@ -103,7 +104,10 @@ export function CiListPage() {
                   <td className="h-12 px-4 text-slate-600 dark:text-slate-300">{ci.ownership.ownerName ?? ci.ownership.departmentName ?? '—'}</td>
                   <td className="h-12 px-4 text-slate-600 dark:text-slate-300">{ci.ownership.siteName ?? '—'}</td>
                   <td className="h-12 px-4"><StatePill isActive={ci.isActive} /></td>
-                  <td className="h-12 px-4 text-right"><Button variant="ghost" className="h-8 px-2 text-[13px]" onClick={() => setPeeking(ci)}><SlidersHorizontal size={15} />Lifecycle</Button></td>
+                  <td className="h-12 px-4 text-right whitespace-nowrap">
+                    <Button variant="ghost" className="h-8 px-2 text-[13px]" onClick={() => { setEditing(ci); setDialogOpen(true) }}><Pencil size={15} />Edit</Button>
+                    <Button variant="ghost" className="h-8 px-2 text-[13px]" onClick={() => setPeeking(ci)}><SlidersHorizontal size={15} />Lifecycle</Button>
+                  </td>
                 </tr>)}
               </tbody>
             </table>

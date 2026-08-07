@@ -183,6 +183,18 @@ public sealed class TicketService(
             query = query.Where(ticket => ticket.CategoryId == categoryId);
         }
 
+        if (filter.CiId is { } ciId)
+        {
+            query = query.Where(ticket => dbContext.TicketCiLinks.Any(
+                link => link.TicketId == ticket.Id && link.CiId == ciId));
+        }
+
+        if (!string.IsNullOrWhiteSpace(filter.RequesterId))
+        {
+            var requesterId = filter.RequesterId.Trim();
+            query = query.Where(ticket => ticket.RequesterId == requesterId);
+        }
+
         if (filter.Unassigned)
         {
             query = query.Where(ticket => ticket.AssignedTechnicianId == null);

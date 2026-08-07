@@ -5,10 +5,10 @@
 ## Current position
 
 - **Phase:** 2 — Assets/CMDB
-- **Last completed WP:** WP-2.3 (Relationships + dependency graph)
-- **Current WP:** WP-2.4 (Ticket↔asset + 360° pages)
-- **Current branch:** feat/wp-2.4-ticket-asset-360-pages
-- **Next WP once WP-2.4 verifies:** WP-2.5 (Import + bulk edit), branch `feat/wp-2.5-import-bulk-edit`
+- **Last completed WP:** WP-2.4 (Ticket↔asset linking + 360° pages)
+- **Current WP:** WP-2.5 (Import + bulk edit)
+- **Current branch:** feat/wp-2.5-import-bulk-edit
+- **Next WP once WP-2.5 verifies:** WP-2.6 (Contracts/warranty), branch `feat/wp-2.6-contracts-warranty`
 - **Last tag:** `v.0.2-phase1` (Phase 1 gate; note the stray dot — Phase 0 was tagged `v0.1-phase0`)
 
 ## Platform versions (law — see WORKFLOW.md table for EOL dates)
@@ -19,7 +19,23 @@
 
 <!-- Anything unfinished, known-broken, or deferred from the last session that the next session must know. Keep to a few lines; delete when resolved. -->
 
-- WP-2.3's integration tests have now been run against a real Postgres (Testcontainers) and pass on the first attempt — the recursive CTEs, the keyless `CiGraphHop` mapping, the `FromSqlInterpolated` aliases and the `uuid[]` path guard are all proven. The manual checklist was then walked end to end against a live `aspire run` stack (VM→Host→Switch→Router built by hand, cycle closed, every failure path exercised) and every step matched. No code changes were needed. The branch is still **uncommitted** — commit it before starting WP-2.4.
+- WP-2.4's branch is `feat/wp-2.4-ticket-asset-linking-360-pages`, not the `feat/wp-2.4-ticket-asset-360-pages` recorded here before the session. Its 10 integration tests pass against a real Postgres (Testcontainers); the manual checklist has **not** been walked yet.
+
+- Cross-module reads now go through **ports** in `src/Platform/Integration/ModulePorts.cs`: `ICiDirectory` (implemented by Assets) and `ITicketLinkDirectory` (implemented by Helpdesk). Neither module references the other; both reference Platform. Anything future that needs a cross-module read belongs here, and it stays read-only — writes and reactions still go through events. ARCHITECTURE.md §3 records the rule.
+
+- A ticket link stores only the CI id. Card fields (name, type, lifecycle state, owner, site) are read live per request, so N linked CIs cost one extra query per ticket page. Fine at CMDB scale; if a ticket list ever wants to show linked assets inline, that read has to be batched.
+
+- The CI delete guard now refuses relationships **and** ticket links (409, same message). The ticket-link half has no foreign key behind it — it is only the port call in `CiService.DeleteAsync`. Anything that deletes CIs outside `CiService` (a future importer, a bulk delete in WP-2.5) has to repeat that check.
+
+- The user 360° page keys assets by directory user id and tickets by username, because that is how the two halves were seeded. A real Keycloak login presents a random `sub`, so a live requester's tickets will not appear on their People page until user ids are pinned in the realm import (the auth-configuration WP the WP-1.11 notes already ask for).
+
+- `/api/tickets` now also accepts `ciId` and `requester`. Both are members of `TicketListFilter`, so a saved view could in principle persist them, but no UI offers them — the saved-view editor only exposes the WP-1.10 filters.
+
+- The relations mini-graph on the asset page is read-only and capped at 3 hops in each direction. Creating and deleting relationships is still API-only (WP-2.3's state) — **WP-2.9 now owns the write surface**. Until it ships, every demo chain has to be POSTed with a REST client. `assetsApi.createRelationship`/`deleteRelationship`/`getRelationships` already exist in `web/src/api/assets.ts` and are deliberately unused; WP-2.9 is their caller.
+
+- People (`/people`, `/people/:userId`) is a new agent-only nav section over `/api/directory/users`. The list filters in the browser over all users — fine for 20 seeded people, not for a real directory.
+
+- The CI list's name column now opens the 360° page; editing moved to a per-row "Edit" button beside "Lifecycle".
 
 - `npm audit` reports two high findings inherited through React Router 7.18.2 for RSC action handling; this Vite SPA does not enable RSC/server actions. The offered fix is a forced downgrade to 7.11.0, so Dependabot will monitor for a non-breaking patched release.
 - The portal has no attachment upload; requesters can only attach files by replying to the ticket email. Add it to a later helpdesk WP if it is wanted in the browser.
@@ -37,14 +53,13 @@
 - CI custom fields are managed through the API only (`POST/DELETE /api/ci-custom-fields`, AdminOnly) — there is no admin screen, same as the WP-1.9 ticket categories. The form reads them from `/api/ci-type-schemas`.
 - CI attributes are enforced above the database: TPH makes every per-type column nullable, so `CiTypeSchema` is the only thing stopping a Server row with no hostname. Anything writing CIs outside `CiService` (a seeder, an importer) must bind through `CiTypeSchema.Bind` or it will write half-populated rows.
 - `/api/cis` list search is `ILIKE` over name/asset tag/serial only — there is no full-text index on the assets schema like the one WP-1.10 added for tickets. Revisit if the CMDB grows past a few thousand rows.
-- Deleting a CI now returns 409 if any relationship names it on either end (WP-2.3), backed by `Restrict` foreign keys. WP-2.4 (ticket↔asset links) still has to add its own in-use check to the same `CiService.DeleteAsync` guard, or deletes will silently orphan ticket links. Deleting an unrelated CI still cascades away its lifecycle history and check-in/out log.
-- Relationships and the graph traversals are API-only — there is no UI. The relations mini-graph is explicitly WP-2.4's scope, so verification of WP-2.3 is done with a REST client.
+- Deleting a CI now returns 409 if any relationship names it on either end (WP-2.3), backed by `Restrict` foreign keys, or if any ticket still links it (WP-2.4). Deleting an unreferenced CI still cascades away its lifecycle history and check-in/out log.
 - The graph endpoints are `GET /api/cis/{id}/{ancestors|descendants|impacted-by}?maxDepth=`. Direction convention: a relationship reads source→target as "source depends on target", so ancestors walk up to what a CI needs and descendants walk down to what needs it. `impacted-by` is the descendants walk with the CI itself at depth 0.
 - Traversal depth is capped at 10 (default 5) and the value is clamped, not rejected; the response echoes the effective `maxDepth` and a `maxDepthReached` flag. A graph deeper than 10 hops silently ends there apart from that flag.
 - Cycles are allowed in the data and traversed safely; responses carry `containsCycle`. Nothing warns an operator at creation time that they have just closed a loop — the flag only appears once someone runs a traversal.
 - The CTE's cycle guard is a per-path visited array, so a very wide diamond-heavy graph does more work than a plain visited-set walk would. Fine at CMDB scale with a 10-hop cap; revisit if WP-2.8's seeded estate or a real import makes traversals slow.
 - There is still no CMDB seeder (WP-2.8), so the VM→Host→Switch→Router chain has to be built by hand for a demo, and it is gone after an AppHost restart.
-- Lifecycle and ownership live in a right-side drawer on the assets list ("Lifecycle" button per row); there is no CI detail page yet, and the "shows on the user's page" half of the WP-2.2 verify is served by the new owner filter on the list. WP-2.4 owns the real 360° pages.
+- Lifecycle and ownership live in a right-side drawer, reachable from the "Lifecycle" button on both the assets list and the CI detail page.
 - `/api/directory/users|departments|sites` are new agent-only (`CanManageAssets`) read endpoints over the Platform demo directory. They are the picker source for CI ownership; if another surface needs them for EndUsers, the policy has to be revisited.
 - A CI's owner/department/site are ids plus name snapshots. Renaming a department in `platform.departments` will not update the CIs already assigned to it — the same trade-off WP-1.7 made for ticket requesters.
 - Disposed CIs are frozen: `PUT /api/cis/{id}`, the assignment endpoint, and any further transition all return 409. Nothing in the UI can un-dispose a CI, which is deliberate.
@@ -83,11 +98,12 @@
 - [x] WP-2.1 CI registry (2026-08-07) — added the `CanManageAssets` policy (additive; existing policies untouched), which the WP text did not call for but the endpoints required
 - [x] WP-2.2 Lifecycle + ownership (2026-08-07) — added a Platform `IDirectoryService` + `/api/directory/*` endpoints, which the WP text did not call for but the module boundary required (Assets may not read `platform.user_profiles`)
 - [x] WP-2.3 Relationships + graph (2026-08-07) — branch was `feat/wp-2.3-relationship-dependencies-graph`, not the name previously recorded here; also added the CI-delete in-use guard the WP-2.2 notes flagged, which the WP text did not call for
-- [ ] WP-2.4 Ticket↔asset + 360 pages
+- [x] WP-2.4 Ticket↔asset + 360 pages (2026-08-07) — branch was `feat/wp-2.4-ticket-asset-linking-360-pages`, not the name previously recorded here; added `Platform/Integration` read ports and a People list + nav item, neither of which the WP text called for but the module boundary and hand-verification required
 - [ ] WP-2.5 Import + bulk edit
 - [ ] WP-2.6 Contracts/warranty
 - [ ] WP-2.7 Barcode/QR
 - [ ] WP-2.8 Seeder: infrastructure
+- [ ] WP-2.9 Relationship editor (UI) — added 2026-08-07; no WP owned the write surface, and Phase 4 discovery never covers logical edges
 
 ### Phase 3 — Monitoring + Unified Loop
 - [ ] WP-3.1 Device/check config API

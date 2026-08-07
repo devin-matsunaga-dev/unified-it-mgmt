@@ -82,6 +82,48 @@ export type CiAssignmentEntry = {
 /** The lifecycle graph as data: the server owns the guard, the form only renders it. */
 export type CiLifecycleStateInfo = { state: CiLifecycleState; allowedTargets: CiLifecycleState[] }
 
+export type CiRelationshipType = 'RunsOn' | 'ConnectsTo' | 'DependsOn' | 'HostedOn'
+
+/** One edge, with both ends named so a list needs no second call. */
+export type CiRelationship = {
+  id: string
+  sourceCiId: string
+  sourceCiName: string
+  sourceCiType: CiType
+  targetCiId: string
+  targetCiName: string
+  targetCiType: CiType
+  type: CiRelationshipType
+  description: string | null
+  createdBy: string
+  createdAt: string
+}
+
+/** Upstream is what the CI depends on; downstream is what depends on it. */
+export type CiRelationships = { ciId: string; upstream: CiRelationship[]; downstream: CiRelationship[] }
+
+export type CiGraphNode = {
+  id: string
+  type: CiType
+  name: string
+  assetTag: string | null
+  lifecycleState: CiLifecycleState
+  isActive: boolean
+  depth: number
+}
+
+export type CiGraphEdge = { id: string; sourceCiId: string; targetCiId: string; type: CiRelationshipType }
+
+export type CiGraph = {
+  rootCiId: string
+  direction: 'Ancestors' | 'Descendants'
+  maxDepth: number
+  maxDepthReached: boolean
+  containsCycle: boolean
+  nodes: CiGraphNode[]
+  edges: CiGraphEdge[]
+}
+
 export type Ci = {
   id: string
   type: CiType
@@ -143,8 +185,8 @@ const ciTypeLabels: Record<CiType, string> = {
   Logical: 'Logical',
 }
 
-export function ciTypeLabel(type: CiType) {
-  return ciTypeLabels[type] ?? type
+export function ciTypeLabel(type: string) {
+  return ciTypeLabels[type as CiType] ?? type
 }
 
 export function ciFilterToQuery(filter: CiFilter) {
@@ -173,6 +215,12 @@ export const assetsApi = {
   getLifecycleHistory: (id: string) => apiRequest<CiLifecycleHistory[]>(`/api/cis/${id}/lifecycle-transitions`),
   assignCi: (id: string, input: AssignCiInput) => apiRequest<Ci>(`/api/cis/${id}/assignment`, { method: 'PUT', body: JSON.stringify(input) }),
   getAssignments: (id: string) => apiRequest<CiAssignmentEntry[]>(`/api/cis/${id}/assignments`),
+  getRelationships: (id: string) => apiRequest<CiRelationships>(`/api/cis/${id}/relationships`),
+  createRelationship: (id: string, input: { targetCiId: string; type: CiRelationshipType; description?: string | null }) =>
+    apiRequest<CiRelationship>(`/api/cis/${id}/relationships`, { method: 'POST', body: JSON.stringify(input) }),
+  deleteRelationship: (relationshipId: string) => apiRequest<void>(`/api/ci-relationships/${relationshipId}`, { method: 'DELETE' }),
+  getImpactedBy: (id: string, maxDepth = 3) => apiRequest<CiGraph>(`/api/cis/${id}/impacted-by?maxDepth=${maxDepth}`),
+  getAncestors: (id: string, maxDepth = 3) => apiRequest<CiGraph>(`/api/cis/${id}/ancestors?maxDepth=${maxDepth}`),
   listTypeSchemas: () => apiRequest<CiTypeSchema[]>('/api/ci-type-schemas'),
   createCustomField: (input: { ciType: CiType; key: string; label: string; type: CiCustomFieldType; isRequired: boolean; options?: string[]; sortOrder?: number }) =>
     apiRequest<CiCustomField>('/api/ci-custom-fields', { method: 'POST', body: JSON.stringify(input) }),

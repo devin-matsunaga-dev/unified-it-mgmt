@@ -56,7 +56,10 @@ public sealed record TicketListFilter(
     Guid? QueueId = null,
     string? AssignedTechnicianId = null,
     Guid? CategoryId = null,
-    bool Unassigned = false)
+    bool Unassigned = false,
+    // The 360° pages: every ticket about one CI, and every ticket raised by one person.
+    Guid? CiId = null,
+    string? RequesterId = null)
 {
     public static readonly TicketListFilter Empty = new();
 }

@@ -67,6 +67,8 @@ public static class TicketEndpoints
             string? assignee,
             Guid? categoryId,
             bool? unassigned,
+            Guid? ciId,
+            string? requester,
             ClaimsPrincipal user,
             ITicketService service,
             CancellationToken cancellationToken) =>
@@ -116,7 +118,8 @@ public static class TicketEndpoints
             }
 
             var filter = new TicketListFilter(
-                q, status, priorities, ticketType, queueId, assignee, categoryId, unassigned ?? false);
+                q, status, priorities, ticketType, queueId, assignee, categoryId, unassigned ?? false,
+                ciId, requester);
             var result = await service.ListAsync(filter, resolvedPage, resolvedPageSize, user, cancellationToken);
             return result.Errors is null ? Results.Ok(result.Page) : Results.ValidationProblem(result.Errors);
         });

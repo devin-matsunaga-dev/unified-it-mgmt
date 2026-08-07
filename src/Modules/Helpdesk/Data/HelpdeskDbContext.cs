@@ -23,6 +23,7 @@ public sealed class HelpdeskDbContext(DbContextOptions<HelpdeskDbContext> option
     public DbSet<TicketCategory> TicketCategories => Set<TicketCategory>();
     public DbSet<TicketCustomField> TicketCustomFields => Set<TicketCustomField>();
     public DbSet<TicketCustomFieldValue> TicketCustomFieldValues => Set<TicketCustomFieldValue>();
+    public DbSet<TicketCiLink> TicketCiLinks => Set<TicketCiLink>();
     public DbSet<TicketView> TicketViews => Set<TicketView>();
     public DbSet<CannedResponse> CannedResponses => Set<CannedResponse>();
 

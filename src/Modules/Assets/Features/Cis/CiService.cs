@@ -6,13 +6,15 @@ using MassTransit;
 using Microsoft.EntityFrameworkCore;
 using Modules.Assets.Data;
 using Platform.Auditing;
+using Platform.Integration;
 
 namespace Modules.Assets.Features.Cis;
 
 public sealed class CiService(
     AssetsDbContext dbContext,
     IPublishEndpoint publishEndpoint,
-    IAuditService auditService) : ICiService
+    IAuditService auditService,
+    ITicketLinkDirectory ticketLinks) : ICiService
 {
     internal const int MaximumPageSize = 200;
 
@@ -263,6 +265,13 @@ public sealed class CiService(
         if (await dbContext.CiRelationships.AnyAsync(
                 relationship => relationship.SourceCiId == id || relationship.TargetCiId == id,
                 cancellationToken))
+        {
+            return CiOutcome.InUse;
+        }
+
+        // Ticket links live in the helpdesk schema, so no foreign key can catch this one: without the
+        // port call the delete would leave every linked ticket pointing at a CI that no longer exists.
+        if (await ticketLinks.CountLinksForCiAsync(id, cancellationToken) > 0)
         {
             return CiOutcome.InUse;
         }

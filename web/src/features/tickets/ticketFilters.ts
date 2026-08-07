@@ -14,6 +14,8 @@ export function normalizeFilter(filter: TicketFilter): TicketFilter {
   if (filter.categoryId) normalized.categoryId = filter.categoryId
   if (filter.unassigned) normalized.unassigned = true
   else if (filter.assignedTechnicianId) normalized.assignedTechnicianId = filter.assignedTechnicianId
+  if (filter.ciId) normalized.ciId = filter.ciId
+  if (filter.requesterId) normalized.requesterId = filter.requesterId
   return normalized
 }
 
@@ -37,5 +39,7 @@ export function filterToQuery(filter: TicketFilter, page = 1, pageSize = 200): s
   if (normalized.categoryId) params.set('categoryId', normalized.categoryId)
   if (normalized.unassigned) params.set('unassigned', 'true')
   else if (normalized.assignedTechnicianId) params.set('assignee', normalized.assignedTechnicianId)
+  if (normalized.ciId) params.set('ciId', normalized.ciId)
+  if (normalized.requesterId) params.set('requester', normalized.requesterId)
   return params.toString()
 }

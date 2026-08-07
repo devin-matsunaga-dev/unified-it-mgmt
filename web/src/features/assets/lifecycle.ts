@@ -21,12 +21,14 @@ const lifecycleTones: Record<CiLifecycleState, string> = {
   Disposed: 'bg-red-100 text-red-700 dark:bg-red-500/15 dark:text-red-400',
 }
 
-export function ciLifecycleLabel(state: CiLifecycleState) {
-  return lifecycleLabels[state] ?? state
+// Both take a plain string: a ticket's linked-asset card carries the state as text from the CMDB port,
+// and an unknown value has to render rather than throw.
+export function ciLifecycleLabel(state: string) {
+  return lifecycleLabels[state as CiLifecycleState] ?? state
 }
 
-export function ciLifecycleTone(state: CiLifecycleState) {
-  return lifecycleTones[state] ?? lifecycleTones.Ordered
+export function ciLifecycleTone(state: string) {
+  return lifecycleTones[state as CiLifecycleState] ?? lifecycleTones.Ordered
 }
 
 const assignmentLabels: Record<CiAssignmentAction, string> = {

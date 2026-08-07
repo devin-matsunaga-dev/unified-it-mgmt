@@ -81,7 +81,7 @@ public static class CiEndpoints
             CiOutcome.InUse => Results.Problem(
                 statusCode: StatusCodes.Status409Conflict,
                 title: "CI is in use.",
-                detail: "Remove the CI's relationships before deleting it."),
+                detail: "Remove the CI's relationships and unlink it from its tickets before deleting it."),
             var outcome => throw new InvalidOperationException($"Unknown CI outcome '{outcome}'."),
         });
 

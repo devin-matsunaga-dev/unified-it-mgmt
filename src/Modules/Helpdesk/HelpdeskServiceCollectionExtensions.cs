@@ -10,6 +10,8 @@ using Modules.Helpdesk.Features.Views;
 using Modules.Helpdesk.Features.Interactions;
 using Modules.Helpdesk.Features.Sla;
 using Modules.Helpdesk.Features.Email;
+using Modules.Helpdesk.Features.TicketCis;
+using Platform.Integration;
 using Quartz;
 
 namespace Modules.Helpdesk;
@@ -29,6 +31,8 @@ public static class HelpdeskServiceCollectionExtensions
         services.AddScoped<ITicketService, TicketService>();
         services.AddScoped<ICategoryService, CategoryService>();
         services.AddScoped<IAssignmentService, AssignmentService>();
+        services.AddScoped<ITicketCiLinkService, TicketCiLinkService>();
+        services.AddScoped<ITicketLinkDirectory, TicketCiLinkDirectory>();
         services.AddScoped<ITicketViewService, TicketViewService>();
         services.AddScoped<ICannedResponseService, CannedResponseService>();
         services.AddScoped<IInteractionService, InteractionService>();

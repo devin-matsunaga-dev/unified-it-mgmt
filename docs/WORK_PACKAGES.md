@@ -175,6 +175,11 @@ Session lifecycle: open branch → new chat with protocol + steering files + WP 
 - 60 devices (switches, routers, servers, VMs, laptops) with realistic relations forming 2-3 dependency trees, warranties, some linked tickets.
 - **Verify:** graph endpoints return multi-level trees; asset lists look real.
 
+### WP-2.9 — Relationship editor (UI)
+- "Relate to…" on the CI page's Relations card: CI picker + relationship type select + optional description; per-edge remove with confirm; surface the WP-2.3 guards as field errors (self-relation 400, duplicate 409, disposed CI 409, delete-blocked 409). Read-only graph and the API itself already exist (WP-2.3/2.4) — this is the write surface only.
+- **Verify:** build VM→Host→Switch→Router entirely in the browser; `impacted-by(Router)` returns all three; relate a CI to itself → inline field error, nothing written; delete an edge → it leaves both CIs' graphs.
+- **Why it exists:** WP-4.2 discovery populates *network* topology automatically, but a logical edge ("Payroll service DependsOn its database") is a human statement no LLDP frame carries — and WP-5.1 suppression plus WP-5.2 blast radius are only as good as those edges. Until this ships, every relationship needs a REST client.
+
 **🏁 Phase 2 gate:** asset lifecycle + linking demo end-to-end. Tag `v0.3-phase2`.
 
 ---
