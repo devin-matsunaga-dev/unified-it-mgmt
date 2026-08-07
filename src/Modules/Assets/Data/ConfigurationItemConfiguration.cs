@@ -23,6 +23,10 @@ public sealed class ConfigurationItemConfiguration : IEntityTypeConfiguration<Co
         builder.Property(ci => ci.AssetTag).HasMaxLength(64);
         builder.Property(ci => ci.SerialNumber).HasMaxLength(128);
         builder.Property(ci => ci.Description).HasMaxLength(2_000);
+        builder.Property(ci => ci.LifecycleState).HasConversion<string>().HasMaxLength(20).IsRequired();
+        builder.Property(ci => ci.OwnerName).HasMaxLength(200);
+        builder.Property(ci => ci.DepartmentName).HasMaxLength(200);
+        builder.Property(ci => ci.SiteName).HasMaxLength(200);
 
         // Asset tag and serial are the WP-2.5 dedupe keys, so they must be unique where present —
         // filtered so the many CIs without either do not collide on NULL.
@@ -30,6 +34,10 @@ public sealed class ConfigurationItemConfiguration : IEntityTypeConfiguration<Co
         builder.HasIndex(ci => ci.SerialNumber).IsUnique().HasFilter("serial_number IS NOT NULL");
         builder.HasIndex("CiType", "Name");
         builder.HasIndex(ci => ci.IsActive);
+        builder.HasIndex(ci => ci.LifecycleState);
+        builder.HasIndex(ci => ci.OwnerUserId);
+        builder.HasIndex(ci => ci.DepartmentId);
+        builder.HasIndex(ci => ci.SiteId);
     }
 }
 

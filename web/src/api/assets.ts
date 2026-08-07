@@ -38,6 +38,50 @@ export type CiCustomFieldValue = {
   value: string
 }
 
+export type CiLifecycleState = 'Ordered' | 'InStock' | 'Deployed' | 'InRepair' | 'Retired' | 'Disposed'
+export type CiAssignmentAction = 'CheckOut' | 'CheckIn' | 'Transfer' | 'Relocate'
+
+/** Who holds a CI and where it lives. Names are snapshots taken when it was assigned. */
+export type CiOwnership = {
+  ownerUserId: string | null
+  ownerName: string | null
+  departmentId: string | null
+  departmentName: string | null
+  siteId: string | null
+  siteName: string | null
+  assignedAt: string | null
+}
+
+export type CiLifecycleHistory = {
+  id: string
+  ciId: string
+  fromState: CiLifecycleState
+  toState: CiLifecycleState
+  note: string | null
+  actorId: string
+  occurredAt: string
+}
+
+export type CiAssignmentEntry = {
+  id: string
+  ciId: string
+  action: CiAssignmentAction
+  fromOwnerUserId: string | null
+  fromOwnerName: string | null
+  toOwnerUserId: string | null
+  toOwnerName: string | null
+  departmentId: string | null
+  departmentName: string | null
+  siteId: string | null
+  siteName: string | null
+  note: string | null
+  actorId: string
+  occurredAt: string
+}
+
+/** The lifecycle graph as data: the server owns the guard, the form only renders it. */
+export type CiLifecycleStateInfo = { state: CiLifecycleState; allowedTargets: CiLifecycleState[] }
+
 export type Ci = {
   id: string
   type: CiType
@@ -46,6 +90,8 @@ export type Ci = {
   serialNumber: string | null
   description: string | null
   isActive: boolean
+  lifecycleState: CiLifecycleState
+  ownership: CiOwnership
   attributes: Record<string, string>
   customFields: CiCustomFieldValue[]
   createdAt: string
@@ -58,6 +104,10 @@ export type CiFilter = {
   type?: CiType
   search?: string
   isActive?: boolean
+  lifecycleState?: CiLifecycleState
+  ownerUserId?: string
+  departmentId?: string
+  siteId?: string
   page?: number
   pageSize?: number
 }
@@ -70,6 +120,14 @@ export type CreateCiInput = {
   description: string | null
   attributes: Record<string, string>
   customFields: Record<string, string>
+  lifecycleState?: CiLifecycleState
+}
+
+export type AssignCiInput = {
+  ownerUserId: string | null
+  departmentId: string | null
+  siteId: string | null
+  note: string | null
 }
 
 export type UpdateCiInput = Omit<CreateCiInput, 'type'> & { isActive: boolean }
@@ -94,6 +152,10 @@ export function ciFilterToQuery(filter: CiFilter) {
   if (filter.type) query.set('type', filter.type)
   if (filter.search?.trim()) query.set('search', filter.search.trim())
   if (filter.isActive !== undefined) query.set('isActive', String(filter.isActive))
+  if (filter.lifecycleState) query.set('lifecycleState', filter.lifecycleState)
+  if (filter.ownerUserId) query.set('ownerUserId', filter.ownerUserId)
+  if (filter.departmentId) query.set('departmentId', filter.departmentId)
+  if (filter.siteId) query.set('siteId', filter.siteId)
   query.set('page', String(filter.page ?? 1))
   query.set('pageSize', String(filter.pageSize ?? 25))
   return query.toString()
@@ -105,6 +167,12 @@ export const assetsApi = {
   createCi: (input: CreateCiInput) => apiRequest<Ci>('/api/cis', { method: 'POST', body: JSON.stringify(input) }),
   updateCi: (id: string, input: UpdateCiInput) => apiRequest<Ci>(`/api/cis/${id}`, { method: 'PUT', body: JSON.stringify(input) }),
   deleteCi: (id: string) => apiRequest<void>(`/api/cis/${id}`, { method: 'DELETE' }),
+  listLifecycleStates: () => apiRequest<CiLifecycleStateInfo[]>('/api/ci-lifecycle-states'),
+  transitionCi: (id: string, targetState: CiLifecycleState, note: string | null) =>
+    apiRequest<Ci>(`/api/cis/${id}/lifecycle-transitions`, { method: 'POST', body: JSON.stringify({ targetState, note }) }),
+  getLifecycleHistory: (id: string) => apiRequest<CiLifecycleHistory[]>(`/api/cis/${id}/lifecycle-transitions`),
+  assignCi: (id: string, input: AssignCiInput) => apiRequest<Ci>(`/api/cis/${id}/assignment`, { method: 'PUT', body: JSON.stringify(input) }),
+  getAssignments: (id: string) => apiRequest<CiAssignmentEntry[]>(`/api/cis/${id}/assignments`),
   listTypeSchemas: () => apiRequest<CiTypeSchema[]>('/api/ci-type-schemas'),
   createCustomField: (input: { ciType: CiType; key: string; label: string; type: CiCustomFieldType; isRequired: boolean; options?: string[]; sortOrder?: number }) =>
     apiRequest<CiCustomField>('/api/ci-custom-fields', { method: 'POST', body: JSON.stringify(input) }),

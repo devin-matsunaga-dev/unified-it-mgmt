@@ -5,9 +5,9 @@
 ## Current position
 
 - **Phase:** 2 — Assets/CMDB
-- **Last completed WP:** WP-2.1 (CI registry + type schemas)
-- **Current WP:** WP-2.2 (Lifecycle + ownership)
-- **Current branch:** feat/wp-2.2-lifecycle-ownership
+- **Last completed WP:** WP-2.2 (Lifecycle + ownership)
+- **Current WP:** WP-2.3 (Relationships + dependency graph)
+- **Current branch:** feat/wp-2.3-relationships-graph
 - **Last tag:** `v.0.2-phase1` (Phase 1 gate; note the stray dot — Phase 0 was tagged `v0.1-phase0`)
 
 ## Platform versions (law — see WORKFLOW.md table for EOL dates)
@@ -34,7 +34,12 @@
 - CI custom fields are managed through the API only (`POST/DELETE /api/ci-custom-fields`, AdminOnly) — there is no admin screen, same as the WP-1.9 ticket categories. The form reads them from `/api/ci-type-schemas`.
 - CI attributes are enforced above the database: TPH makes every per-type column nullable, so `CiTypeSchema` is the only thing stopping a Server row with no hostname. Anything writing CIs outside `CiService` (a seeder, an importer) must bind through `CiTypeSchema.Bind` or it will write half-populated rows.
 - `/api/cis` list search is `ILIKE` over name/asset tag/serial only — there is no full-text index on the assets schema like the one WP-1.10 added for tickets. Revisit if the CMDB grows past a few thousand rows.
-- Deleting a CI is currently unguarded because nothing references CIs yet. WP-2.3 (relationships) and WP-2.4 (ticket↔asset links) each need to add their own in-use check, or deletes will silently orphan links.
+- Deleting a CI is currently unguarded because nothing references CIs yet. WP-2.3 (relationships) and WP-2.4 (ticket↔asset links) each need to add their own in-use check, or deletes will silently orphan links. Note that deleting a CI now also cascades away its lifecycle history and check-in/out log.
+- Lifecycle and ownership live in a right-side drawer on the assets list ("Lifecycle" button per row); there is no CI detail page yet, and the "shows on the user's page" half of the WP-2.2 verify is served by the new owner filter on the list. WP-2.4 owns the real 360° pages.
+- `/api/directory/users|departments|sites` are new agent-only (`CanManageAssets`) read endpoints over the Platform demo directory. They are the picker source for CI ownership; if another surface needs them for EndUsers, the policy has to be revisited.
+- A CI's owner/department/site are ids plus name snapshots. Renaming a department in `platform.departments` will not update the CIs already assigned to it — the same trade-off WP-1.7 made for ticket requesters.
+- Disposed CIs are frozen: `PUT /api/cis/{id}`, the assignment endpoint, and any further transition all return 409. Nothing in the UI can un-dispose a CI, which is deliberate.
+- The CMDB still has no seeder (WP-2.8), so lifecycle and ownership must be verified against hand-created CIs — but the ownership pickers do work on a fresh database, because the Platform demo seeder already provides the 20 users, 4 departments, and 3 sites.
 - `CanManageAssets` (Admin/Technician/Manager) is a new authorization policy added by WP-2.1. It is additive — the existing `AdminOnly` and `CanManageTickets` policies are untouched.
 - Dev Postgres resets between `aspire run`s whenever AppHost configuration changes (the unnamed `.WithDataVolume()` name embeds a config hash, so a new empty volume is mounted). This is **intentional** — see DECISIONS.md. Consequence: anything created through the API by hand is gone after a restart, so demo/verification fixtures must live in the seeder.
 
@@ -67,7 +72,7 @@
 
 ### Phase 2 — Assets/CMDB
 - [x] WP-2.1 CI registry (2026-08-07) — added the `CanManageAssets` policy (additive; existing policies untouched), which the WP text did not call for but the endpoints required
-- [ ] WP-2.2 Lifecycle + ownership
+- [x] WP-2.2 Lifecycle + ownership (2026-08-07) — added a Platform `IDirectoryService` + `/api/directory/*` endpoints, which the WP text did not call for but the module boundary required (Assets may not read `platform.user_profiles`)
 - [ ] WP-2.3 Relationships + graph
 - [ ] WP-2.4 Ticket↔asset + 360 pages
 - [ ] WP-2.5 Import + bulk edit

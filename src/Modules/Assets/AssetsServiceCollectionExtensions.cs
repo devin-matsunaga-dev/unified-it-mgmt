@@ -3,6 +3,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Modules.Assets.Data;
 using Modules.Assets.Features.Cis;
+using Modules.Assets.Features.Lifecycle;
 
 namespace Modules.Assets;
 
@@ -19,6 +20,7 @@ public static class AssetsServiceCollectionExtensions
             options.UseNpgsql(connectionString);
         });
         services.AddScoped<ICiService, CiService>();
+        services.AddScoped<ICiLifecycleService, CiLifecycleService>();
 
         return services;
     }

@@ -9,7 +9,10 @@ public sealed record CreateCiRequest(
     string? SerialNumber = null,
     string? Description = null,
     IReadOnlyDictionary<string, string?>? Attributes = null,
-    IReadOnlyDictionary<string, string?>? CustomFields = null);
+    IReadOnlyDictionary<string, string?>? CustomFields = null,
+    // A CI is registered either on order or once it reaches the store room; every later state has to
+    // be reached through a guarded transition.
+    CiLifecycleState LifecycleState = CiLifecycleState.InStock);
 
 public sealed record UpdateCiRequest(
     string Name,
@@ -24,6 +27,10 @@ public sealed record CiListRequest(
     CiType? Type = null,
     string? Search = null,
     bool? IsActive = null,
+    CiLifecycleState? LifecycleState = null,
+    Guid? OwnerUserId = null,
+    Guid? DepartmentId = null,
+    Guid? SiteId = null,
     int Page = 1,
     int PageSize = 25);
 
@@ -42,10 +49,22 @@ public sealed record CiResponse(
     string? SerialNumber,
     string? Description,
     bool IsActive,
+    CiLifecycleState LifecycleState,
+    CiOwnership Ownership,
     IReadOnlyDictionary<string, string> Attributes,
     IReadOnlyList<CiCustomFieldValueResponse> CustomFields,
     DateTimeOffset CreatedAt,
     DateTimeOffset UpdatedAt);
+
+/// <summary>Who holds a CI and where it lives. Names are snapshots taken when it was assigned.</summary>
+public sealed record CiOwnership(
+    Guid? OwnerUserId,
+    string? OwnerName,
+    Guid? DepartmentId,
+    string? DepartmentName,
+    Guid? SiteId,
+    string? SiteName,
+    DateTimeOffset? AssignedAt);
 
 public sealed record CiPageResponse(
     IReadOnlyList<CiResponse> Items,
@@ -86,6 +105,9 @@ public enum CiOutcome
     InvalidCustomFields,
     DuplicateIdentifier,
     InUse,
+    IllegalTransition,
+    UnknownAssignee,
+    Disposed,
 }
 
 public sealed record CiResult(

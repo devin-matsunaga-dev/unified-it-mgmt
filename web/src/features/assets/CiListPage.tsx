@@ -1,11 +1,14 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { ChevronLeft, ChevronRight, Plus, Search, Server } from 'lucide-react'
+import { ChevronLeft, ChevronRight, Plus, Search, Server, SlidersHorizontal } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { toast } from 'sonner'
 import { ApiError } from '../../api/client'
-import { assetsApi, ciTypeLabel, ciTypes, type Ci, type CiFilter, type CiType } from '../../api/assets'
+import { assetsApi, ciTypeLabel, ciTypes, type Ci, type CiFilter, type CiLifecycleState, type CiType } from '../../api/assets'
+import { directoryApi } from '../../api/directory'
 import { Button } from '../../components/ui/Button'
 import { CiFormDialog, type CiFormSubmit } from './CiFormDialog'
+import { CiLifecycleDrawer } from './CiLifecycleDrawer'
+import { ciLifecycleLabel, ciLifecycleStates, ciLifecycleTone } from './lifecycle'
 
 export function CiListPage() {
   const queryClient = useQueryClient()
@@ -13,6 +16,7 @@ export function CiListPage() {
   const [filter, setFilter] = useState<CiFilter>({ page: 1, pageSize: 25 })
   const [dialogOpen, setDialogOpen] = useState(false)
   const [editing, setEditing] = useState<Ci | null>(null)
+  const [peeking, setPeeking] = useState<Ci | null>(null)
 
   // Search runs on the server, so keystrokes are debounced into the query filter.
   useEffect(() => {
@@ -24,6 +28,12 @@ export function CiListPage() {
   // Always refetched: a cached schema can omit a field an admin has since made required, producing
   // a 400 the form cannot attribute to any input.
   const schemas = useQuery({ queryKey: ['ci-type-schemas'], queryFn: assetsApi.listTypeSchemas, staleTime: 0, refetchOnMount: 'always' })
+  const lifecycleStates = useQuery({ queryKey: ['ci-lifecycle-states'], queryFn: assetsApi.listLifecycleStates })
+  const owners = useQuery({ queryKey: ['directory', 'users'], queryFn: directoryApi.listUsers })
+
+  // The drawer holds a snapshot, so a transition made inside it has to be re-read from the refreshed
+  // list or the buttons would still offer the old state's targets.
+  const peeked = peeking ? cis.data?.items.find((item) => item.id === peeking.id) ?? peeking : null
 
   const closeDialog = () => { setDialogOpen(false); setEditing(null); save.reset() }
   const save = useMutation({
@@ -60,6 +70,14 @@ export function CiListPage() {
           <option value="">All types</option>
           {ciTypes.map((type) => <option key={type} value={type}>{ciTypeLabel(type)}</option>)}
         </select>
+        <select aria-label="Filter by lifecycle state" className="input w-auto min-w-40" value={filter.lifecycleState ?? ''} onChange={(event) => setFilter((current) => ({ ...current, lifecycleState: (event.target.value || undefined) as CiLifecycleState | undefined, page: 1 }))}>
+          <option value="">All lifecycle states</option>
+          {ciLifecycleStates.map((state) => <option key={state} value={state}>{ciLifecycleLabel(state)}</option>)}
+        </select>
+        <select aria-label="Filter by owner" className="input w-auto min-w-44" value={filter.ownerUserId ?? ''} onChange={(event) => setFilter((current) => ({ ...current, ownerUserId: event.target.value || undefined, page: 1 }))}>
+          <option value="">All owners</option>
+          {(owners.data ?? []).map((user) => <option key={user.id} value={user.id}>{user.displayName}</option>)}
+        </select>
         <select aria-label="Filter by state" className="input w-auto min-w-36" value={filter.isActive === undefined ? '' : String(filter.isActive)} onChange={(event) => setFilter((current) => ({ ...current, isActive: event.target.value === '' ? undefined : event.target.value === 'true', page: 1 }))}>
           <option value="">Active and inactive</option>
           <option value="true">Active only</option>
@@ -71,9 +89,9 @@ export function CiListPage() {
         : cis.isError ? <ErrorState error={cis.error} retry={() => void cis.refetch()} />
         : (cis.data?.items.length ?? 0) === 0 ? <EmptyState onCreate={() => { setEditing(null); setDialogOpen(true) }} />
         : <div className="overflow-x-auto">
-            <table className="w-full min-w-[900px] text-left text-sm">
+            <table className="w-full min-w-[1100px] text-left text-sm">
               <thead><tr>
-                {['Name', 'Type', 'Asset tag', 'Serial', 'Attributes', 'State'].map((header) => <th key={header} className="h-11 px-4 text-[13px] font-medium text-slate-500">{header}</th>)}
+                {['Name', 'Type', 'Asset tag', 'Serial', 'Lifecycle', 'Owner', 'Location', 'State', ''].map((header) => <th key={header} className="h-11 px-4 text-[13px] font-medium text-slate-500">{header}</th>)}
               </tr></thead>
               <tbody>
                 {cis.data!.items.map((ci) => <tr key={ci.id} className="border-t border-slate-200 hover:bg-slate-50 dark:border-slate-800 dark:hover:bg-slate-800/50">
@@ -81,8 +99,11 @@ export function CiListPage() {
                   <td className="h-12 px-4 text-slate-600 dark:text-slate-300">{ciTypeLabel(ci.type)}</td>
                   <td className="h-12 px-4 font-mono text-xs text-slate-500">{ci.assetTag ?? '—'}</td>
                   <td className="h-12 px-4 font-mono text-xs text-slate-500">{ci.serialNumber ?? '—'}</td>
-                  <td className="h-12 px-4 text-slate-600 dark:text-slate-300">{summariseAttributes(ci)}</td>
+                  <td className="h-12 px-4"><span className={`rounded-md px-2 py-0.5 text-xs font-medium ${ciLifecycleTone(ci.lifecycleState)}`}>{ciLifecycleLabel(ci.lifecycleState)}</span></td>
+                  <td className="h-12 px-4 text-slate-600 dark:text-slate-300">{ci.ownership.ownerName ?? ci.ownership.departmentName ?? '—'}</td>
+                  <td className="h-12 px-4 text-slate-600 dark:text-slate-300">{ci.ownership.siteName ?? '—'}</td>
                   <td className="h-12 px-4"><StatePill isActive={ci.isActive} /></td>
+                  <td className="h-12 px-4 text-right"><Button variant="ghost" className="h-8 px-2 text-[13px]" onClick={() => setPeeking(ci)}><SlidersHorizontal size={15} />Lifecycle</Button></td>
                 </tr>)}
               </tbody>
             </table>
@@ -102,12 +123,9 @@ export function CiListPage() {
       error={save.error instanceof Error ? save.error.message : undefined}
       onClose={() => { if (!save.isPending) closeDialog() }}
       onSubmit={async (input) => { await save.mutateAsync(input) }} />
-  </div>
-}
 
-function summariseAttributes(ci: Ci) {
-  const summary = Object.entries(ci.attributes).filter(([, value]) => value !== '').slice(0, 2).map(([, value]) => value).join(' · ')
-  return summary || '—'
+    <CiLifecycleDrawer ci={peeked} states={lifecycleStates.data ?? []} onClose={() => setPeeking(null)} />
+  </div>
 }
 
 function StatePill({ isActive }: { isActive: boolean }) {

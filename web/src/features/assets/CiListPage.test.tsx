@@ -3,17 +3,24 @@ import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
 import { vi } from 'vitest'
-import { assetsApi, type Ci, type CiTypeSchema } from '../../api/assets'
+import { assetsApi, type Ci, type CiLifecycleStateInfo, type CiTypeSchema } from '../../api/assets'
+import { directoryApi } from '../../api/directory'
 import { CiListPage } from './CiListPage'
 
 vi.mock('../../api/assets', async (original) => {
   const actual = await original<typeof import('../../api/assets')>()
-  return { ...actual, assetsApi: { ...actual.assetsApi, listCis: vi.fn(), listTypeSchemas: vi.fn(), createCi: vi.fn(), updateCi: vi.fn() } }
+  return { ...actual, assetsApi: { ...actual.assetsApi, listCis: vi.fn(), listTypeSchemas: vi.fn(), createCi: vi.fn(), updateCi: vi.fn(), listLifecycleStates: vi.fn(), transitionCi: vi.fn(), assignCi: vi.fn(), getLifecycleHistory: vi.fn(), getAssignments: vi.fn() } }
 })
+
+vi.mock('../../api/directory', () => ({
+  directoryApi: { listUsers: vi.fn(), listDepartments: vi.fn(), listSites: vi.fn() },
+}))
 
 const server: Ci = {
   id: 'ci-1', type: 'Server', name: 'app-01', assetTag: 'AT-0001', serialNumber: 'SN-0001', description: null,
-  isActive: true, attributes: { hostname: 'app-01', operatingSystem: 'Ubuntu 24.04', cpuCores: '8', ramGb: '32' },
+  isActive: true, lifecycleState: 'InStock',
+  ownership: { ownerUserId: null, ownerName: null, departmentId: null, departmentName: null, siteId: null, siteName: null, assignedAt: null },
+  attributes: { hostname: 'app-01', operatingSystem: 'Ubuntu 24.04', cpuCores: '8', ramGb: '32' },
   customFields: [], createdAt: '2026-08-07T00:00:00Z', updatedAt: '2026-08-07T01:00:00Z',
 }
 
@@ -36,6 +43,19 @@ const schemas: CiTypeSchema[] = [
   },
 ]
 
+const lifecycleStates: CiLifecycleStateInfo[] = [
+  { state: 'Ordered', allowedTargets: ['InStock'] },
+  { state: 'InStock', allowedTargets: ['Deployed', 'InRepair', 'Retired'] },
+  { state: 'Deployed', allowedTargets: ['InStock', 'InRepair', 'Retired'] },
+  { state: 'InRepair', allowedTargets: ['Deployed', 'InStock', 'Retired'] },
+  { state: 'Retired', allowedTargets: ['Disposed'] },
+  { state: 'Disposed', allowedTargets: [] },
+]
+
+const directoryUsers = [
+  { id: 'user-1', username: 'enduser1', displayName: 'End User One', email: 'enduser1@example.test', role: 'EndUser', siteId: 'site-1', siteName: 'Head Office', departmentId: 'dept-1', departmentName: 'Finance' },
+]
+
 function renderPage() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })
   return render(<MemoryRouter><QueryClientProvider client={client}><CiListPage /></QueryClientProvider></MemoryRouter>)
@@ -45,6 +65,12 @@ describe('CiListPage', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     vi.mocked(assetsApi.listTypeSchemas).mockResolvedValue(schemas)
+    vi.mocked(assetsApi.listLifecycleStates).mockResolvedValue(lifecycleStates)
+    vi.mocked(assetsApi.getLifecycleHistory).mockResolvedValue([])
+    vi.mocked(assetsApi.getAssignments).mockResolvedValue([])
+    vi.mocked(directoryApi.listUsers).mockResolvedValue(directoryUsers)
+    vi.mocked(directoryApi.listDepartments).mockResolvedValue([{ id: 'dept-1', code: 'FIN', name: 'Finance' }])
+    vi.mocked(directoryApi.listSites).mockResolvedValue([{ id: 'site-1', code: 'HQ', name: 'Head Office' }])
   })
 
   it('sends the selected type filter to the API', async () => {
@@ -126,6 +152,65 @@ describe('CiListPage', () => {
 
     expect(within(dialog).getByRole('heading', { name: 'Custom fields' })).toBeInTheDocument()
     expect(within(dialog).getByLabelText(/Rack unit/)).toBeInTheDocument()
+  })
+
+  it('opens the lifecycle drawer, offers only the legal next states, and transitions', async () => {
+    vi.mocked(assetsApi.listCis).mockResolvedValue({ items: [server], total: 1, page: 1, pageSize: 25 })
+    vi.mocked(assetsApi.transitionCi).mockResolvedValue({ ...server, lifecycleState: 'Deployed' })
+    renderPage()
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Lifecycle' }))
+    const drawer = await screen.findByRole('dialog', { name: /Lifecycle and ownership for app-01/ })
+
+    // In stock: deploy, repair, and retire are legal; disposal is not reachable without retiring.
+    expect(within(drawer).getByRole('button', { name: 'Deployed' })).toBeInTheDocument()
+    expect(within(drawer).queryByRole('button', { name: 'Disposed' })).not.toBeInTheDocument()
+
+    await userEvent.click(within(drawer).getByRole('button', { name: 'Deployed' }))
+
+    await waitFor(() => expect(assetsApi.transitionCi).toHaveBeenCalledWith('ci-1', 'Deployed', null))
+  })
+
+  it('checks a CI out to a user and prefills that user\'s department and location', async () => {
+    vi.mocked(assetsApi.listCis).mockResolvedValue({ items: [server], total: 1, page: 1, pageSize: 25 })
+    vi.mocked(assetsApi.assignCi).mockResolvedValue(server)
+    renderPage()
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Lifecycle' }))
+    const drawer = await screen.findByRole('dialog', { name: /Lifecycle and ownership for app-01/ })
+    await waitFor(() => expect(within(drawer).getByLabelText('Owner')).toHaveDisplayValue('Unassigned (check in)'))
+
+    await userEvent.selectOptions(within(drawer).getByLabelText('Owner'), 'user-1')
+    await userEvent.type(within(drawer).getByLabelText('Note'), 'Onboarding')
+    await userEvent.click(within(drawer).getByRole('button', { name: 'Save assignment' }))
+
+    await waitFor(() => expect(assetsApi.assignCi).toHaveBeenCalledWith('ci-1', {
+      ownerUserId: 'user-1', departmentId: 'dept-1', siteId: 'site-1', note: 'Onboarding',
+    }))
+  })
+
+  it('freezes the drawer for a disposed CI', async () => {
+    const disposed: Ci = { ...server, lifecycleState: 'Disposed', isActive: false }
+    vi.mocked(assetsApi.listCis).mockResolvedValue({ items: [disposed], total: 1, page: 1, pageSize: 25 })
+    renderPage()
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Lifecycle' }))
+    const drawer = await screen.findByRole('dialog', { name: /Lifecycle and ownership for app-01/ })
+
+    expect(within(drawer).getByText(/A disposed CI is a closed record/)).toBeInTheDocument()
+    expect(within(drawer).getByRole('button', { name: 'Save assignment' })).toBeDisabled()
+    expect(within(drawer).getByLabelText('Owner')).toBeDisabled()
+  })
+
+  it('sends the owner filter to the API so a user\'s assets can be listed', async () => {
+    vi.mocked(assetsApi.listCis).mockResolvedValue({ items: [server], total: 1, page: 1, pageSize: 25 })
+    renderPage()
+    expect(await screen.findByText('app-01')).toBeInTheDocument()
+    await waitFor(() => expect(screen.getByRole('combobox', { name: 'Filter by owner' })).toHaveTextContent('End User One'))
+
+    await userEvent.selectOptions(screen.getByRole('combobox', { name: 'Filter by owner' }), 'user-1')
+
+    await waitFor(() => expect(assetsApi.listCis).toHaveBeenCalledWith(expect.objectContaining({ ownerUserId: 'user-1' })))
   })
 
   it('offers a retry when loading fails', async () => {

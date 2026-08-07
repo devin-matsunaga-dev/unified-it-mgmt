@@ -3,6 +3,7 @@ using System.Text.Json.Serialization;
 using Modules.Assets;
 using Modules.Assets.Data;
 using Modules.Assets.Features.Cis;
+using Modules.Assets.Features.Lifecycle;
 using Modules.Helpdesk;
 using Modules.Helpdesk.Data;
 using Modules.Helpdesk.Features.Tickets;
@@ -62,6 +63,7 @@ app.MapGet("/", () => Results.Ok(new { service = "IT Platform" }));
 app.MapHealthChecks("/health");
 app.MapAuthenticationEndpoints();
 app.MapPlatformEndpoints();
+app.MapDirectoryEndpoints();
 app.MapSystemPingEndpoints();
 app.MapTicketEndpoints();
 app.MapAssignmentEndpoints();
@@ -71,6 +73,7 @@ app.MapCategoryEndpoints();
 app.MapTicketViewEndpoints();
 app.MapCannedResponseEndpoints();
 app.MapCiEndpoints();
+app.MapCiLifecycleEndpoints();
 
 app.Run();
 

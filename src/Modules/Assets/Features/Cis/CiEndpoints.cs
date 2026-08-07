@@ -14,10 +14,14 @@ public static class CiEndpoints
     {
         var group = endpoints.MapGroup("/api/cis").RequireAuthorization("CanManageAssets");
 
-        group.MapGet("/", async (CiType? type, string? search, bool? isActive, int? page, int? pageSize,
+        group.MapGet("/", async (CiType? type, string? search, bool? isActive, CiLifecycleState? lifecycleState,
+                Guid? ownerUserId, Guid? departmentId, Guid? siteId, int? page, int? pageSize,
                 ICiService service, CancellationToken cancellationToken) =>
             Results.Ok(await service.ListAsync(
-                new CiListRequest(type, search, isActive, page ?? 1, pageSize ?? 25), cancellationToken)));
+                new CiListRequest(
+                    type, search, isActive, lifecycleState, ownerUserId, departmentId, siteId,
+                    page ?? 1, pageSize ?? 25),
+                cancellationToken)));
 
         group.MapGet("/{id:guid}", async (Guid id, ICiService service, CancellationToken cancellationToken) =>
             await service.GetAsync(id, cancellationToken) is { } ci
@@ -59,6 +63,10 @@ public static class CiEndpoints
                 CiOutcome.DuplicateIdentifier => Results.Problem(
                     statusCode: StatusCodes.Status409Conflict,
                     title: "CI identifier is already used.",
+                    detail: result.Error),
+                CiOutcome.Disposed => Results.Problem(
+                    statusCode: StatusCodes.Status409Conflict,
+                    title: "CI is disposed.",
                     detail: result.Error),
                 _ => throw new InvalidOperationException($"Unknown CI outcome '{result.Outcome}'."),
             };

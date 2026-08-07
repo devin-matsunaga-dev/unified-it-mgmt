@@ -5,6 +5,7 @@ using Microsoft.Extensions.Hosting;
 
 using Platform.Auditing;
 using Platform.Data;
+using Platform.Directory;
 using Platform.Notifications;
 using Platform.Scheduling;
 using Platform.Messaging;
@@ -28,6 +29,7 @@ public static class PlatformServiceCollectionExtensions
             options.UseNpgsql(connectionString);
         });
         services.AddScoped<IAuditService, AuditService>();
+        services.AddScoped<IDirectoryService, DirectoryService>();
         services.AddScoped<IConsumerIdempotencyService, ConsumerIdempotencyService>();
         services.AddScoped<ISystemPingPublisher, SystemPingPublisher>();
         services.AddMassTransit(bus =>

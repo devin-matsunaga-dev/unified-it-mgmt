@@ -13,6 +13,19 @@ public abstract class ConfigurationItem
     public string? SerialNumber { get; set; }
     public string? Description { get; set; }
     public bool IsActive { get; set; } = true;
+
+    public CiLifecycleState LifecycleState { get; set; } = CiLifecycleState.InStock;
+
+    // Ownership. The ids address platform rows this module may not join to, so each carries a name
+    // snapshot for rendering; see CiAssignmentEntry for the same reasoning.
+    public Guid? OwnerUserId { get; set; }
+    public string? OwnerName { get; set; }
+    public Guid? DepartmentId { get; set; }
+    public string? DepartmentName { get; set; }
+    public Guid? SiteId { get; set; }
+    public string? SiteName { get; set; }
+    public DateTimeOffset? AssignedAt { get; set; }
+
     public ICollection<CiCustomFieldValue> CustomFieldValues { get; set; } = [];
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset UpdatedAt { get; set; }

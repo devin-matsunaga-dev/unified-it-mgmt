@@ -13,6 +13,9 @@ public sealed class AssetsDbContext(DbContextOptions<AssetsDbContext> options) :
     public DbSet<LogicalCi> LogicalCis => Set<LogicalCi>();
     public DbSet<CiCustomField> CiCustomFields => Set<CiCustomField>();
     public DbSet<CiCustomFieldValue> CiCustomFieldValues => Set<CiCustomFieldValue>();
+    public DbSet<CiLifecycleTransition> CiLifecycleTransitions => Set<CiLifecycleTransition>();
+    public DbSet<CiLifecycleHistory> CiLifecycleHistory => Set<CiLifecycleHistory>();
+    public DbSet<CiAssignmentEntry> CiAssignments => Set<CiAssignmentEntry>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

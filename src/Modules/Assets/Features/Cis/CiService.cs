@@ -43,6 +43,26 @@ public sealed class CiService(
             query = query.Where(ci => ci.IsActive == request.IsActive);
         }
 
+        if (request.LifecycleState is not null)
+        {
+            query = query.Where(ci => ci.LifecycleState == request.LifecycleState);
+        }
+
+        if (request.OwnerUserId is not null)
+        {
+            query = query.Where(ci => ci.OwnerUserId == request.OwnerUserId);
+        }
+
+        if (request.DepartmentId is not null)
+        {
+            query = query.Where(ci => ci.DepartmentId == request.DepartmentId);
+        }
+
+        if (request.SiteId is not null)
+        {
+            query = query.Where(ci => ci.SiteId == request.SiteId);
+        }
+
         if (!string.IsNullOrWhiteSpace(request.Search))
         {
             var term = $"%{request.Search.Trim()}%";
@@ -79,6 +99,17 @@ public sealed class CiService(
             return new(CiOutcome.InvalidAttributes, Errors: attributes.Errors);
         }
 
+        // Registration is only ever "on order" or "in the store room"; Deployed and everything past
+        // it has to be reached through a guarded transition so the history is never skipped.
+        if (request.LifecycleState is not (CiLifecycleState.Ordered or CiLifecycleState.InStock))
+        {
+            return new(CiOutcome.InvalidAttributes, Errors: new Dictionary<string, string[]>(StringComparer.Ordinal)
+            {
+                [nameof(request.LifecycleState)] =
+                    ["A new CI starts as Ordered or InStock; use a lifecycle transition to move it on."],
+            });
+        }
+
         var definitions = await FieldsForAsync(request.Type, cancellationToken);
         var bound = CiCustomFieldValueBinder.Bind(definitions, request.CustomFields);
         if (bound.Errors.Count > 0)
@@ -100,6 +131,7 @@ public sealed class CiService(
         ci.SerialNumber = serialNumber;
         ci.Description = Normalise(request.Description);
         ci.IsActive = true;
+        ci.LifecycleState = request.LifecycleState;
         ci.CreatedAt = now;
         ci.UpdatedAt = now;
         ApplyAttributes(ci, attributes.Values);
@@ -136,6 +168,13 @@ public sealed class CiService(
         if (ci is null)
         {
             return new(CiOutcome.NotFound);
+        }
+
+        // A disposed CI is a historical record. Editing one would rewrite what the asset was when it
+        // left the estate, so it is frozen rather than merely inactive.
+        if (ci.LifecycleState == CiLifecycleState.Disposed)
+        {
+            return new(CiOutcome.Disposed, Error: "A disposed CI can no longer be edited.");
         }
 
         var now = DateTimeOffset.UtcNow;
@@ -456,6 +495,15 @@ public sealed class CiService(
         ci.SerialNumber,
         ci.Description,
         ci.IsActive,
+        ci.LifecycleState,
+        new CiOwnership(
+            ci.OwnerUserId,
+            ci.OwnerName,
+            ci.DepartmentId,
+            ci.DepartmentName,
+            ci.SiteId,
+            ci.SiteName,
+            ci.AssignedAt),
         ReadAttributes(ci),
         [.. ci.CustomFieldValues
             .OrderBy(value => value.Field.SortOrder).ThenBy(value => value.Field.Label)
