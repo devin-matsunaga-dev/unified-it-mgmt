@@ -2,6 +2,11 @@ import { AlertTriangle, CheckCircle2, CirclePause, Clock3 } from 'lucide-react'
 import { cn } from '../../lib/utils'
 import type { TicketPriority } from '../../api/helpdesk'
 
+/** The default workflow's statuses, in order — used by the list filters and the detail page's transitions. */
+export const ticketStatuses = ['New', 'Triage', 'InProgress', 'Pending', 'Resolved', 'Closed'] as const
+export const ticketPriorities: TicketPriority[] = ['Low', 'Medium', 'High', 'Critical']
+export const displayStatus = (status: string) => status === 'InProgress' ? 'In progress' : status
+
 export function PriorityPill({ priority }: { priority: TicketPriority }) {
   return <span className={cn('inline-flex rounded-md px-2 py-0.5 text-xs font-medium', priority === 'Low' && 'bg-green-100 text-green-700 dark:bg-green-950 dark:text-green-300', priority === 'Medium' && 'bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-300', ['High', 'Critical'].includes(priority) && 'bg-red-100 text-red-700 dark:bg-red-950 dark:text-red-300')}>{priority}</span>
 }

@@ -26,5 +26,5 @@ var helpdeskOptions = new DbContextOptionsBuilder<HelpdeskDbContext>()
 await using var helpdeskDbContext = new HelpdeskDbContext(helpdeskOptions);
 await helpdeskDbContext.Database.MigrateAsync();
 var helpdeskResult = await new HelpdeskDemoDataSeeder(helpdeskDbContext).SeedAsync();
-Console.WriteLine($"Helpdesk demo data ready. Added {helpdeskResult.TeamsAdded} teams, {helpdeskResult.QueuesAdded} queues, {helpdeskResult.MembersAdded} team members, {helpdeskResult.CategoriesAdded} categories, and {helpdeskResult.CustomFieldsAdded} custom fields.");
+Console.WriteLine($"Helpdesk demo data ready. Added {helpdeskResult.TeamsAdded} teams, {helpdeskResult.QueuesAdded} queues, {helpdeskResult.MembersAdded} team members, {helpdeskResult.CategoriesAdded} categories, {helpdeskResult.CustomFieldsAdded} custom fields, {helpdeskResult.CannedResponsesAdded} canned responses, and {helpdeskResult.ViewsAdded} shared views.");
 return 0;

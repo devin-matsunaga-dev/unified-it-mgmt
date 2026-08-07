@@ -80,8 +80,8 @@ public sealed class DemoDataSeederIntegrationTests : IAsyncLifetime
         var first = await seeder.SeedAsync();
         var second = await seeder.SeedAsync();
 
-        Assert.Equal(new HelpdeskSeedResult(1, 1, 4, 10, 2), first);
-        Assert.Equal(new HelpdeskSeedResult(0, 0, 0, 0, 0), second);
+        Assert.Equal(new HelpdeskSeedResult(1, 1, 4, 10, 2, 3, 1), first);
+        Assert.Equal(new HelpdeskSeedResult(0, 0, 0, 0, 0, 0, 0), second);
         Assert.Equal("Service Desk", await _helpdeskDbContext!.TicketQueues.Select(queue => queue.Name).SingleAsync());
         var seededField = await _helpdeskDbContext.TicketCustomFields
             .Include(field => field.Category)

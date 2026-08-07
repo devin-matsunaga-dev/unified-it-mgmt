@@ -4,6 +4,7 @@ using FluentValidation;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
+using Modules.Helpdesk.Data;
 
 namespace Modules.Helpdesk.Features.Tickets;
 
@@ -58,6 +59,14 @@ public static class TicketEndpoints
         group.MapGet("/", async (
             int? page,
             int? pageSize,
+            string? q,
+            string[]? status,
+            string[]? priority,
+            string? type,
+            Guid? queueId,
+            string? assignee,
+            Guid? categoryId,
+            bool? unassigned,
             ClaimsPrincipal user,
             ITicketService service,
             CancellationToken cancellationToken) =>
@@ -75,13 +84,41 @@ public static class TicketEndpoints
                 errors[nameof(pageSize)] = ["Page size must be between 1 and 200."];
             }
 
+            var priorities = new List<TicketPriority>();
+            foreach (var value in priority ?? [])
+            {
+                if (Enum.TryParse<TicketPriority>(value, ignoreCase: true, out var parsed))
+                {
+                    priorities.Add(parsed);
+                }
+                else
+                {
+                    errors[nameof(priority)] = [$"Priority '{value}' does not exist."];
+                }
+            }
+
+            TicketType? ticketType = null;
+            if (!string.IsNullOrWhiteSpace(type))
+            {
+                if (Enum.TryParse<TicketType>(type, ignoreCase: true, out var parsedType))
+                {
+                    ticketType = parsedType;
+                }
+                else
+                {
+                    errors[nameof(type)] = [$"Ticket type '{type}' does not exist."];
+                }
+            }
+
             if (errors.Count > 0)
             {
                 return Results.ValidationProblem(errors);
             }
 
-            return Results.Ok(await service.ListAsync(
-                resolvedPage, resolvedPageSize, user, cancellationToken));
+            var filter = new TicketListFilter(
+                q, status, priorities, ticketType, queueId, assignee, categoryId, unassigned ?? false);
+            var result = await service.ListAsync(filter, resolvedPage, resolvedPageSize, user, cancellationToken);
+            return result.Errors is null ? Results.Ok(result.Page) : Results.ValidationProblem(result.Errors);
         });
 
         group.MapPut("/{id:guid}", async (

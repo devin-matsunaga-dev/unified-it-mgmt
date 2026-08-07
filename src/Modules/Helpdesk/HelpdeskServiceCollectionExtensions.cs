@@ -4,7 +4,9 @@ using Microsoft.Extensions.DependencyInjection;
 using Modules.Helpdesk.Data;
 using Modules.Helpdesk.Features.Tickets;
 using Modules.Helpdesk.Features.Assignments;
+using Modules.Helpdesk.Features.CannedResponses;
 using Modules.Helpdesk.Features.Categories;
+using Modules.Helpdesk.Features.Views;
 using Modules.Helpdesk.Features.Interactions;
 using Modules.Helpdesk.Features.Sla;
 using Modules.Helpdesk.Features.Email;
@@ -27,6 +29,8 @@ public static class HelpdeskServiceCollectionExtensions
         services.AddScoped<ITicketService, TicketService>();
         services.AddScoped<ICategoryService, CategoryService>();
         services.AddScoped<IAssignmentService, AssignmentService>();
+        services.AddScoped<ITicketViewService, TicketViewService>();
+        services.AddScoped<ICannedResponseService, CannedResponseService>();
         services.AddScoped<IInteractionService, InteractionService>();
         services.AddScoped<ISlaService, SlaService>();
         services.AddScoped<IEmailIngestionService, EmailIngestionService>();

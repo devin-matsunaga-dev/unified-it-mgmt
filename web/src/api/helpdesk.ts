@@ -1,4 +1,5 @@
 import { apiRequest } from './client'
+import { filterToQuery } from '../features/tickets/ticketFilters'
 
 export type TicketLevel = 'Low' | 'Medium' | 'High'
 export type TicketType = 'Incident' | 'ServiceRequest'
@@ -58,6 +59,30 @@ export type Ticket = {
 }
 
 export type TicketPage = { items: Ticket[]; total: number; page: number; pageSize: number }
+export type TicketFilter = {
+  search?: string
+  statuses?: string[]
+  priorities?: TicketPriority[]
+  type?: TicketType
+  queueId?: string
+  assignedTechnicianId?: string
+  categoryId?: string
+  unassigned?: boolean
+}
+export type TicketView = {
+  id: string
+  name: string
+  ownerId: string
+  ownerName: string
+  isShared: boolean
+  isMine: boolean
+  filter: TicketFilter
+  createdAt: string
+  updatedAt: string
+}
+export type SaveTicketViewInput = { name: string; isShared: boolean; filter: TicketFilter }
+export type CannedResponse = { id: string; name: string; body: string; createdById: string; createdAt: string; updatedAt: string }
+export type RenderedCannedResponse = { id: string; name: string; body: string }
 export type CreateTicketInput = {
   title: string
   description: string
@@ -87,7 +112,16 @@ export type SlaRemaining = {
 }
 
 export const helpdeskApi = {
-  listTickets: () => apiRequest<TicketPage>('/api/tickets?page=1&pageSize=200'),
+  listTickets: (filter: TicketFilter = {}) => apiRequest<TicketPage>(`/api/tickets?${filterToQuery(filter)}`),
+  listViews: () => apiRequest<TicketView[]>('/api/ticket-views'),
+  createView: (input: SaveTicketViewInput) => apiRequest<TicketView>('/api/ticket-views', { method: 'POST', body: JSON.stringify(input) }),
+  updateView: (id: string, input: SaveTicketViewInput) => apiRequest<TicketView>(`/api/ticket-views/${id}`, { method: 'PUT', body: JSON.stringify(input) }),
+  deleteView: (id: string) => apiRequest<void>(`/api/ticket-views/${id}`, { method: 'DELETE' }),
+  listCannedResponses: () => apiRequest<CannedResponse[]>('/api/canned-responses'),
+  createCannedResponse: (input: { name: string; body: string }) => apiRequest<CannedResponse>('/api/canned-responses', { method: 'POST', body: JSON.stringify(input) }),
+  updateCannedResponse: (id: string, input: { name: string; body: string }) => apiRequest<CannedResponse>(`/api/canned-responses/${id}`, { method: 'PUT', body: JSON.stringify(input) }),
+  deleteCannedResponse: (id: string) => apiRequest<void>(`/api/canned-responses/${id}`, { method: 'DELETE' }),
+  renderCannedResponse: (id: string, ticketId: string) => apiRequest<RenderedCannedResponse>(`/api/canned-responses/${id}/render`, { method: 'POST', body: JSON.stringify({ ticketId }) }),
   listQueues: () => apiRequest<TicketQueue[]>('/api/queues'),
   listCategories: () => apiRequest<TicketCategory[]>('/api/ticket-categories'),
   getTicket: (id: string) => apiRequest<Ticket>(`/api/tickets/${id}`),

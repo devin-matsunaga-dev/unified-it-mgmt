@@ -5,9 +5,9 @@
 ## Current position
 
 - **Phase:** 1 — Helpdesk
-- **Last completed WP:** WP-1.9 (Categories + custom fields)
-- **Current WP:** WP-1.10 (Search, saved views, canned responses)
-- **Current branch:** feat/wp-1.10-search-views-canned-responses
+- **Last completed WP:** WP-1.10 (Search, saved views, canned responses)
+- **Current WP:** WP-1.11 (Seeder: helpdesk history)
+- **Current branch:** feat/wp-1.11-seeder-ticket-history
 - **Last tag:** —
 
 ## Platform versions (law — see WORKFLOW.md table for EOL dates)
@@ -23,6 +23,10 @@
 - Categories and their custom fields are managed through the API only (`/api/ticket-categories`, AdminOnly) — there is no admin screen. Add one if the tree ever needs editing outside a REST client.
 - SLA policies still match on their own free-text `Category` string and are looked up by priority alone; they are not wired to the WP-1.9 category tree. Worth a dedicated WP.
 - Custom fields are not inherited from parent categories: a field attaches to exactly the category it was created on.
+- The ticket list is now filtered and searched on the server, but it still requests a single page of 200 (footer arrows remain disabled). Real pagination is still owed — it matters once WP-1.11 seeds 200 tickets.
+- Full-text search uses the `english` dictionary for every ticket; there is no per-locale text-search configuration. Terms are prefix-matched and AND-ed, so it narrows as you type, but it is not fuzzy — a typo inside a word ("aurroa") still finds nothing. Trigram/`pg_trgm` similarity is the fix if that becomes a complaint.
+- Canned responses are managed from the "Manage" dialog in the ticket reply composer (any agent); saved views are managed inline on the ticket list. Neither has an admin screen under a settings area.
+- Status and priority list filters are single-select in the UI, although the API and the saved-view payload accept several of each.
 - Dev Postgres resets between `aspire run`s whenever AppHost configuration changes (the unnamed `.WithDataVolume()` name embeds a config hash, so a new empty volume is mounted). This is **intentional** — see DECISIONS.md. Consequence: anything created through the API by hand is gone after a restart, so demo/verification fixtures must live in the seeder.
 
 ## Completed work packages
@@ -49,7 +53,7 @@
 - [x] WP-1.7 Agent ticket UI (2026-08-07)
 - [x] WP-1.8 Self-service portal (2026-08-07)
 - [x] WP-1.9 Categories + custom fields (2026-08-07)
-- [ ] WP-1.10 Search/views/canned responses
+- [x] WP-1.10 Search/views/canned responses (2026-08-07)
 - [ ] WP-1.11 Seeder: ticket history
 
 ### Phase 2 — Assets/CMDB

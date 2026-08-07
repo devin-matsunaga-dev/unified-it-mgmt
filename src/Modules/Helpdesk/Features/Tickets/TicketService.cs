@@ -19,6 +19,9 @@ public sealed class TicketService(
     ISlaService slaService,
     INotificationService notificationService) : ITicketService
 {
+    /// <summary>The text-search dictionary the generated tsvector columns are built with.</summary>
+    internal const string SearchConfiguration = "english";
+
     public async Task<TicketWriteResult> CreateAsync(
         CreateTicketRequest request,
         ClaimsPrincipal actor,
@@ -131,19 +134,92 @@ public sealed class TicketService(
         return ticket is null ? null : Map(ticket);
     }
 
-    public async Task<TicketPageResponse> ListAsync(
+    public async Task<TicketListResult> ListAsync(
+        TicketListFilter filter,
         int page,
         int pageSize,
         ClaimsPrincipal actor,
         CancellationToken cancellationToken)
     {
         var query = VisibleTickets(actor);
+
+        if (filter.Statuses is { Count: > 0 })
+        {
+            var requested = filter.Statuses.Where(status => !string.IsNullOrWhiteSpace(status))
+                .Select(status => status.Trim()).ToList();
+            var known = await dbContext.TicketStatuses.Select(status => status.Name).ToListAsync(cancellationToken);
+            var unknown = requested
+                .Where(status => !known.Contains(status, StringComparer.OrdinalIgnoreCase)).ToList();
+            if (unknown.Count > 0)
+            {
+                return new(null, new Dictionary<string, string[]>
+                {
+                    ["status"] = [.. unknown.Select(status => $"Status '{status}' does not exist.")],
+                });
+            }
+
+            var names = known.Where(name => requested.Contains(name, StringComparer.OrdinalIgnoreCase)).ToList();
+            query = query.Where(ticket => names.Contains(ticket.Status.Name));
+        }
+
+        if (filter.Priorities is { Count: > 0 })
+        {
+            var priorities = filter.Priorities.ToList();
+            query = query.Where(ticket => priorities.Contains(ticket.Priority));
+        }
+
+        if (filter.Type is { } type)
+        {
+            query = query.Where(ticket => ticket.Type == type);
+        }
+
+        if (filter.QueueId is { } queueId)
+        {
+            query = query.Where(ticket => ticket.QueueId == queueId);
+        }
+
+        if (filter.CategoryId is { } categoryId)
+        {
+            query = query.Where(ticket => ticket.CategoryId == categoryId);
+        }
+
+        if (filter.Unassigned)
+        {
+            query = query.Where(ticket => ticket.AssignedTechnicianId == null);
+        }
+        else if (!string.IsNullOrWhiteSpace(filter.AssignedTechnicianId))
+        {
+            var technicianId = filter.AssignedTechnicianId.Trim();
+            query = query.Where(ticket => ticket.AssignedTechnicianId == technicianId);
+        }
+
+        var term = TicketSearchQuery.ToPrefixTsQuery(filter.Search);
+        var sequenceNumber = TicketSearchQuery.ToSequenceNumber(filter.Search);
+        if (term is not null)
+        {
+            // Internal notes are searchable for agents only; a requester must never learn a note exists.
+            var includeInternal = !IsEndUser(actor);
+            query = query.Where(ticket =>
+                ticket.SearchVector.Matches(EF.Functions.ToTsQuery(SearchConfiguration, term))
+                || (sequenceNumber != null && ticket.SequenceNumber == sequenceNumber)
+                || dbContext.TicketComments.Any(comment =>
+                    comment.TicketId == ticket.Id
+                    && (includeInternal || !comment.IsInternal)
+                    && comment.SearchVector.Matches(EF.Functions.ToTsQuery(SearchConfiguration, term))));
+        }
+
         var total = await query.CountAsync(cancellationToken);
-        var tickets = await query.OrderByDescending(ticket => ticket.CreatedAt)
+        var ordered = term is null
+            ? query.OrderByDescending(ticket => ticket.CreatedAt)
+            : query
+                .OrderByDescending(ticket =>
+                    ticket.SearchVector.Rank(EF.Functions.ToTsQuery(SearchConfiguration, term)))
+                .ThenByDescending(ticket => ticket.CreatedAt);
+        var tickets = await ordered
             .Skip((page - 1) * pageSize)
             .Take(pageSize)
             .ToListAsync(cancellationToken);
-        return new TicketPageResponse(tickets.Select(Map).ToList(), total, page, pageSize);
+        return new(new TicketPageResponse(tickets.Select(Map).ToList(), total, page, pageSize));
     }
 
     public async Task<TicketWriteResult> UpdateAsync(

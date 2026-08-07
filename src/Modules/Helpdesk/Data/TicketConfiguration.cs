@@ -29,6 +29,9 @@ public sealed class TicketConfiguration : IEntityTypeConfiguration<Ticket>
             .OnDelete(DeleteBehavior.Restrict);
         builder.HasIndex(ticket => ticket.AssignedTechnicianId);
         builder.HasIndex(ticket => ticket.CategoryId);
+        builder.HasGeneratedTsVectorColumn(
+                ticket => ticket.SearchVector, "english", ticket => new { ticket.Title, ticket.Description })
+            .HasIndex(ticket => ticket.SearchVector).HasMethod("GIN");
         builder.Ignore(ticket => ticket.Number);
     }
 }

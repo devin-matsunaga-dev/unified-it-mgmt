@@ -879,6 +879,241 @@ public sealed class TicketApiIntegrationTests : IAsyncLifetime
         Assert.Equal("application/problem+json", response.Content.Headers.ContentType?.MediaType);
     }
 
+    [Fact]
+    public async Task TicketSearch_TermInsideOldComment_ReturnsOnlyThatTicket()
+    {
+        var term = $"aurora{Guid.NewGuid():N}";
+        var matching = await CreateSearchableTicketAsync("Monitor flickers", "The screen flickers at boot.");
+        await CreateSearchableTicketAsync("Keyboard sticky", "Several keys stick.");
+        await AddCommentAsync(matching.Id, $"Replaced the {term} display cable.", isInternal: false);
+
+        var page = await SearchAsync($"q={term}");
+
+        Assert.Equal(1, page.Total);
+        Assert.Equal(matching.Id, Assert.Single(page.Items).Id);
+    }
+
+    [Fact]
+    public async Task TicketSearch_PartialWordAndTicketNumber_BothMatch()
+    {
+        var suffix = Guid.NewGuid().ToString("N")[..8];
+        var ticket = await CreateSearchableTicketAsync($"Projector lamp {suffix}", "The bulb needs replacing.");
+
+        var byPrefix = await SearchAsync($"q={suffix[..4]}");
+        var byWordPrefix = await SearchAsync("q=projec");
+        var byNumber = await SearchAsync($"q={ticket.Number}");
+
+        Assert.Contains(byPrefix.Items, item => item.Id == ticket.Id);
+        Assert.Contains(byWordPrefix.Items, item => item.Id == ticket.Id);
+        Assert.Contains(byNumber.Items, item => item.Id == ticket.Id);
+    }
+
+    [Fact]
+    public async Task TicketSearch_InternalNoteTerm_IsInvisibleToTheRequester()
+    {
+        var term = $"confidential{Guid.NewGuid():N}";
+        var ticket = await CreateSearchableTicketAsync(
+            "Laptop replacement", "Requesting a replacement laptop.", requesterId: "search-requester");
+        await AddCommentAsync(ticket.Id, $"Manager approval pending: {term}.", isInternal: true);
+
+        var agentResults = await SearchAsync($"q={term}");
+        var requesterResults = await SearchAsync($"q={term}", role: "EndUser", userId: "search-requester");
+
+        Assert.Equal(ticket.Id, Assert.Single(agentResults.Items).Id);
+        Assert.Empty(requesterResults.Items);
+    }
+
+    [Fact]
+    public async Task TicketList_FilterByStatusAndPriority_NarrowsResults()
+    {
+        var ticket = await CreateSearchableTicketAsync("Filterable outage", "Filter target.");
+        await TransitionAsync(ticket.Id, "Triage");
+
+        var matching = await SearchAsync("status=Triage&priority=Critical");
+        var excluded = await SearchAsync("status=New&priority=Critical");
+
+        Assert.Contains(matching.Items, item => item.Id == ticket.Id);
+        Assert.DoesNotContain(excluded.Items, item => item.Id == ticket.Id);
+    }
+
+    [Fact]
+    public async Task TicketList_UnknownStatusFilter_ReturnsValidationProblem()
+    {
+        using var request = Authenticated(HttpMethod.Get, "/api/tickets?status=Frozen");
+        using var response = await _client!.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Equal("application/problem+json", response.Content.Headers.ContentType?.MediaType);
+    }
+
+    [Fact]
+    public async Task TicketList_UnknownPriorityFilter_ReturnsValidationProblem()
+    {
+        using var request = Authenticated(HttpMethod.Get, "/api/tickets?priority=Urgent");
+        using var response = await _client!.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task TicketViews_SharedView_IsVisibleToOtherAgentsButOnlyOwnerCanChangeIt()
+    {
+        var name = $"Breaching {Guid.NewGuid():N}";
+        var created = await CreateViewAsync(name, isShared: true, userId: "view-owner");
+
+        var otherAgentViews = await ListViewsAsync("view-other");
+        var mine = Assert.Single(otherAgentViews, view => view.Id == created.Id);
+        Assert.True(mine.IsShared);
+        Assert.False(mine.IsMine);
+        Assert.Equal("Critical", Assert.Single(mine.Filter.Priorities!));
+
+        using var updateRequest = Authenticated(HttpMethod.Put, $"/api/ticket-views/{created.Id}", userId: "view-other");
+        updateRequest.Content = JsonContent.Create(new { name, isShared = true, filter = new { search = "stolen" } });
+        using var updateResponse = await _client!.SendAsync(updateRequest);
+
+        Assert.Equal(HttpStatusCode.Forbidden, updateResponse.StatusCode);
+        Assert.Equal("application/problem+json", updateResponse.Content.Headers.ContentType?.MediaType);
+    }
+
+    [Fact]
+    public async Task TicketViews_PrivateView_IsHiddenFromOtherAgentsAndRejectsDuplicateNames()
+    {
+        var name = $"My work {Guid.NewGuid():N}";
+        var created = await CreateViewAsync(name, isShared: false, userId: "view-private-owner");
+
+        var ownerViews = await ListViewsAsync("view-private-owner");
+        var otherViews = await ListViewsAsync("view-private-other");
+        Assert.Contains(ownerViews, view => view.Id == created.Id);
+        Assert.DoesNotContain(otherViews, view => view.Id == created.Id);
+
+        using var duplicate = Authenticated(HttpMethod.Post, "/api/ticket-views", userId: "view-private-owner");
+        duplicate.Content = JsonContent.Create(new { name, isShared = false, filter = new { search = "again" } });
+        using var duplicateResponse = await _client!.SendAsync(duplicate);
+        Assert.Equal(HttpStatusCode.Conflict, duplicateResponse.StatusCode);
+
+        using var delete = Authenticated(HttpMethod.Delete, $"/api/ticket-views/{created.Id}", userId: "view-private-owner");
+        using var deleteResponse = await _client.SendAsync(delete);
+        Assert.Equal(HttpStatusCode.NoContent, deleteResponse.StatusCode);
+
+        await using var scope = _application.Services.CreateAsyncScope();
+        var audits = await scope.ServiceProvider.GetRequiredService<PlatformDbContext>().AuditEntries
+            .Where(entry => entry.EntityType == "TicketView" && entry.EntityId == created.Id.ToString())
+            .Select(entry => entry.Action).ToListAsync();
+        Assert.Equal(["Created", "Deleted"], audits);
+    }
+
+    [Fact]
+    public async Task CannedResponses_Render_FillsTicketAndRequesterPlaceholders()
+    {
+        var ticket = await CreateTicketAsync("canned-requester");
+        using var createRequest = Authenticated(HttpMethod.Post, "/api/canned-responses");
+        createRequest.Content = JsonContent.Create(new
+        {
+            name = $"Acknowledge {Guid.NewGuid():N}",
+            body = "Hi {{requester.name}}, ticket {{ticket.number}} is with {{agent.name}}. {{unknown.token}}",
+        });
+        using var createResponse = await _client!.SendAsync(createRequest);
+        var canned = await createResponse.Content.ReadFromJsonAsync<CannedResponseDto>();
+        Assert.Equal(HttpStatusCode.Created, createResponse.StatusCode);
+
+        using var renderRequest = Authenticated(
+            HttpMethod.Post, $"/api/canned-responses/{canned!.Id}/render");
+        renderRequest.Content = JsonContent.Create(new { ticketId = ticket.Id });
+        using var renderResponse = await _client.SendAsync(renderRequest);
+        var rendered = await renderResponse.Content.ReadFromJsonAsync<RenderedCannedResponseDto>();
+
+        Assert.Equal(HttpStatusCode.OK, renderResponse.StatusCode);
+        Assert.Equal(
+            $"Hi canned-requester, ticket {ticket.Number} is with test-user. {{{{unknown.token}}}}",
+            Assert.IsType<RenderedCannedResponseDto>(rendered).Body);
+    }
+
+    [Fact]
+    public async Task CannedResponses_RenderForMissingTicket_ReturnsNotFound()
+    {
+        using var createRequest = Authenticated(HttpMethod.Post, "/api/canned-responses");
+        createRequest.Content = JsonContent.Create(new
+        {
+            name = $"Missing ticket {Guid.NewGuid():N}", body = "Hello {{requester.name}}.",
+        });
+        using var createResponse = await _client!.SendAsync(createRequest);
+        var canned = await createResponse.Content.ReadFromJsonAsync<CannedResponseDto>();
+
+        using var renderRequest = Authenticated(HttpMethod.Post, $"/api/canned-responses/{canned!.Id}/render");
+        renderRequest.Content = JsonContent.Create(new { ticketId = Guid.CreateVersion7() });
+        using var renderResponse = await _client.SendAsync(renderRequest);
+
+        Assert.Equal(HttpStatusCode.NotFound, renderResponse.StatusCode);
+        Assert.Equal("application/problem+json", renderResponse.Content.Headers.ContentType?.MediaType);
+    }
+
+    [Fact]
+    public async Task CannedResponses_CreatedByRequester_ReturnsForbidden()
+    {
+        using var request = Authenticated(HttpMethod.Post, "/api/canned-responses", role: "EndUser");
+        request.Content = JsonContent.Create(new { name = "Requester macro", body = "Not allowed." });
+        using var response = await _client!.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        Assert.Equal("application/problem+json", response.Content.Headers.ContentType?.MediaType);
+    }
+
+    private async Task<TicketDto> CreateSearchableTicketAsync(
+        string title,
+        string description,
+        string requesterId = "search-requester")
+    {
+        using var request = Authenticated(HttpMethod.Post, "/api/tickets");
+        request.Content = JsonContent.Create(new
+        {
+            title, description, type = "Incident", urgency = "High", impact = "High", requesterId,
+        });
+        using var response = await _client!.SendAsync(request);
+        var ticket = await response.Content.ReadFromJsonAsync<TicketDto>();
+
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        return Assert.IsType<TicketDto>(ticket);
+    }
+
+    private async Task<TicketPageDto> SearchAsync(
+        string query,
+        string role = "Technician",
+        string userId = "test-user-id")
+    {
+        using var request = Authenticated(HttpMethod.Get, $"/api/tickets?{query}", role, userId);
+        using var response = await _client!.SendAsync(request);
+        var page = await response.Content.ReadFromJsonAsync<TicketPageDto>();
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        return Assert.IsType<TicketPageDto>(page);
+    }
+
+    private async Task<TicketViewDto> CreateViewAsync(string name, bool isShared, string userId)
+    {
+        using var request = Authenticated(HttpMethod.Post, "/api/ticket-views", userId: userId);
+        request.Content = JsonContent.Create(new
+        {
+            name,
+            isShared,
+            filter = new { priorities = new[] { "Critical" }, unassigned = true },
+        });
+        using var response = await _client!.SendAsync(request);
+        var view = await response.Content.ReadFromJsonAsync<TicketViewDto>();
+
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        return Assert.IsType<TicketViewDto>(view);
+    }
+
+    private async Task<IReadOnlyList<TicketViewDto>> ListViewsAsync(string userId)
+    {
+        using var request = Authenticated(HttpMethod.Get, "/api/ticket-views", userId: userId);
+        using var response = await _client!.SendAsync(request);
+        var views = await response.Content.ReadFromJsonAsync<List<TicketViewDto>>();
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        return Assert.IsType<List<TicketViewDto>>(views);
+    }
+
     private async Task<Guid> CreateSlaCalendarAsync()
     {
         using var request = Authenticated(HttpMethod.Post, "/api/sla/calendars", "Admin");
@@ -1038,6 +1273,12 @@ public sealed class TicketApiIntegrationTests : IAsyncLifetime
     private sealed record AttachmentDto(Guid Id, long Size, string DownloadUrl);
 
     private sealed record TransitionDto(string FromStatus, string ToStatus, string? ResolutionNote);
+    private sealed record TicketViewFilterDto(
+        string? Search, IReadOnlyList<string>? Statuses, IReadOnlyList<string>? Priorities, bool Unassigned);
+    private sealed record TicketViewDto(
+        Guid Id, string Name, string OwnerId, bool IsShared, bool IsMine, TicketViewFilterDto Filter);
+    private sealed record CannedResponseDto(Guid Id, string Name, string Body);
+    private sealed record RenderedCannedResponseDto(Guid Id, string Name, string Body);
     private sealed record CalendarDto(Guid Id);
     private sealed record SlaDto(bool IsPaused, double ResolutionRemainingSeconds);
 

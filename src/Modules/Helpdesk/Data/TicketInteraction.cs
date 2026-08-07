@@ -1,3 +1,5 @@
+using NpgsqlTypes;
+
 namespace Modules.Helpdesk.Data;
 
 public sealed class TicketComment
@@ -10,6 +12,9 @@ public sealed class TicketComment
     public string AuthorId { get; set; } = string.Empty;
     public string? AuthorDisplayName { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
+
+    /// <summary>Database-generated full-text index over the comment body.</summary>
+    public NpgsqlTsVector SearchVector { get; set; } = null!;
 }
 
 public sealed class TicketWorklog

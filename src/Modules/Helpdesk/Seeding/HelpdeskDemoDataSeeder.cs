@@ -1,10 +1,18 @@
 using Microsoft.EntityFrameworkCore;
 using Modules.Helpdesk.Data;
+using Modules.Helpdesk.Features.Tickets;
+using Modules.Helpdesk.Features.Views;
 
 namespace Modules.Helpdesk.Seeding;
 
 public sealed record HelpdeskSeedResult(
-    int TeamsAdded, int QueuesAdded, int MembersAdded, int CategoriesAdded, int CustomFieldsAdded);
+    int TeamsAdded,
+    int QueuesAdded,
+    int MembersAdded,
+    int CategoriesAdded,
+    int CustomFieldsAdded,
+    int CannedResponsesAdded,
+    int ViewsAdded);
 
 public sealed class HelpdeskDemoDataSeeder(HelpdeskDbContext dbContext)
 {
@@ -37,6 +45,31 @@ public sealed class HelpdeskDemoDataSeeder(HelpdeskDbContext dbContext)
             "asset_tag", "Asset tag", CustomFieldType.Text, true, [], 1),
         (Guid.Parse("01980000-0000-7000-8000-000000000602"), Guid.Parse("01980000-0000-7000-8000-000000000511"),
             "floor", "Floor", CustomFieldType.Select, false, ["Ground", "First", "Second"], 2),
+    ];
+
+    /// <summary>
+    /// Starter macros. The dev database is recreated on most AppHost restarts, so the fixture proving
+    /// placeholder substitution has to be seeded rather than created by hand.
+    /// </summary>
+    private static readonly (Guid Id, string Name, string Body)[] CannedResponses =
+    [
+        (Guid.Parse("01980000-0000-7000-8000-000000000701"), "Acknowledge receipt",
+            "Hello {{requester.name}},\n\nThanks for contacting the service desk. Ticket {{ticket.number}} "
+            + "(\"{{ticket.title}}\") is with me now and I will update you as soon as I have more.\n\n{{agent.name}}"),
+        (Guid.Parse("01980000-0000-7000-8000-000000000702"), "Ask for more information",
+            "Hello {{requester.name}},\n\nTo move {{ticket.number}} forward I need a little more detail: when the "
+            + "problem started, and any error message you see on screen.\n\nThanks,\n{{agent.name}}"),
+        (Guid.Parse("01980000-0000-7000-8000-000000000703"), "Resolution confirmation",
+            "Hello {{requester.name}},\n\n{{ticket.number}} is resolved. Please reply within five working days if "
+            + "the problem returns and this ticket will be reopened.\n\n{{agent.name}}"),
+    ];
+
+    /// <summary>One shared team view so the saved-view picker is populated in a fresh environment.</summary>
+    private static readonly (Guid Id, string Name, string OwnerId, string OwnerName, TicketListFilter Filter)[] Views =
+    [
+        (Guid.Parse("01980000-0000-7000-8000-000000000801"), "Unassigned high priority", "technician1", "Technician One",
+            new TicketListFilter(
+                Priorities: [TicketPriority.High, TicketPriority.Critical], Unassigned: true)),
     ];
 
     public async Task<HelpdeskSeedResult> SeedAsync(CancellationToken cancellationToken = default)
@@ -122,8 +155,48 @@ public sealed class HelpdeskDemoDataSeeder(HelpdeskDbContext dbContext)
             }
         }
 
+        var cannedResponsesAdded = 0;
+        foreach (var (id, name, body) in CannedResponses)
+        {
+            if (!await dbContext.CannedResponses.AnyAsync(response => response.Id == id, cancellationToken))
+            {
+                dbContext.CannedResponses.Add(new CannedResponse
+                {
+                    Id = id,
+                    Name = name,
+                    Body = body,
+                    CreatedById = "seeder",
+                    CreatedAt = now,
+                    UpdatedAt = now,
+                });
+                cannedResponsesAdded++;
+            }
+        }
+
+        var viewsAdded = 0;
+        foreach (var (id, name, ownerId, ownerName, filter) in Views)
+        {
+            if (!await dbContext.TicketViews.AnyAsync(view => view.Id == id, cancellationToken))
+            {
+                dbContext.TicketViews.Add(new TicketView
+                {
+                    Id = id,
+                    Name = name,
+                    OwnerId = ownerId,
+                    OwnerDisplayName = ownerName,
+                    IsShared = true,
+                    FilterJson = TicketViewService.Serialize(filter),
+                    CreatedAt = now,
+                    UpdatedAt = now,
+                });
+                viewsAdded++;
+            }
+        }
+
         await dbContext.SaveChangesAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
-        return new(teamsAdded, queuesAdded, membersAdded, categoriesAdded, customFieldsAdded);
+        return new(
+            teamsAdded, queuesAdded, membersAdded, categoriesAdded, customFieldsAdded,
+            cannedResponsesAdded, viewsAdded);
     }
 }

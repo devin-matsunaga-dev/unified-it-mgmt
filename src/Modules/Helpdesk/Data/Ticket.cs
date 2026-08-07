@@ -1,3 +1,5 @@
+using NpgsqlTypes;
+
 namespace Modules.Helpdesk.Data;
 
 public sealed class Ticket
@@ -23,6 +25,9 @@ public sealed class Ticket
     public ICollection<TicketCustomFieldValue> CustomFieldValues { get; set; } = [];
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset UpdatedAt { get; set; }
+
+    /// <summary>Database-generated full-text index over the title and description.</summary>
+    public NpgsqlTsVector SearchVector { get; set; } = null!;
 
     public string Number => $"INC-{SequenceNumber:000000}";
 }

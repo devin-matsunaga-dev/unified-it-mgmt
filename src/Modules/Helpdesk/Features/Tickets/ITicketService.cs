@@ -11,7 +11,8 @@ public interface ITicketService
 
     Task<TicketResponse?> GetAsync(Guid id, ClaimsPrincipal actor, CancellationToken cancellationToken);
 
-    Task<TicketPageResponse> ListAsync(
+    Task<TicketListResult> ListAsync(
+        TicketListFilter filter,
         int page,
         int pageSize,
         ClaimsPrincipal actor,

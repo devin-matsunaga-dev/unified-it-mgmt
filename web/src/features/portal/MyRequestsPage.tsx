@@ -8,7 +8,7 @@ import { StatusPill, formatLocal } from '../tickets/ticketUi'
 
 export function MyRequestsPage() {
   const navigate = useNavigate()
-  const requests = useQuery({ queryKey: ['tickets'], queryFn: helpdeskApi.listTickets })
+  const requests = useQuery({ queryKey: ['tickets'], queryFn: () => helpdeskApi.listTickets() })
   const items = requests.data?.items ?? []
 
   return <div className="space-y-8">

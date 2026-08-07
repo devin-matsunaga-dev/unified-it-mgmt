@@ -44,6 +44,27 @@ public sealed record TicketResponse(
     string? CategoryName = null,
     IReadOnlyList<TicketCustomFieldValueResponse>? CustomFields = null);
 
+/// <summary>
+/// The ticket list filter. Doubles as the persisted payload of a saved view, so every member has to be
+/// optional and serialisable on its own.
+/// </summary>
+public sealed record TicketListFilter(
+    string? Search = null,
+    IReadOnlyList<string>? Statuses = null,
+    IReadOnlyList<TicketPriority>? Priorities = null,
+    TicketType? Type = null,
+    Guid? QueueId = null,
+    string? AssignedTechnicianId = null,
+    Guid? CategoryId = null,
+    bool Unassigned = false)
+{
+    public static readonly TicketListFilter Empty = new();
+}
+
+public sealed record TicketListResult(
+    TicketPageResponse? Page,
+    IReadOnlyDictionary<string, string[]>? Errors = null);
+
 public sealed record TicketPageResponse(
     IReadOnlyList<TicketResponse> Items,
     int Total,

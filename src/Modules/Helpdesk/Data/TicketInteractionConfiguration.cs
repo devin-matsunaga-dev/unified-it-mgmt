@@ -14,6 +14,8 @@ public sealed class TicketCommentConfiguration : IEntityTypeConfiguration<Ticket
         builder.HasOne(comment => comment.Ticket).WithMany().HasForeignKey(comment => comment.TicketId)
             .OnDelete(DeleteBehavior.Cascade);
         builder.HasIndex(comment => new { comment.TicketId, comment.CreatedAt });
+        builder.HasGeneratedTsVectorColumn(comment => comment.SearchVector, "english", comment => comment.Body)
+            .HasIndex(comment => comment.SearchVector).HasMethod("GIN");
     }
 }
 
