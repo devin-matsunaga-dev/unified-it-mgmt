@@ -16,6 +16,10 @@ public sealed class AssetsDbContext(DbContextOptions<AssetsDbContext> options) :
     public DbSet<CiLifecycleTransition> CiLifecycleTransitions => Set<CiLifecycleTransition>();
     public DbSet<CiLifecycleHistory> CiLifecycleHistory => Set<CiLifecycleHistory>();
     public DbSet<CiAssignmentEntry> CiAssignments => Set<CiAssignmentEntry>();
+    public DbSet<CiRelationship> CiRelationships => Set<CiRelationship>();
+
+    /// <summary>Result shape of the recursive-CTE traversals; never mapped to a table.</summary>
+    public DbSet<CiGraphHop> CiGraphHops => Set<CiGraphHop>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -24,7 +28,12 @@ public sealed class AssetsDbContext(DbContextOptions<AssetsDbContext> options) :
 
         foreach (var entity in modelBuilder.Model.GetEntityTypes())
         {
-            entity.SetTableName(ToSnakeCase(entity.GetTableName()!));
+            // Query-result shapes (CiGraphHop) map to no table, so only rename the ones that do.
+            if (entity.GetTableName() is { } tableName)
+            {
+                entity.SetTableName(ToSnakeCase(tableName));
+            }
+
             foreach (var property in entity.GetProperties())
             {
                 property.SetColumnName(ToSnakeCase(property.GetColumnName()));

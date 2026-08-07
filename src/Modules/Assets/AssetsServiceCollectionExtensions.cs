@@ -4,6 +4,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Modules.Assets.Data;
 using Modules.Assets.Features.Cis;
 using Modules.Assets.Features.Lifecycle;
+using Modules.Assets.Features.Relationships;
 
 namespace Modules.Assets;
 
@@ -21,6 +22,7 @@ public static class AssetsServiceCollectionExtensions
         });
         services.AddScoped<ICiService, CiService>();
         services.AddScoped<ICiLifecycleService, CiLifecycleService>();
+        services.AddScoped<ICiRelationshipService, CiRelationshipService>();
 
         return services;
     }

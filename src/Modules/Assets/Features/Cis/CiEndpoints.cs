@@ -78,6 +78,10 @@ public static class CiEndpoints
             CiOutcome.Success => Results.NoContent(),
             CiOutcome.NotFound => Results.Problem(
                 statusCode: StatusCodes.Status404NotFound, title: "CI not found."),
+            CiOutcome.InUse => Results.Problem(
+                statusCode: StatusCodes.Status409Conflict,
+                title: "CI is in use.",
+                detail: "Remove the CI's relationships before deleting it."),
             var outcome => throw new InvalidOperationException($"Unknown CI outcome '{outcome}'."),
         });
 

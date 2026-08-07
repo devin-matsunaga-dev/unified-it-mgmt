@@ -258,6 +258,15 @@ public sealed class CiService(
             return CiOutcome.NotFound;
         }
 
+        // Relationships name this CI on one end or the other, and the foreign keys refuse the delete
+        // anyway; catching it here turns a database error into a 409 that says what is in the way.
+        if (await dbContext.CiRelationships.AnyAsync(
+                relationship => relationship.SourceCiId == id || relationship.TargetCiId == id,
+                cancellationToken))
+        {
+            return CiOutcome.InUse;
+        }
+
         var now = DateTimeOffset.UtcNow;
         var before = Map(ci);
         await using var transaction = await dbContext.Database.BeginTransactionAsync(cancellationToken);

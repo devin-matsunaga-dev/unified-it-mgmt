@@ -4,6 +4,7 @@ using Modules.Assets;
 using Modules.Assets.Data;
 using Modules.Assets.Features.Cis;
 using Modules.Assets.Features.Lifecycle;
+using Modules.Assets.Features.Relationships;
 using Modules.Helpdesk;
 using Modules.Helpdesk.Data;
 using Modules.Helpdesk.Features.Tickets;
@@ -74,6 +75,7 @@ app.MapTicketViewEndpoints();
 app.MapCannedResponseEndpoints();
 app.MapCiEndpoints();
 app.MapCiLifecycleEndpoints();
+app.MapCiRelationshipEndpoints();
 
 app.Run();
 
