@@ -9,7 +9,7 @@ import { CiListPage } from './CiListPage'
 
 vi.mock('../../api/assets', async (original) => {
   const actual = await original<typeof import('../../api/assets')>()
-  return { ...actual, assetsApi: { ...actual.assetsApi, listCis: vi.fn(), listTypeSchemas: vi.fn(), createCi: vi.fn(), updateCi: vi.fn(), listLifecycleStates: vi.fn(), transitionCi: vi.fn(), assignCi: vi.fn(), getLifecycleHistory: vi.fn(), getAssignments: vi.fn() } }
+  return { ...actual, assetsApi: { ...actual.assetsApi, listCis: vi.fn(), listTypeSchemas: vi.fn(), createCi: vi.fn(), updateCi: vi.fn(), listLifecycleStates: vi.fn(), transitionCi: vi.fn(), assignCi: vi.fn(), getLifecycleHistory: vi.fn(), getAssignments: vi.fn(), bulkEditCis: vi.fn() } }
 })
 
 vi.mock('../../api/directory', () => ({
@@ -187,6 +187,57 @@ describe('CiListPage', () => {
     await waitFor(() => expect(assetsApi.assignCi).toHaveBeenCalledWith('ci-1', {
       ownerUserId: 'user-1', departmentId: 'dept-1', siteId: 'site-1', note: 'Onboarding',
     }))
+  })
+
+  it('bulk edits the selected rows and clears the selection', async () => {
+    const laptop: Ci = { ...server, id: 'ci-2', name: 'laptop-7', type: 'Hardware' }
+    vi.mocked(assetsApi.listCis).mockResolvedValue({ items: [server, laptop], total: 2, page: 1, pageSize: 25 })
+    vi.mocked(assetsApi.bulkEditCis).mockResolvedValue({ total: 2, succeeded: 2, failed: 0, rows: [] })
+    renderPage()
+
+    await userEvent.click(await screen.findByRole('checkbox', { name: 'Select app-01' }))
+    await userEvent.click(screen.getByRole('checkbox', { name: 'Select laptop-7' }))
+    expect(screen.getByText('2 selected')).toBeInTheDocument()
+
+    await userEvent.click(screen.getByRole('button', { name: 'Bulk edit' }))
+    const dialog = await screen.findByRole('dialog', { name: /Bulk edit 2 configuration items/ })
+    await userEvent.click(within(dialog).getByRole('checkbox', { name: 'Move to a lifecycle state' }))
+    await userEvent.selectOptions(within(dialog).getByLabelText('Lifecycle state'), 'Deployed')
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Apply to 2 items' }))
+
+    await waitFor(() => expect(assetsApi.bulkEditCis).toHaveBeenCalledWith({
+      ciIds: ['ci-1', 'ci-2'], ownership: undefined, lifecycleState: 'Deployed', note: null,
+    }))
+    await waitFor(() => expect(screen.queryByText('2 selected')).not.toBeInTheDocument())
+  })
+
+  it('lists the CIs a bulk edit could not change', async () => {
+    vi.mocked(assetsApi.listCis).mockResolvedValue({ items: [server], total: 1, page: 1, pageSize: 25 })
+    vi.mocked(assetsApi.bulkEditCis).mockResolvedValue({
+      total: 1, succeeded: 0, failed: 1,
+      rows: [{ ciId: 'ci-1', name: 'app-01', succeeded: false, error: 'A CI cannot move from Ordered to Deployed.' }],
+    })
+    renderPage()
+
+    await userEvent.click(await screen.findByRole('checkbox', { name: 'Select app-01' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Bulk edit' }))
+    const dialog = await screen.findByRole('dialog', { name: /Bulk edit 1 configuration items/ })
+    await userEvent.click(within(dialog).getByRole('checkbox', { name: 'Move to a lifecycle state' }))
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Apply to 1 items' }))
+
+    expect(await within(dialog).findByText(/cannot move from Ordered to Deployed/)).toBeInTheDocument()
+  })
+
+  it('refuses to apply a bulk edit that changes nothing', async () => {
+    vi.mocked(assetsApi.listCis).mockResolvedValue({ items: [server], total: 1, page: 1, pageSize: 25 })
+    renderPage()
+
+    await userEvent.click(await screen.findByRole('checkbox', { name: 'Select app-01' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Bulk edit' }))
+    const dialog = await screen.findByRole('dialog', { name: /Bulk edit 1 configuration items/ })
+
+    expect(within(dialog).getByRole('button', { name: 'Apply to 1 items' })).toBeDisabled()
+    expect(assetsApi.bulkEditCis).not.toHaveBeenCalled()
   })
 
   it('freezes the drawer for a disposed CI', async () => {

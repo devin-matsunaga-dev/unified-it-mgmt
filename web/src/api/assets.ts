@@ -1,4 +1,4 @@
-import { apiRequest } from './client'
+import { apiRequest, apiUpload } from './client'
 
 export type CiType = 'Hardware' | 'Server' | 'NetworkDevice' | 'Software' | 'Virtual' | 'Logical'
 export type CiAttributeKind = 'Text' | 'Integer' | 'IpAddress'
@@ -174,6 +174,59 @@ export type AssignCiInput = {
 
 export type UpdateCiInput = Omit<CreateCiInput, 'type'> & { isActive: boolean }
 
+export type CiImportTargetKind = 'Core' | 'Attribute' | 'CustomField'
+
+/** A column an import can fill. Attribute and custom-field keys are prefixed so they cannot collide. */
+export type CiImportTarget = { key: string; label: string; isRequired: boolean; kind: CiImportTargetKind }
+
+export type CiImportColumns = {
+  fileName: string
+  headers: string[]
+  sampleRows: string[][]
+  rowCount: number
+  targets: CiImportTarget[]
+  /** targetKey → header, the server's first guess at the mapping. */
+  suggestedMapping: Record<string, string>
+}
+
+export type CiImportAction = 'Create' | 'Update' | 'Skip' | 'Error'
+
+export type CiImportRowResult = {
+  lineNumber: number
+  action: CiImportAction
+  name: string | null
+  assetTag: string | null
+  serialNumber: string | null
+  matchedCiId: string | null
+  errors: string[]
+}
+
+export type CiImportReport = {
+  isDryRun: boolean
+  totalRows: number
+  created: number
+  updated: number
+  skipped: number
+  failed: number
+  rows: CiImportRowResult[]
+}
+
+/** One CI type for the whole file, plus targetKey → header for each mapped column. */
+export type CiImportMapping = { type: CiType; columns: Record<string, string> }
+
+export type CiOwnershipChange = { ownerUserId: string | null; departmentId: string | null; siteId: string | null }
+
+export type BulkEditCisInput = {
+  ciIds: string[]
+  ownership?: CiOwnershipChange
+  lifecycleState?: CiLifecycleState
+  note?: string | null
+}
+
+export type BulkEditRowResult = { ciId: string; name: string | null; succeeded: boolean; error: string | null }
+
+export type BulkEditReport = { total: number; succeeded: number; failed: number; rows: BulkEditRowResult[] }
+
 export const ciTypes: CiType[] = ['Hardware', 'Server', 'NetworkDevice', 'Software', 'Virtual', 'Logical']
 
 const ciTypeLabels: Record<CiType, string> = {
@@ -203,6 +256,13 @@ export function ciFilterToQuery(filter: CiFilter) {
   return query.toString()
 }
 
+function formData(file: File, [name, value]: [string, string]) {
+  const body = new FormData()
+  body.append('file', file)
+  body.append(name, value)
+  return body
+}
+
 export const assetsApi = {
   listCis: (filter: CiFilter = {}) => apiRequest<CiPage>(`/api/cis?${ciFilterToQuery(filter)}`),
   getCi: (id: string) => apiRequest<Ci>(`/api/cis/${id}`),
@@ -222,6 +282,16 @@ export const assetsApi = {
   getImpactedBy: (id: string, maxDepth = 3) => apiRequest<CiGraph>(`/api/cis/${id}/impacted-by?maxDepth=${maxDepth}`),
   getAncestors: (id: string, maxDepth = 3) => apiRequest<CiGraph>(`/api/cis/${id}/ancestors?maxDepth=${maxDepth}`),
   listTypeSchemas: () => apiRequest<CiTypeSchema[]>('/api/ci-type-schemas'),
+  // Each step re-sends the file the browser already holds, so a half-mapped import is never parked
+  // on the server between steps.
+  inspectImport: (file: File, type: CiType) =>
+    apiUpload<CiImportColumns>('/api/ci-imports/columns', formData(file, ['type', type])),
+  previewImport: (file: File, mapping: CiImportMapping) =>
+    apiUpload<CiImportReport>('/api/ci-imports/preview', formData(file, ['mapping', JSON.stringify(mapping)])),
+  commitImport: (file: File, mapping: CiImportMapping) =>
+    apiUpload<CiImportReport>('/api/ci-imports/commit', formData(file, ['mapping', JSON.stringify(mapping)])),
+  bulkEditCis: (input: BulkEditCisInput) =>
+    apiRequest<BulkEditReport>('/api/cis/bulk-edit', { method: 'POST', body: JSON.stringify(input) }),
   createCustomField: (input: { ciType: CiType; key: string; label: string; type: CiCustomFieldType; isRequired: boolean; options?: string[]; sortOrder?: number }) =>
     apiRequest<CiCustomField>('/api/ci-custom-fields', { method: 'POST', body: JSON.stringify(input) }),
   deleteCustomField: (id: string) => apiRequest<void>(`/api/ci-custom-fields/${id}`, { method: 'DELETE' }),

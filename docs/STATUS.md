@@ -5,10 +5,10 @@
 ## Current position
 
 - **Phase:** 2 — Assets/CMDB
-- **Last completed WP:** WP-2.4 (Ticket↔asset linking + 360° pages)
-- **Current WP:** WP-2.5 (Import + bulk edit)
-- **Current branch:** feat/wp-2.5-import-bulk-edit
-- **Next WP once WP-2.5 verifies:** WP-2.6 (Contracts/warranty), branch `feat/wp-2.6-contracts-warranty`
+- **Last completed WP:** WP-2.5 (Import wizard + bulk edit)
+- **Current WP:** WP-2.6 (Contracts, warranty, vendors)
+- **Current branch:** feat/wp-2.6-contracts-warranty
+- **Next WP once WP-2.6 verifies:** WP-2.7 (Barcode/QR), branch `feat/wp-2.7-barcode-qr`
 - **Last tag:** `v.0.2-phase1` (Phase 1 gate; note the stray dot — Phase 0 was tagged `v0.1-phase0`)
 
 ## Platform versions (law — see WORKFLOW.md table for EOL dates)
@@ -19,7 +19,23 @@
 
 <!-- Anything unfinished, known-broken, or deferred from the last session that the next session must know. Keep to a few lines; delete when resolved. -->
 
-- WP-2.4's branch is `feat/wp-2.4-ticket-asset-linking-360-pages`, not the `feat/wp-2.4-ticket-asset-360-pages` recorded here before the session. Its 10 integration tests pass against a real Postgres (Testcontainers); the manual checklist has **not** been walked yet.
+- WP-2.5's branch is `feat/wp-2.5-import-wizard-bulk-edit`, not the `feat/wp-2.5-import-bulk-edit` recorded here before the session. Its 20 integration tests and 21 unit tests pass against a real Postgres (Testcontainers); the manual checklist has **not** been walked yet.
+
+- **ClosedXML 0.105.1 is the first third-party file-format dependency in the solution** (`Modules.Assets`), pulled in only to read `.xlsx`. It brings `DocumentFormat.OpenXml` transitively. CSV is parsed by `CiImportFileReader`'s own RFC 4180 reader, so a CSV-only deployment never touches it. Uploads are untrusted input, so the workbook reader is wrapped in a catch-all that turns any parser failure into one 400 sentence.
+
+- The importer writes exclusively through `ICiService`, which means one transaction, one audit entry and one outbox message **per row**. Fine for the 5000-row ceiling; a bulk-load path (a future seeder, WP-2.8) should not reuse it.
+
+- Import dedupe is serial-first, asset-tag-second, both case-insensitive. A row carrying neither is always a create — the mapping validator refuses a mapping that maps neither, which is what makes "run it twice, get no duplicates" true.
+
+- A mapped **blank** cell means "leave the stored value alone", never "clear it". Consequence: an import can never empty a field. Clearing still needs the form or the API.
+
+- An import is one CI type for the whole file, because the mapping form is derived from the type. **WP-2.10 now owns mixed-type files** (a mappable `type` column, with inference shown in the dry run as the fallback). Until it ships, a mixed export has to be split into one sheet per type before importing.
+
+- The importer does not touch lifecycle state, ownership, custom-field *definitions*, or relationships. Created CIs land in InStock; moving them on is bulk edit's job. Relationship import is still nobody's (WP-2.9 owns the manual write surface).
+
+- `POST /api/cis/bulk-edit` answers **200 with a per-CI report even when rows failed** — callers must read `failed`/`rows`, not just the status code. It is capped at 200 ids, matching the list page size.
+
+- WP-2.4's branch was `feat/wp-2.4-ticket-asset-linking-360-pages`, not the name recorded here before that session. Its 10 integration tests pass against a real Postgres; its manual checklist has **not** been walked yet either.
 
 - Cross-module reads now go through **ports** in `src/Platform/Integration/ModulePorts.cs`: `ICiDirectory` (implemented by Assets) and `ITicketLinkDirectory` (implemented by Helpdesk). Neither module references the other; both reference Platform. Anything future that needs a cross-module read belongs here, and it stays read-only — writes and reactions still go through events. ARCHITECTURE.md §3 records the rule.
 
@@ -99,11 +115,12 @@
 - [x] WP-2.2 Lifecycle + ownership (2026-08-07) — added a Platform `IDirectoryService` + `/api/directory/*` endpoints, which the WP text did not call for but the module boundary required (Assets may not read `platform.user_profiles`)
 - [x] WP-2.3 Relationships + graph (2026-08-07) — branch was `feat/wp-2.3-relationship-dependencies-graph`, not the name previously recorded here; also added the CI-delete in-use guard the WP-2.2 notes flagged, which the WP text did not call for
 - [x] WP-2.4 Ticket↔asset + 360 pages (2026-08-07) — branch was `feat/wp-2.4-ticket-asset-linking-360-pages`, not the name previously recorded here; added `Platform/Integration` read ports and a People list + nav item, neither of which the WP text called for but the module boundary and hand-verification required
-- [ ] WP-2.5 Import + bulk edit
+- [x] WP-2.5 Import + bulk edit (2026-08-08) — branch was `feat/wp-2.5-import-wizard-bulk-edit`, not the name previously recorded here; added ClosedXML (the first file-format dependency, `.xlsx` only) after asking, and `apiUpload`/`ApiError.errors` in the web client, neither of which the WP text called for but multipart upload and field-level mapping errors required
 - [ ] WP-2.6 Contracts/warranty
 - [ ] WP-2.7 Barcode/QR
 - [ ] WP-2.8 Seeder: infrastructure
 - [ ] WP-2.9 Relationship editor (UI) — added 2026-08-07; no WP owned the write surface, and Phase 4 discovery never covers logical edges
+- [ ] WP-2.10 Mixed-type import — added 2026-08-08; WP-2.5 deliberately fixed one CI type per file, but a real estate export is one sheet of everything
 
 ### Phase 3 — Monitoring + Unified Loop
 - [ ] WP-3.1 Device/check config API

@@ -1,23 +1,27 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { ChevronLeft, ChevronRight, Pencil, Plus, Search, Server, SlidersHorizontal } from 'lucide-react'
+import { ChevronLeft, ChevronRight, Layers, Pencil, Plus, Search, Server, SlidersHorizontal, Upload } from 'lucide-react'
 import { useEffect, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { toast } from 'sonner'
 import { ApiError } from '../../api/client'
 import { assetsApi, ciTypeLabel, ciTypes, type Ci, type CiFilter, type CiLifecycleState, type CiType } from '../../api/assets'
 import { directoryApi } from '../../api/directory'
 import { Button } from '../../components/ui/Button'
+import { CiBulkEditDialog } from './CiBulkEditDialog'
 import { CiFormDialog, type CiFormSubmit } from './CiFormDialog'
 import { CiLifecycleDrawer } from './CiLifecycleDrawer'
 import { ciLifecycleLabel, ciLifecycleStates, ciLifecycleTone } from './lifecycle'
 
 export function CiListPage() {
+  const navigate = useNavigate()
   const queryClient = useQueryClient()
   const [search, setSearch] = useState('')
   const [filter, setFilter] = useState<CiFilter>({ page: 1, pageSize: 25 })
   const [dialogOpen, setDialogOpen] = useState(false)
   const [editing, setEditing] = useState<Ci | null>(null)
   const [peeking, setPeeking] = useState<Ci | null>(null)
+  const [selectedIds, setSelectedIds] = useState<string[]>([])
+  const [bulkOpen, setBulkOpen] = useState(false)
 
   // Search runs on the server, so keystrokes are debounced into the query filter.
   useEffect(() => {
@@ -49,6 +53,15 @@ export function CiListPage() {
     },
   })
 
+  // The selection is kept as ids and resolved against the current page, so a filter change or a page
+  // turn silently drops what is no longer on screen rather than editing rows nobody can see.
+  const visible = cis.data?.items ?? []
+  const selection = visible.filter((ci) => selectedIds.includes(ci.id))
+  const allVisibleSelected = visible.length > 0 && selection.length === visible.length
+  const toggleAll = () => setSelectedIds(allVisibleSelected ? [] : visible.map((ci) => ci.id))
+  const toggleOne = (id: string) => setSelectedIds((current) =>
+    current.includes(id) ? current.filter((item) => item !== id) : [...current, id])
+
   const page = filter.page ?? 1
   const pageSize = filter.pageSize ?? 25
   const total = cis.data?.total ?? 0
@@ -58,10 +71,19 @@ export function CiListPage() {
   return <div className="space-y-6">
     <div className="flex flex-col gap-4 sm:flex-row sm:items-end">
       <div><h1 className="text-[28px] font-bold">Assets</h1><p className="mt-1 text-sm text-slate-500">The configuration items every ticket, alert, and device links back to.</p></div>
-      <Button className="sm:ml-auto" onClick={() => { setEditing(null); setDialogOpen(true) }}><Plus size={18} />New CI</Button>
+      <div className="flex gap-2 sm:ml-auto">
+        <Button variant="secondary" onClick={() => navigate('/assets/import')}><Upload size={18} />Import</Button>
+        <Button onClick={() => { setEditing(null); setDialogOpen(true) }}><Plus size={18} />New CI</Button>
+      </div>
     </div>
 
     <section className="rounded-xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
+      {selection.length > 0 && <div className="flex flex-wrap items-center gap-3 border-b border-slate-200 bg-blue-50 px-4 py-3 text-[13px] dark:border-slate-800 dark:bg-blue-500/10">
+        <span className="font-medium text-blue-700 dark:text-blue-400">{selection.length} selected</span>
+        <Button variant="secondary" className="h-8 px-3 text-[13px]" onClick={() => setBulkOpen(true)}><Layers size={15} />Bulk edit</Button>
+        <Button variant="ghost" className="h-8 px-3 text-[13px]" onClick={() => setSelectedIds([])}>Clear selection</Button>
+      </div>}
+
       <div className="flex flex-wrap gap-3 border-b border-slate-200 p-4 dark:border-slate-800">
         <label className="flex h-10 min-w-60 flex-1 items-center gap-2 rounded-lg border border-slate-200 px-3 text-slate-500 dark:border-slate-700">
           <Search size={17} /><span className="sr-only">Search configuration items</span>
@@ -92,10 +114,16 @@ export function CiListPage() {
         : <div className="overflow-x-auto">
             <table className="w-full min-w-[1100px] text-left text-sm">
               <thead><tr>
+                <th className="h-11 w-10 px-4">
+                  <input type="checkbox" aria-label="Select every configuration item on this page" checked={allVisibleSelected} onChange={toggleAll} />
+                </th>
                 {['Name', 'Type', 'Asset tag', 'Serial', 'Lifecycle', 'Owner', 'Location', 'State', ''].map((header) => <th key={header} className="h-11 px-4 text-[13px] font-medium text-slate-500">{header}</th>)}
               </tr></thead>
               <tbody>
                 {cis.data!.items.map((ci) => <tr key={ci.id} className="border-t border-slate-200 hover:bg-slate-50 dark:border-slate-800 dark:hover:bg-slate-800/50">
+                  <td className="h-12 px-4">
+                    <input type="checkbox" aria-label={`Select ${ci.name}`} checked={selectedIds.includes(ci.id)} onChange={() => toggleOne(ci.id)} />
+                  </td>
                   <td className="h-12 px-4"><Link to={`/assets/${ci.id}`} className="font-medium text-slate-900 hover:text-blue-600 dark:text-slate-100">{ci.name}</Link></td>
                   <td className="h-12 px-4 text-slate-600 dark:text-slate-300">{ciTypeLabel(ci.type)}</td>
                   <td className="h-12 px-4 font-mono text-xs text-slate-500">{ci.assetTag ?? '—'}</td>
@@ -129,6 +157,9 @@ export function CiListPage() {
       onSubmit={async (input) => { await save.mutateAsync(input) }} />
 
     <CiLifecycleDrawer ci={peeked} states={lifecycleStates.data ?? []} onClose={() => setPeeking(null)} />
+
+    <CiBulkEditDialog selection={bulkOpen ? selection : []} onClose={() => setBulkOpen(false)}
+      onApplied={() => { setBulkOpen(false); setSelectedIds([]) }} />
   </div>
 }
 

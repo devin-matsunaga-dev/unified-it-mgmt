@@ -2,7 +2,9 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Modules.Assets.Data;
+using Modules.Assets.Features.BulkEdit;
 using Modules.Assets.Features.Cis;
+using Modules.Assets.Features.Import;
 using Modules.Assets.Features.Lifecycle;
 using Modules.Assets.Features.Relationships;
 using Platform.Integration;
@@ -25,6 +27,8 @@ public static class AssetsServiceCollectionExtensions
         services.AddScoped<ICiDirectory, CiDirectory>();
         services.AddScoped<ICiLifecycleService, CiLifecycleService>();
         services.AddScoped<ICiRelationshipService, CiRelationshipService>();
+        services.AddScoped<ICiImportService, CiImportService>();
+        services.AddScoped<ICiBulkEditService, CiBulkEditService>();
 
         return services;
     }
