@@ -5,10 +5,10 @@
 ## Current position
 
 - **Phase:** 2 — Assets/CMDB
-- **Last completed WP:** WP-2.5 (Import wizard + bulk edit)
-- **Current WP:** WP-2.6 (Contracts, warranty, vendors)
-- **Current branch:** feat/wp-2.6-contracts-warranty
-- **Next WP once WP-2.6 verifies:** WP-2.7 (Barcode/QR), branch `feat/wp-2.7-barcode-qr`
+- **Last completed WP:** WP-2.6 (Contracts, warranty, vendors)
+- **Current WP:** WP-2.7 (Barcode/QR)
+- **Current branch:** feat/wp-2.7-barcode-qr
+- **Next WP once WP-2.7 verifies:** WP-2.8 (Seeder: infrastructure), branch `feat/wp-2.8-seeder-infrastructure`
 - **Last tag:** `v.0.2-phase1` (Phase 1 gate; note the stray dot — Phase 0 was tagged `v0.1-phase0`)
 
 ## Platform versions (law — see WORKFLOW.md table for EOL dates)
@@ -18,6 +18,30 @@
 ## In flight / carry-over notes
 
 <!-- Anything unfinished, known-broken, or deferred from the last session that the next session must know. Keep to a few lines; delete when resolved. -->
+
+- WP-2.6's 21 integration tests and 19 unit tests pass against a real Postgres (Testcontainers); the manual checklist has **not** been walked yet.
+
+- The expiry pass skips inactive contracts and Retired/Disposed CIs, so a warranty on an asset that has left the estate never raises a notice.
+
+- The expiry job runs daily **and at host start-up** (`StartNow` + 24h), and `POST /api/contract-notifications/runs` ("Check renewals now" on the contracts page) triggers the same pass by hand. Both are safe because a notice is deduped by its own recorded row; the manual trigger exists because the dev database resets on most AppHost restarts, so a hand-made fixture never survives to the next scheduled run.
+
+- A notice fires at the **tightest crossed threshold only** — 30, then 7, then the expiry day. Consequence: a CI whose warranty is already 3 days out when it is first entered gets one notice (at 7), not three. Moving an end date starts a fresh cycle because the due date is part of the dedupe key.
+
+- Notification *delivery* is still whatever `INotificationService` does: with `Email:Smtp:Enabled` false it writes a log line and nothing more. The `assets.contract_notifications` row is the durable record, and `GET /api/contract-notifications` reads it back.
+
+- A CI's coverage (contract, purchase date, warranty end) is set through `PUT /api/cis/{id}/coverage`, **not** the CI create/update payload, so the WP-2.5 importer cannot touch or clear it. Importing warranty dates would need that endpoint wiring into the importer — nobody owns it yet.
+
+- Coverage is a complete statement: `PUT` with an empty body releases the CI and clears both dates. The UI dialog always sends all three fields, so this only bites a REST client sending partial JSON.
+
+- `assets.vendors` is a new entity and is **not** connected to the free-text `vendor`/`manufacturer` attributes on Network device, Software and Hardware CIs. Two places now say "Cisco"; reconciling them was deliberately left out of scope.
+
+- Contracts and vendors are audited but publish **no** events — nothing consumes them yet. If Phase 3 wants to react to an expiry, add a `ContractExpiring` event to `Contracts` rather than reading the notification table.
+
+- A contract cannot be deleted while any CI names it (409, `Restrict` FK), and a vendor cannot be deleted while it has contracts (409). Both mirror the CI delete guard.
+
+- Contract and warranty status ("Active / Expiring soon / Expired") is computed against today at read time, never stored, and "expiring soon" is the same 30 days the job notices on (`ContractExpiryCalculator`).
+
+- `/api/cis` now also accepts `contractId` and `warrantyExpiringWithinDays`. The contract page's covered-asset list uses the first; the second has no UI yet and exists for WP-2.8's seeded estate and any future "warranties expiring" board.
 
 - WP-2.5's branch is `feat/wp-2.5-import-wizard-bulk-edit`, not the `feat/wp-2.5-import-bulk-edit` recorded here before the session. Its 20 integration tests and 21 unit tests pass against a real Postgres (Testcontainers); the manual checklist has **not** been walked yet.
 
@@ -116,7 +140,7 @@
 - [x] WP-2.3 Relationships + graph (2026-08-07) — branch was `feat/wp-2.3-relationship-dependencies-graph`, not the name previously recorded here; also added the CI-delete in-use guard the WP-2.2 notes flagged, which the WP text did not call for
 - [x] WP-2.4 Ticket↔asset + 360 pages (2026-08-07) — branch was `feat/wp-2.4-ticket-asset-linking-360-pages`, not the name previously recorded here; added `Platform/Integration` read ports and a People list + nav item, neither of which the WP text called for but the module boundary and hand-verification required
 - [x] WP-2.5 Import + bulk edit (2026-08-08) — branch was `feat/wp-2.5-import-wizard-bulk-edit`, not the name previously recorded here; added ClosedXML (the first file-format dependency, `.xlsx` only) after asking, and `apiUpload`/`ApiError.errors` in the web client, neither of which the WP text called for but multipart upload and field-level mapping errors required
-- [ ] WP-2.6 Contracts/warranty
+- [x] WP-2.6 Contracts/warranty (2026-08-08) — added a `/api/cis/{id}/coverage` endpoint rather than extending the CI payload, and a manual `POST /api/contract-notifications/runs` trigger, neither of which the WP text called for but the WP-2.5 importer and the resetting dev database respectively required
 - [ ] WP-2.7 Barcode/QR
 - [ ] WP-2.8 Seeder: infrastructure
 - [ ] WP-2.9 Relationship editor (UI) — added 2026-08-07; no WP owned the write surface, and Phase 4 discovery never covers logical edges

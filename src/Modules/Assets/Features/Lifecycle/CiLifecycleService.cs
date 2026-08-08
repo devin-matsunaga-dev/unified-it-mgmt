@@ -293,6 +293,7 @@ public sealed class CiLifecycleService(
 
     private Task<ConfigurationItem?> LoadAsync(Guid id, CancellationToken cancellationToken) =>
         dbContext.Cis.Include(ci => ci.CustomFieldValues).ThenInclude(value => value.Field)
+            .Include(ci => ci.Contract).ThenInclude(contract => contract!.Vendor)
             .SingleOrDefaultAsync(ci => ci.Id == id, cancellationToken);
 
     private static string? Normalise(string? value) =>

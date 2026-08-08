@@ -1,4 +1,5 @@
 using Modules.Assets.Data;
+using Modules.Assets.Features.Contracts;
 
 namespace Modules.Assets.Features.Cis;
 
@@ -31,6 +32,8 @@ public sealed record CiListRequest(
     Guid? OwnerUserId = null,
     Guid? DepartmentId = null,
     Guid? SiteId = null,
+    Guid? ContractId = null,
+    int? WarrantyExpiringWithinDays = null,
     int Page = 1,
     int PageSize = 25);
 
@@ -51,6 +54,7 @@ public sealed record CiResponse(
     bool IsActive,
     CiLifecycleState LifecycleState,
     CiOwnership Ownership,
+    CiCoverage Coverage,
     IReadOnlyDictionary<string, string> Attributes,
     IReadOnlyList<CiCustomFieldValueResponse> CustomFields,
     DateTimeOffset CreatedAt,

@@ -17,6 +17,9 @@ public sealed class AssetsDbContext(DbContextOptions<AssetsDbContext> options) :
     public DbSet<CiLifecycleHistory> CiLifecycleHistory => Set<CiLifecycleHistory>();
     public DbSet<CiAssignmentEntry> CiAssignments => Set<CiAssignmentEntry>();
     public DbSet<CiRelationship> CiRelationships => Set<CiRelationship>();
+    public DbSet<Vendor> Vendors => Set<Vendor>();
+    public DbSet<Contract> Contracts => Set<Contract>();
+    public DbSet<ContractNotification> ContractNotifications => Set<ContractNotification>();
 
     /// <summary>Result shape of the recursive-CTE traversals; never mapped to a table.</summary>
     public DbSet<CiGraphHop> CiGraphHops => Set<CiGraphHop>();

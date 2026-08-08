@@ -124,6 +124,22 @@ export type CiGraph = {
   edges: CiGraphEdge[]
 }
 
+/**
+ * What covers a CI. Contract fields are read live from the contract rather than snapshotted, so a
+ * renamed contract reaches every CI it covers at once.
+ */
+export type CiCoverage = {
+  contractId: string | null
+  contractName: string | null
+  contractNumber: string | null
+  vendorName: string | null
+  contractEndDate: string | null
+  purchaseDate: string | null
+  warrantyExpiresAt: string | null
+  warrantyStatus: 'Active' | 'ExpiringSoon' | 'Expired' | null
+  warrantyDaysRemaining: number | null
+}
+
 export type Ci = {
   id: string
   type: CiType
@@ -134,6 +150,7 @@ export type Ci = {
   isActive: boolean
   lifecycleState: CiLifecycleState
   ownership: CiOwnership
+  coverage: CiCoverage
   attributes: Record<string, string>
   customFields: CiCustomFieldValue[]
   createdAt: string
@@ -150,6 +167,8 @@ export type CiFilter = {
   ownerUserId?: string
   departmentId?: string
   siteId?: string
+  contractId?: string
+  warrantyExpiringWithinDays?: number
   page?: number
   pageSize?: number
 }
@@ -251,6 +270,8 @@ export function ciFilterToQuery(filter: CiFilter) {
   if (filter.ownerUserId) query.set('ownerUserId', filter.ownerUserId)
   if (filter.departmentId) query.set('departmentId', filter.departmentId)
   if (filter.siteId) query.set('siteId', filter.siteId)
+  if (filter.contractId) query.set('contractId', filter.contractId)
+  if (filter.warrantyExpiringWithinDays !== undefined) query.set('warrantyExpiringWithinDays', String(filter.warrantyExpiringWithinDays))
   query.set('page', String(filter.page ?? 1))
   query.set('pageSize', String(filter.pageSize ?? 25))
   return query.toString()

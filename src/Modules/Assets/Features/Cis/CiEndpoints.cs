@@ -15,12 +15,13 @@ public static class CiEndpoints
         var group = endpoints.MapGroup("/api/cis").RequireAuthorization("CanManageAssets");
 
         group.MapGet("/", async (CiType? type, string? search, bool? isActive, CiLifecycleState? lifecycleState,
-                Guid? ownerUserId, Guid? departmentId, Guid? siteId, int? page, int? pageSize,
+                Guid? ownerUserId, Guid? departmentId, Guid? siteId, Guid? contractId,
+                int? warrantyExpiringWithinDays, int? page, int? pageSize,
                 ICiService service, CancellationToken cancellationToken) =>
             Results.Ok(await service.ListAsync(
                 new CiListRequest(
-                    type, search, isActive, lifecycleState, ownerUserId, departmentId, siteId,
-                    page ?? 1, pageSize ?? 25),
+                    type, search, isActive, lifecycleState, ownerUserId, departmentId, siteId, contractId,
+                    warrantyExpiringWithinDays, page ?? 1, pageSize ?? 25),
                 cancellationToken)));
 
         group.MapGet("/{id:guid}", async (Guid id, ICiService service, CancellationToken cancellationToken) =>

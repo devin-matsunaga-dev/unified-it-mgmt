@@ -32,7 +32,15 @@ public sealed class ConfigurationItemConfiguration : IEntityTypeConfiguration<Co
         // filtered so the many CIs without either do not collide on NULL.
         builder.HasIndex(ci => ci.AssetTag).IsUnique().HasFilter("asset_tag IS NOT NULL");
         builder.HasIndex(ci => ci.SerialNumber).IsUnique().HasFilter("serial_number IS NOT NULL");
+        // Covered CIs are what a contract page lists, so a contract cannot be deleted while any CI
+        // still names it; CiCoverageService turns the refusal into a 409.
+        builder.HasOne(ci => ci.Contract).WithMany(contract => contract.Cis)
+            .HasForeignKey(ci => ci.ContractId)
+            .OnDelete(DeleteBehavior.Restrict);
+
         builder.HasIndex("CiType", "Name");
+        builder.HasIndex(ci => ci.ContractId);
+        builder.HasIndex(ci => ci.WarrantyExpiresAt);
         builder.HasIndex(ci => ci.IsActive);
         builder.HasIndex(ci => ci.LifecycleState);
         builder.HasIndex(ci => ci.OwnerUserId);

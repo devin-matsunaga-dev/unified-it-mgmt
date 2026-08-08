@@ -5,6 +5,7 @@ using Contracts.Events;
 using MassTransit;
 using Microsoft.EntityFrameworkCore;
 using Modules.Assets.Data;
+using Modules.Assets.Features.Contracts;
 using Platform.Auditing;
 using Platform.Integration;
 
@@ -22,7 +23,10 @@ public sealed class CiService(
     {
         var page = Math.Max(request.Page, 1);
         var pageSize = Math.Clamp(request.PageSize, 1, MaximumPageSize);
-        var query = dbContext.Cis.Include(ci => ci.CustomFieldValues).ThenInclude(value => value.Field).AsQueryable();
+        var query = dbContext.Cis
+            .Include(ci => ci.CustomFieldValues).ThenInclude(value => value.Field)
+            .Include(ci => ci.Contract).ThenInclude(contract => contract!.Vendor)
+            .AsQueryable();
 
         if (request.Type is not null)
         {
@@ -63,6 +67,19 @@ public sealed class CiService(
         if (request.SiteId is not null)
         {
             query = query.Where(ci => ci.SiteId == request.SiteId);
+        }
+
+        if (request.ContractId is not null)
+        {
+            query = query.Where(ci => ci.ContractId == request.ContractId);
+        }
+
+        // The contract page's companion view: assets whose own warranty runs out inside a window,
+        // whether or not a contract covers them.
+        if (request.WarrantyExpiringWithinDays is { } withinDays)
+        {
+            var boundary = ContractExpiryCalculator.Today().AddDays(Math.Clamp(withinDays, 0, 3_650));
+            query = query.Where(ci => ci.WarrantyExpiresAt != null && ci.WarrantyExpiresAt <= boundary);
         }
 
         if (!string.IsNullOrWhiteSpace(request.Search))
@@ -374,6 +391,7 @@ public sealed class CiService(
 
     private Task<ConfigurationItem?> LoadAsync(Guid id, CancellationToken cancellationToken) =>
         dbContext.Cis.Include(ci => ci.CustomFieldValues).ThenInclude(value => value.Field)
+            .Include(ci => ci.Contract).ThenInclude(contract => contract!.Vendor)
             .SingleOrDefaultAsync(ci => ci.Id == id, cancellationToken);
 
     private async Task<IReadOnlyList<CiCustomField>> FieldsForAsync(CiType type, CancellationToken cancellationToken) =>
@@ -522,6 +540,7 @@ public sealed class CiService(
             ci.SiteId,
             ci.SiteName,
             ci.AssignedAt),
+        MapCoverage(ci),
         ReadAttributes(ci),
         [.. ci.CustomFieldValues
             .OrderBy(value => value.Field.SortOrder).ThenBy(value => value.Field.Label)
@@ -529,6 +548,25 @@ public sealed class CiService(
                 value.FieldId, value.Field.Key, value.Field.Label, value.Field.Type, value.Value))],
         ci.CreatedAt,
         ci.UpdatedAt);
+
+    /// <summary>
+    /// Contract fields are read from the loaded relationship rather than snapshotted on the CI, so a
+    /// renamed contract reaches every CI it covers at once — the same rule WP-2.4 gave ticket links.
+    /// </summary>
+    private static CiCoverage MapCoverage(ConfigurationItem ci)
+    {
+        var today = ContractExpiryCalculator.Today();
+        return new(
+            ci.ContractId,
+            ci.Contract?.Name,
+            ci.Contract?.ContractNumber,
+            ci.Contract?.Vendor?.Name,
+            ci.Contract?.EndDate,
+            ci.PurchaseDate,
+            ci.WarrantyExpiresAt,
+            ci.WarrantyExpiresAt is { } warranty ? ContractExpiryCalculator.Status(warranty, today) : null,
+            ci.WarrantyExpiresAt is { } expiry ? ContractExpiryCalculator.DaysRemaining(expiry, today) : null);
+    }
 
     internal static CiCustomFieldResponse Map(CiCustomField field) => new(
         field.Id,

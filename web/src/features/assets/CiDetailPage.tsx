@@ -1,12 +1,14 @@
 import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query'
-import { ArrowLeft, Pencil, SlidersHorizontal, Ticket } from 'lucide-react'
+import { ArrowLeft, Pencil, ShieldCheck, SlidersHorizontal, Ticket } from 'lucide-react'
 import { useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { toast } from 'sonner'
 import { assetsApi, ciTypeLabel } from '../../api/assets'
+import { contractStatusLabel, contractStatusTone, describeDaysRemaining } from '../../api/contracts'
 import { helpdeskApi } from '../../api/helpdesk'
 import { Button } from '../../components/ui/Button'
 import { PriorityPill, StatusPill, formatLocal } from '../tickets/ticketUi'
+import { CiCoverageDialog } from './CiCoverageDialog'
 import { CiFormDialog, type CiFormSubmit } from './CiFormDialog'
 import { CiLifecycleDrawer } from './CiLifecycleDrawer'
 import { CiRelationsGraph } from './CiRelationsGraph'
@@ -18,6 +20,7 @@ export function CiDetailPage() {
   const queryClient = useQueryClient()
   const [editing, setEditing] = useState(false)
   const [lifecycleOpen, setLifecycleOpen] = useState(false)
+  const [coverageOpen, setCoverageOpen] = useState(false)
 
   const ci = useQuery({ queryKey: ['cis', id], queryFn: () => assetsApi.getCi(id), enabled: Boolean(id) })
   const schemas = useQuery({ queryKey: ['ci-type-schemas'], queryFn: assetsApi.listTypeSchemas, staleTime: 0, refetchOnMount: 'always' })
@@ -126,6 +129,39 @@ export function CiDetailPage() {
         </section>
 
         <section className="rounded-xl border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-slate-900">
+          <div className="flex items-center gap-3">
+            <h2 className="font-semibold">Warranty &amp; contract</h2>
+            <Button variant="ghost" className="ml-auto h-8 px-2 text-[13px]" onClick={() => setCoverageOpen(true)}><ShieldCheck size={15} />Edit</Button>
+          </div>
+          <dl className="mt-3 space-y-3 text-sm">
+            <div className="flex gap-4">
+              <dt className="text-slate-500">Contract</dt>
+              <dd className="ml-auto max-w-[65%] break-words text-right font-medium">
+                {item.coverage.contractId
+                  ? <Link to={`/contracts/${item.coverage.contractId}`} className="text-blue-600 hover:underline">{item.coverage.contractNumber} — {item.coverage.contractName}</Link>
+                  : 'Not covered'}
+              </dd>
+            </div>
+            {item.coverage.vendorName && <Detail label="Vendor" value={item.coverage.vendorName} />}
+            {item.coverage.contractEndDate && <Detail label="Contract ends" value={item.coverage.contractEndDate} />}
+            <Detail label="Purchased" value={item.coverage.purchaseDate ?? '—'} />
+            <div className="flex gap-4">
+              <dt className="text-slate-500">Warranty ends</dt>
+              <dd className="ml-auto flex max-w-[65%] flex-wrap items-center justify-end gap-2 text-right font-medium">
+                {item.coverage.warrantyExpiresAt ? <>
+                  <span>{item.coverage.warrantyExpiresAt}</span>
+                  <span className={`rounded-md px-2 py-0.5 text-xs font-medium ${contractStatusTone(item.coverage.warrantyStatus ?? 'Active')}`}>
+                    {item.coverage.warrantyStatus === 'Expired'
+                      ? contractStatusLabel('Expired')
+                      : describeDaysRemaining(item.coverage.warrantyDaysRemaining ?? 0)}
+                  </span>
+                </> : '—'}
+              </dd>
+            </div>
+          </dl>
+        </section>
+
+        <section className="rounded-xl border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-slate-900">
           <h2 className="font-semibold">Lifecycle history</h2>
           <ol className="mt-4 space-y-3 text-sm">
             {(history.data ?? []).length === 0 && <li className="text-sm text-slate-500">Registered as {ciLifecycleLabel(item.lifecycleState)}; no transitions yet.</li>}
@@ -156,6 +192,8 @@ export function CiDetailPage() {
       onSubmit={async (input) => { await save.mutateAsync(input) }} />
 
     <CiLifecycleDrawer ci={lifecycleOpen ? item : null} states={lifecycleStates.data ?? []} onClose={() => setLifecycleOpen(false)} />
+
+    <CiCoverageDialog ci={coverageOpen ? item : null} onClose={() => setCoverageOpen(false)} />
   </div>
 }
 

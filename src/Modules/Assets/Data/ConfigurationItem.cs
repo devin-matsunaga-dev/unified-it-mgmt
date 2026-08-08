@@ -26,6 +26,13 @@ public abstract class ConfigurationItem
     public string? SiteName { get; set; }
     public DateTimeOffset? AssignedAt { get; set; }
 
+    // Coverage. A CI is bought once and covered by at most one support agreement; the contract is
+    // read live rather than snapshotted because, unlike a person, it cannot leave the module.
+    public DateOnly? PurchaseDate { get; set; }
+    public DateOnly? WarrantyExpiresAt { get; set; }
+    public Guid? ContractId { get; set; }
+    public Contract? Contract { get; set; }
+
     public ICollection<CiCustomFieldValue> CustomFieldValues { get; set; } = [];
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset UpdatedAt { get; set; }
