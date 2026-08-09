@@ -272,4 +272,107 @@ describe('CiListPage', () => {
     expect(await screen.findByText('Configuration items could not be loaded')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Try again' })).toBeInTheDocument()
   })
+
+  describe('sorting', () => {
+    const laptop: Ci = { ...server, id: 'ci-2', name: 'zeta-laptop', type: 'Hardware', lifecycleState: 'Deployed' }
+    const rowNames = () => screen.getAllByRole('row').slice(1)
+      .map((row) => (row as HTMLTableRowElement).cells[1].textContent)
+
+    it('reorders the rows on screen and marks the sorted column', async () => {
+      vi.mocked(assetsApi.listCis).mockResolvedValue({ items: [server, laptop], total: 2, page: 1, pageSize: 25 })
+      renderPage()
+      await screen.findByText('app-01')
+
+      await userEvent.click(screen.getByRole('button', { name: 'Sort by name' }))
+      expect(rowNames()).toEqual(['app-01', 'zeta-laptop'])
+      expect(screen.getByRole('columnheader', { name: /Name/ })).toHaveAttribute('aria-sort', 'ascending')
+
+      await userEvent.click(screen.getByRole('button', { name: 'Sort by name' }))
+      expect(rowNames()).toEqual(['zeta-laptop', 'app-01'])
+      expect(screen.getByRole('columnheader', { name: /Name/ })).toHaveAttribute('aria-sort', 'descending')
+    })
+
+    it('returns to the server\'s own order on the third click', async () => {
+      vi.mocked(assetsApi.listCis).mockResolvedValue({ items: [laptop, server], total: 2, page: 1, pageSize: 25 })
+      renderPage()
+      await screen.findByText('app-01')
+
+      const header = screen.getByRole('button', { name: 'Sort by name' })
+      await userEvent.click(header)
+      await userEvent.click(header)
+      await userEvent.click(header)
+
+      // The order the API sent, not ascending or descending.
+      expect(rowNames()).toEqual(['zeta-laptop', 'app-01'])
+      expect(screen.getByRole('columnheader', { name: /Name/ })).toHaveAttribute('aria-sort', 'none')
+    })
+
+    // Sorting runs after paging, so on a multi-page estate it cannot see the rows it would reorder.
+    it('says so when the sort covers only the page on screen', async () => {
+      vi.mocked(assetsApi.listCis).mockResolvedValue({ items: [server, laptop], total: 60, page: 1, pageSize: 25 })
+      renderPage()
+      await screen.findByText('app-01')
+
+      expect(screen.queryByText(/Sorted within this page/)).not.toBeInTheDocument()
+      await userEvent.click(screen.getByRole('button', { name: 'Sort by lifecycle' }))
+      expect(screen.getByText(/Sorted within this page of 25 — not across all 60/)).toBeInTheDocument()
+    })
+
+    it('stays quiet about scope when the whole estate is on one page', async () => {
+      vi.mocked(assetsApi.listCis).mockResolvedValue({ items: [server, laptop], total: 2, page: 1, pageSize: 25 })
+      renderPage()
+      await screen.findByText('app-01')
+
+      await userEvent.click(screen.getByRole('button', { name: 'Sort by lifecycle' }))
+      expect(screen.queryByText(/Sorted within this page/)).not.toBeInTheDocument()
+    })
+  })
+
+  describe('estate counts', () => {
+    /** Each tile is the list endpoint asked for one row, so a count is whatever its filter totals. */
+    const countBy = (totals: { deployed: number; repair: number; warranty: number; all: number }) =>
+      vi.mocked(assetsApi.listCis).mockImplementation((filter = {}) => Promise.resolve({
+        items: [server], page: 1, pageSize: filter.pageSize ?? 25,
+        total: filter.lifecycleState === 'Deployed' ? totals.deployed
+          : filter.lifecycleState === 'InRepair' ? totals.repair
+          : filter.warrantyExpiringWithinDays === 30 ? totals.warranty
+          : totals.all,
+      }))
+
+    /** The tiles only; "In repair" and "Deployed" are also lifecycle filter options on this page. */
+    const tiles = async () => within(await screen.findByRole('group', { name: 'Estate counts' }))
+
+    it('counts the estate on the same definitions the table filters by', async () => {
+      countBy({ all: 60, deployed: 41, repair: 3, warranty: 7 })
+      renderPage()
+
+      const stats = await tiles()
+      expect(await stats.findByText('60')).toBeInTheDocument()
+      expect(stats.getByText('Deployed').closest('button')).toHaveTextContent('41')
+      expect(stats.getByText('In repair').closest('button')).toHaveTextContent('3')
+      expect(stats.getByText(/Warranty ends within 30 days/).closest('button')).toHaveTextContent('7')
+      await waitFor(() => expect(assetsApi.listCis).toHaveBeenCalledWith({ warrantyExpiringWithinDays: 30, page: 1, pageSize: 1 }))
+    })
+
+    it('narrows the list to what a tile counts, and clears it when the same tile is pressed again', async () => {
+      countBy({ all: 60, deployed: 41, repair: 3, warranty: 7 })
+      renderPage()
+
+      const stats = await tiles()
+      await userEvent.click(stats.getByText('In repair').closest('button')!)
+      await waitFor(() => expect(assetsApi.listCis).toHaveBeenCalledWith(expect.objectContaining({ lifecycleState: 'InRepair', page: 1 })))
+      expect(stats.getByText('In repair').closest('button')).toHaveAttribute('aria-pressed', 'true')
+
+      await userEvent.click(stats.getByText('In repair').closest('button')!)
+      await waitFor(() => expect(screen.getByRole('combobox', { name: 'Filter by lifecycle state' })).toHaveValue(''))
+    })
+
+    // A tile that failed to count must not print a zero: nothing distinguishes it from a true zero.
+    it('says a count is unavailable rather than showing it as none', async () => {
+      vi.mocked(assetsApi.listCis).mockRejectedValue(new Error('Service unavailable'))
+      renderPage()
+
+      expect((await (await tiles()).findAllByText('Unavailable')).length).toBe(4)
+    })
+  })
 })

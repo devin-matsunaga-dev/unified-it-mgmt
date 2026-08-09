@@ -5,10 +5,10 @@
 ## Current position
 
 - **Phase:** 2 — Assets/CMDB
-- **Last completed WP:** WP-2.10 (Mixed-type import) — automated tests green; manual checklist not yet walked
-- **Current WP:** WP-2.11 (Assets UI polish) — added 2026-08-09 and sequenced *before* the Phase 2 gate. Its scope list in `WORK_PACKAGES.md` is still empty and must be filled in before implementation starts
-- **Current branch:** feat/wp-2.11-assets-ui-polish
-- **After it:** 🏁 Phase 2 gate — asset lifecycle + linking demo end-to-end, tag `v0.3-phase2`; then WP-3.1 (Device/check config API) opens Phase 3
+- **Last completed WP:** WP-2.11 (Assets UI polish) — automated tests green; manual checklist not yet walked
+- **Current WP:** 🏁 **Phase 2 gate** — asset lifecycle + linking demo end-to-end, then tag `v0.3-phase2`. No code package; walk the demo, run `aspire update` per the phase-gate rule, and clear as much of the unwalked-checklist backlog below as the gate needs
+- **Current branch:** main (the gate is a demo and a tag, not a feature branch)
+- **After it:** WP-3.1 (Device/check config API) opens Phase 3
 - **Last tag:** `v.0.2-phase1` (Phase 1 gate; note the stray dot — Phase 0 was tagged `v0.1-phase0`)
 
 ## Platform versions (law — see WORKFLOW.md table for EOL dates)
@@ -18,6 +18,18 @@
 ## In flight / carry-over notes
 
 <!-- Anything unfinished, known-broken, or deferred from the last session that the next session must know. Keep to a few lines; delete when resolved. -->
+
+- **The asset table sorts in the browser only, and says so (WP-2.11).** `/api/cis` orders by `Name` then `Id` (`CiService.cs:96`) and takes no sort parameter, while the list pages at 25 — so a header click reorders the page on screen and nothing beyond it. The footer states "Sorted within this page of N — not across all M" whenever a sort is active and more than one page exists. **Sorting the whole estate needs a `sort` parameter on `/api/cis`**, which is a backend change no WP owns yet. The ticket list has the same client-side mechanism and gets away with it only because it fetches a single page of 200.
+
+- **The CI page's Relations card is now three sections, and the trees are built in the browser from the traversal edges.** `buildDependencyTree` in `web/src/features/assets/relationships.ts` walks `ancestors`/`impacted-by` edges in the traversal's own direction to recover which CI a far one is reached *through* — the endpoints return hop distance, never the route. A CI reachable two ways is drawn once and marked; that is what keeps a diamond finite and a cycle terminating. Depth starts at 3 per direction and "Show deeper" adds 3 up to the server's ceiling of 10.
+
+- **Lifecycle pills on the direct-relationship cards are read out of the traversal nodes, not the edge.** `CiRelationship` carries both ends' names and types but no lifecycle state, and every directly related CI is a depth-1 node of one walk or the other. If the relationships endpoint is ever consumed somewhere without a traversal beside it, that pill has no source.
+
+- **`formatDateOnly` (`web/src/lib/utils.ts`) is the only correct way to render a `DateOnly` field.** `new Date('2026-09-14')` is UTC midnight and renders as the 13th anywhere west of Greenwich. WP-2.11 applied it to the CI page's coverage dates only; **`/contracts` still renders raw ISO strings** at `ContractListPage.tsx:114` and `ContractDetailPage.tsx:117-118` and should adopt it when that screen is next touched.
+
+- **The `/assets` KPI tiles cost four extra list calls per page load** (`pageSize=1`, read `total`). They share the `['cis']` query key, so the existing invalidation refreshes them after any edit and there is no second source of truth. A tile that fails to count reads "Unavailable" rather than 0, and there is deliberately no "from last week" delta because nothing records a historical count.
+
+- **Two known gaps were deliberately left out of WP-2.11 because both need backend work.** (1) Lifecycle history and the check-in/out log print raw `actorId` values — `technician1` for seeded rows, a Keycloak `sub` for anything done in the UI; Helpdesk solved this by snapshotting display names in WP-1.7 and Assets never did, so fixing it is a schema plus service change. The frontend-only workaround does not work: seeded ids are usernames, not directory ids, which is the same identity mismatch the People page already has. (2) Cross-page sorting, above.
 
 - **The import wizard now accepts one sheet of everything (WP-2.10).** "Mixed — read from a column" sits beside the six CI types; the mapping step then offers the union of every type's attributes and custom fields, each labelled with the types that need it, plus a mappable **CI type** column. A row reads only the columns its own type declares and ignores the rest — but **only in mixed mode**: a single-type import still rejects a foreign attribute loudly, because there the operator declared the whole file to be one shape.
 
@@ -206,7 +218,7 @@
 - [x] WP-2.8 Seeder: infrastructure (2026-08-08) — added a `HelpdeskCiLinkSeeder` in the Helpdesk module and a `CiIds` map on the seed result, neither of which the WP text called for, but "some linked tickets" crosses a module boundary Assets may not cross; also seeded two CI custom fields, which the WP text did not mention but the WP-2.1 notes asked for
 - [x] WP-2.9 Relationship editor (UI) (2026-08-08) — frontend only; no API, migration or backend change. The WP's "delete-blocked 409" was not surfaced because the SPA has no delete-CI button to surface it on — see In flight
 - [x] WP-2.10 Mixed-type import (2026-08-08) — added an `acceptInferredTypes` confirmation to the commit payload, which the WP text did not call for but "never commit an inferred type the operator has not seen" required as a server-side rule rather than a wizard convention; no API route, migration or entity change
-- [ ] WP-2.11 Assets UI polish — added 2026-08-09; frontend-only, sequenced before the Phase 2 gate because these are the screens the gate demos. Scope list not yet written
+- [x] WP-2.11 Assets UI polish (2026-08-09) — frontend only; no API, migration, entity or contract change. Scope was written item by item during the session rather than up front, and grew from three placeholders to six items; item (6) (column sorting) was added after the session flagged it as needing a backend change for a complete answer, and shipped browser-side with its limitation stated in the UI
 
 ### Phase 3 — Monitoring + Unified Loop
 - [ ] WP-3.1 Device/check config API

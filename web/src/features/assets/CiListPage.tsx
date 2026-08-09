@@ -1,5 +1,5 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { ChevronLeft, ChevronRight, Layers, Pencil, Plus, QrCode, Search, Server, SlidersHorizontal, Upload } from 'lucide-react'
+import { ArrowDown, ArrowUp, ArrowUpDown, ChevronLeft, ChevronRight, Layers, Pencil, Plus, QrCode, Search, Server, SlidersHorizontal, Upload } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { toast } from 'sonner'
@@ -11,6 +11,8 @@ import { CiBulkEditDialog } from './CiBulkEditDialog'
 import { CiFormDialog, type CiFormSubmit } from './CiFormDialog'
 import { CiLabelDialog } from './CiLabelDialog'
 import { CiLifecycleDrawer } from './CiLifecycleDrawer'
+import { CiStatsRow } from './CiStatsRow'
+import { ciSortDescription, ciSortLabels, nextCiSort, sortCis, type CiSort, type CiSortColumn } from './ciSort'
 import { ciLifecycleLabel, ciLifecycleStates, ciLifecycleTone } from './lifecycle'
 
 export function CiListPage() {
@@ -24,6 +26,9 @@ export function CiListPage() {
   const [selectedIds, setSelectedIds] = useState<string[]>([])
   const [bulkOpen, setBulkOpen] = useState(false)
   const [labelsOpen, setLabelsOpen] = useState(false)
+  // Sorting is applied in the browser, like the ticket list. `/api/cis` orders by name and takes no
+  // sort parameter, so this reorders the page on screen and nothing beyond it — see `sortNote` below.
+  const [sort, setSort] = useState<CiSort | null>(null)
 
   // Search runs on the server, so keystrokes are debounced into the query filter.
   useEffect(() => {
@@ -57,7 +62,7 @@ export function CiListPage() {
 
   // The selection is kept as ids and resolved against the current page, so a filter change or a page
   // turn silently drops what is no longer on screen rather than editing rows nobody can see.
-  const visible = cis.data?.items ?? []
+  const visible = sortCis(cis.data?.items ?? [], sort)
   const selection = visible.filter((ci) => selectedIds.includes(ci.id))
   const allVisibleSelected = visible.length > 0 && selection.length === visible.length
   const toggleAll = () => setSelectedIds(allVisibleSelected ? [] : visible.map((ci) => ci.id))
@@ -79,8 +84,13 @@ export function CiListPage() {
       </div>
     </div>
 
+    {/* A tile sets the whole narrowing it counts, so the number on it and the rows below always agree. */}
+    <CiStatsRow filter={filter} onSelect={(next) => setFilter((current) => ({
+      ...current, lifecycleState: undefined, warrantyExpiringWithinDays: undefined, ...next, page: 1,
+    }))} />
+
     <section className="rounded-xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
-      {selection.length > 0 && <div className="flex flex-wrap items-center gap-3 border-b border-slate-200 bg-blue-50 px-4 py-3 text-[13px] dark:border-slate-800 dark:bg-blue-500/10">
+      {selection.length > 0 &&<div className="flex flex-wrap items-center gap-3 border-b border-slate-200 bg-blue-50 px-4 py-3 text-[13px] dark:border-slate-800 dark:bg-blue-500/10">
         <span className="font-medium text-blue-700 dark:text-blue-400">{selection.length} selected</span>
         <Button variant="secondary" className="h-8 px-3 text-[13px]" onClick={() => setBulkOpen(true)}><Layers size={15} />Bulk edit</Button>
         <Button variant="secondary" className="h-8 px-3 text-[13px]" onClick={() => setLabelsOpen(true)}><QrCode size={15} />Print labels</Button>
@@ -120,10 +130,19 @@ export function CiListPage() {
                 <th className="h-11 w-10 px-4">
                   <input type="checkbox" aria-label="Select every configuration item on this page" checked={allVisibleSelected} onChange={toggleAll} />
                 </th>
-                {['Name', 'Type', 'Asset tag', 'Serial', 'Lifecycle', 'Owner', 'Location', 'State', ''].map((header) => <th key={header} className="h-11 px-4 text-[13px] font-medium text-slate-500">{header}</th>)}
+                {(Object.keys(ciSortLabels) as CiSortColumn[]).map((column) => <th key={column} aria-sort={ciSortDescription(sort, column)} className="h-11 px-4 text-[13px] font-medium text-slate-500">
+                  {/* Named for the action, not just the column: "Lifecycle" alone is also a row button. */}
+                  <button type="button" aria-label={`Sort by ${ciSortLabels[column].toLowerCase()}`}
+                    className="inline-flex items-center gap-1 rounded hover:text-slate-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 dark:hover:text-slate-100"
+                    onClick={() => setSort((current) => nextCiSort(current, column))}>
+                    {ciSortLabels[column]}
+                    {sort?.column === column ? (sort.desc ? <ArrowDown size={14} /> : <ArrowUp size={14} />) : <ArrowUpDown size={14} className="text-slate-400" />}
+                  </button>
+                </th>)}
+                <th className="h-11 px-4" />
               </tr></thead>
               <tbody>
-                {cis.data!.items.map((ci) => <tr key={ci.id} className="border-t border-slate-200 hover:bg-slate-50 dark:border-slate-800 dark:hover:bg-slate-800/50">
+                {visible.map((ci) => <tr key={ci.id} className="border-t border-slate-200 hover:bg-slate-50 dark:border-slate-800 dark:hover:bg-slate-800/50">
                   <td className="h-12 px-4">
                     <input type="checkbox" aria-label={`Select ${ci.name}`} checked={selectedIds.includes(ci.id)} onChange={() => toggleOne(ci.id)} />
                   </td>
@@ -144,8 +163,13 @@ export function CiListPage() {
             </table>
           </div>}
 
-      <footer className="flex items-center border-t border-slate-200 px-4 py-3 text-[13px] text-slate-500 dark:border-slate-800">
+      <footer className="flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-slate-200 px-4 py-3 text-[13px] text-slate-500 dark:border-slate-800">
         <span>{cis.data?.items.length ?? 0} of {total} configuration items</span>
+        {/* Sorting happens after paging, so on a multi-page estate it reorders this page alone. Saying
+            so is the difference between a limitation and a wrong answer nobody can see. */}
+        {sort && lastPage > 1 && <span className="text-amber-700 dark:text-amber-400">
+          Sorted within this page of {pageSize} — not across all {total}
+        </span>}
         <div className="ml-auto flex items-center gap-1">
           <span className="mr-2">Page {page} of {lastPage}</span>
           <Button variant="ghost" className="size-8 p-0" disabled={page <= 1} onClick={() => goToPage(page - 1)} aria-label="Previous page"><ChevronLeft size={16} /></Button>
@@ -176,7 +200,7 @@ function StatePill({ isActive }: { isActive: boolean }) {
 
 function EmptyState({ onCreate }: { onCreate: () => void }) {
   return <div className="grid min-h-64 place-items-center p-8 text-center"><div>
-    <span className="mx-auto grid size-12 place-items-center rounded-full bg-blue-50 text-blue-600"><Server /></span>
+    <span className="mx-auto grid size-12 place-items-center rounded-full bg-blue-50 text-blue-600 dark:bg-blue-500/15 dark:text-blue-400"><Server /></span>
     <h2 className="mt-3 font-semibold">No matching configuration items</h2>
     <p className="mt-1 text-sm text-slate-500">Adjust the search or filters, or register the first CI.</p>
     <Button className="mt-4" onClick={onCreate}>Create CI</Button>
@@ -185,7 +209,7 @@ function EmptyState({ onCreate }: { onCreate: () => void }) {
 
 function ErrorState({ error, retry }: { error: Error; retry: () => void }) {
   return <div role="alert" className="grid min-h-64 place-items-center p-8 text-center"><div>
-    <span className="mx-auto grid size-12 place-items-center rounded-full bg-red-50 text-red-600">!</span>
+    <span className="mx-auto grid size-12 place-items-center rounded-full bg-red-50 text-red-600 dark:bg-red-500/15 dark:text-red-400">!</span>
     <h2 className="mt-3 font-semibold">Configuration items could not be loaded</h2>
     <p className="mt-1 text-sm text-slate-500">{error instanceof ApiError ? error.message : 'Try again in a moment.'}</p>
     <Button className="mt-4" variant="secondary" onClick={retry}>Try again</Button>

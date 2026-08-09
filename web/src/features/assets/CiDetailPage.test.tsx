@@ -4,6 +4,7 @@ import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { vi } from 'vitest'
 import { assetsApi, type Ci, type CiGraph, type CiRelationships, type CiTypeSchema } from '../../api/assets'
 import { helpdeskApi, type Ticket } from '../../api/helpdesk'
+import { formatDateOnly } from '../../lib/utils'
 import { CiDetailPage } from './CiDetailPage'
 
 vi.mock('../../api/assets', async (original) => {
@@ -109,26 +110,70 @@ describe('CiDetailPage', () => {
     expect(within(tickets).getByText('#INC-000042')).toBeInTheDocument()
   })
 
-  it('draws the mini-graph with what the CI needs above and what needs it below', async () => {
+  it('draws a path in each direction, rooted at the open CI', async () => {
     renderPage()
 
     const relations = (await screen.findByRole('heading', { name: 'Relations' })).closest('section')!
-    // Scoped to the bands: the editable edge list above them links the same two CIs by name.
-    const graph = await within(relations).findByLabelText('Dependency graph')
-    // The impacted-by walk includes the CI itself at depth 0; the centre band already shows it.
-    await waitFor(() => expect(within(graph).getByRole('link', { name: /core-sw-01/ })).toHaveAttribute('href', '/assets/ci-switch'))
-    expect(within(graph).getByRole('link', { name: /vm-payroll/ })).toHaveAttribute('href', '/assets/ci-vm')
-    expect(within(graph).queryByRole('link', { name: /esx-01/ })).not.toBeInTheDocument()
-    expect(within(relations).getByText('2 relationships')).toBeInTheDocument()
+    // Scoped to each tree: the editable edge cards above them link the same two CIs by name.
+    const upstream = within(await within(relations).findByRole('list', { name: 'Dependency path' }))
+    await waitFor(() => expect(upstream.getByRole('link', { name: 'core-sw-01' })).toHaveAttribute('href', '/assets/ci-switch'))
+
+    const downstream = within(within(relations).getByRole('list', { name: 'Downstream impact' }))
+    expect(downstream.getByRole('link', { name: 'vm-payroll' })).toHaveAttribute('href', '/assets/ci-vm')
+
+    // The root is the CI itself, so it is labelled rather than linked in either tree.
+    expect(upstream.queryByRole('link', { name: 'esx-01' })).not.toBeInTheDocument()
+    expect(downstream.queryByRole('link', { name: 'esx-01' })).not.toBeInTheDocument()
+    expect(within(relations).getByText('2 direct relationships')).toBeInTheDocument()
   })
 
-  it('warns when the graph is truncated or cyclic', async () => {
+  it('says a graph is cyclic, and offers to walk further when the depth ceiling truncated it', async () => {
     vi.mocked(assetsApi.getImpactedBy).mockResolvedValue({ ...impact, containsCycle: true, maxDepthReached: true })
     renderPage()
 
     const relations = (await screen.findByRole('heading', { name: 'Relations' })).closest('section')!
     expect(await within(relations).findByText(/contains a cycle/)).toBeInTheDocument()
-    expect(within(relations).getByText(/Stops at 3 hops/)).toBeInTheDocument()
+    // A truncated walk is no longer a dead end — the reader can ask for the rest.
+    expect(within(relations).getByRole('button', { name: /Show deeper/ })).toBeInTheDocument()
+  })
+
+  // Both cards used to answer any outcome with their empty sentence, which asserts a fact about the
+  // asset when what actually happened is that the request failed.
+  it('distinguishes a history that is empty from one that could not be read', async () => {
+    vi.mocked(assetsApi.getLifecycleHistory).mockRejectedValue(new Error('Service unavailable'))
+    vi.mocked(assetsApi.getAssignments).mockResolvedValue([])
+    renderPage()
+
+    const lifecycle = (await screen.findByRole('heading', { name: 'Lifecycle history' })).closest('section')!
+    expect(await within(lifecycle).findByRole('alert')).toHaveTextContent('The lifecycle history could not be loaded.')
+    expect(within(lifecycle).queryByText(/no transitions yet/)).not.toBeInTheDocument()
+
+    // The other card is unaffected and still states its own emptiness.
+    const log = screen.getByRole('heading', { name: 'Check-in / out log' }).closest('section')!
+    expect(within(log).getByText('Nobody has held this asset yet.')).toBeInTheDocument()
+  })
+
+  it('says the check-in log could not be read when its request fails', async () => {
+    vi.mocked(assetsApi.getAssignments).mockRejectedValue(new Error('Service unavailable'))
+    renderPage()
+
+    const log = (await screen.findByRole('heading', { name: 'Check-in / out log' })).closest('section')!
+    expect(await within(log).findByRole('alert')).toHaveTextContent('The check-in / out log could not be loaded.')
+  })
+
+  // WP-2.6 stores these as DateOnly, so they must be stated as calendar days and never shifted by a
+  // timezone — but they must also stop being the only raw ISO strings on a page of formatted dates.
+  it('writes the coverage dates as calendar dates rather than raw ISO strings', async () => {
+    vi.mocked(assetsApi.getCi).mockResolvedValue({
+      ...host,
+      coverage: { ...host.coverage, purchaseDate: '2026-01-05', warrantyExpiresAt: '2026-09-14', warrantyStatus: 'Active', warrantyDaysRemaining: 36 },
+    })
+    renderPage()
+
+    const coverage = (await screen.findByRole('heading', { name: /Warranty/ })).closest('section')!
+    expect(within(coverage).queryByText('2026-09-14')).not.toBeInTheDocument()
+    expect(within(coverage).getByText(formatDateOnly('2026-09-14'))).toBeInTheDocument()
+    expect(within(coverage).getByText(formatDateOnly('2026-01-05'))).toBeInTheDocument()
   })
 
   it('offers a retry when the CI cannot be loaded', async () => {

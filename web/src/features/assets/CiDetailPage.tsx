@@ -1,4 +1,4 @@
-import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useMutation, useQueries, useQuery, useQueryClient, type UseQueryResult } from '@tanstack/react-query'
 import { ArrowLeft, Pencil, QrCode, ShieldCheck, SlidersHorizontal, Ticket } from 'lucide-react'
 import { useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
@@ -7,6 +7,7 @@ import { assetsApi, ciTypeLabel } from '../../api/assets'
 import { contractStatusLabel, contractStatusTone, describeDaysRemaining } from '../../api/contracts'
 import { helpdeskApi } from '../../api/helpdesk'
 import { Button } from '../../components/ui/Button'
+import { formatDateOnly } from '../../lib/utils'
 import { PriorityPill, StatusPill, formatLocal } from '../tickets/ticketUi'
 import { CiCoverageDialog } from './CiCoverageDialog'
 import { CiFormDialog, type CiFormSubmit } from './CiFormDialog'
@@ -146,13 +147,13 @@ export function CiDetailPage() {
               </dd>
             </div>
             {item.coverage.vendorName && <Detail label="Vendor" value={item.coverage.vendorName} />}
-            {item.coverage.contractEndDate && <Detail label="Contract ends" value={item.coverage.contractEndDate} />}
-            <Detail label="Purchased" value={item.coverage.purchaseDate ?? '—'} />
+            {item.coverage.contractEndDate && <Detail label="Contract ends" value={formatDateOnly(item.coverage.contractEndDate)} />}
+            <Detail label="Purchased" value={item.coverage.purchaseDate ? formatDateOnly(item.coverage.purchaseDate) : '—'} />
             <div className="flex gap-4">
               <dt className="text-slate-500">Warranty ends</dt>
               <dd className="ml-auto flex max-w-[65%] flex-wrap items-center justify-end gap-2 text-right font-medium">
                 {item.coverage.warrantyExpiresAt ? <>
-                  <span>{item.coverage.warrantyExpiresAt}</span>
+                  <span>{formatDateOnly(item.coverage.warrantyExpiresAt)}</span>
                   <span className={`rounded-md px-2 py-0.5 text-xs font-medium ${contractStatusTone(item.coverage.warrantyStatus ?? 'Active')}`}>
                     {item.coverage.warrantyStatus === 'Expired'
                       ? contractStatusLabel('Expired')
@@ -166,25 +167,27 @@ export function CiDetailPage() {
 
         <section className="rounded-xl border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-slate-900">
           <h2 className="font-semibold">Lifecycle history</h2>
-          <ol className="mt-4 space-y-3 text-sm">
-            {(history.data ?? []).length === 0 && <li className="text-sm text-slate-500">Registered as {ciLifecycleLabel(item.lifecycleState)}; no transitions yet.</li>}
-            {(history.data ?? []).map((entry) => <li key={entry.id}>
+          <HistoryCard query={history} label="lifecycle history"
+            empty={`Registered as ${ciLifecycleLabel(item.lifecycleState)}; no transitions yet.`}
+            failed="The lifecycle history could not be loaded.">
+            {(entries) => entries.map((entry) => <li key={entry.id}>
               <p className="font-medium">{ciLifecycleLabel(entry.fromState)} → {ciLifecycleLabel(entry.toState)}</p>
               {entry.note && <p className="mt-1 text-slate-600 dark:text-slate-300">{entry.note}</p>}
               <p className="mt-1 text-xs text-slate-500">{entry.actorId} · {formatLocal(entry.occurredAt)}</p>
             </li>)}
-          </ol>
+          </HistoryCard>
         </section>
 
         <section className="rounded-xl border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-slate-900">
           <h2 className="font-semibold">Check-in / out log</h2>
-          <ol className="mt-4 space-y-3 text-sm">
-            {(assignments.data ?? []).length === 0 && <li className="text-sm text-slate-500">Nobody has held this asset yet.</li>}
-            {(assignments.data ?? []).map((entry) => <li key={entry.id}>
+          <HistoryCard query={assignments} label="check-in and check-out log"
+            empty="Nobody has held this asset yet."
+            failed="The check-in / out log could not be loaded.">
+            {(entries) => entries.map((entry) => <li key={entry.id}>
               <p className="font-medium">{describeAssignment(entry)}</p>
               <p className="mt-1 text-xs text-slate-500">{entry.actorId} · {formatLocal(entry.occurredAt)}</p>
             </li>)}
-          </ol>
+          </HistoryCard>
         </section>
       </aside>
     </div>
@@ -200,6 +203,29 @@ export function CiDetailPage() {
 
     <CiLabelDialog selection={labelOpen ? [item] : []} onClose={() => setLabelOpen(false)} />
   </div>
+}
+
+/**
+ * A history list that distinguishes "nothing happened" from "we could not find out". Both cards used
+ * to fall back to their empty sentence on any outcome, which states a fact about the asset when what
+ * actually happened is a failed request.
+ */
+function HistoryCard<T>({ query, label, empty, failed, children }: {
+  query: UseQueryResult<T[]>
+  label: string
+  empty: string
+  failed: string
+  children: (entries: T[]) => React.ReactNode
+}) {
+  if (query.isLoading) return <div aria-label={`Loading ${label}`} className="mt-4 space-y-2">
+    {Array.from({ length: 3 }, (_, index) => <div key={index} className="h-10 animate-pulse rounded-lg bg-slate-100 dark:bg-slate-800" />)}
+  </div>
+  if (query.isError) return <p role="alert" className="mt-4 text-sm text-red-600">{failed}</p>
+
+  const entries = query.data ?? []
+  return <ol className="mt-4 space-y-3 text-sm">
+    {entries.length === 0 ? <li className="text-sm text-slate-500">{empty}</li> : children(entries)}
+  </ol>
 }
 
 function Detail({ label, value }: { label: string; value: string }) {
