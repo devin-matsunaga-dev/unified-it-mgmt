@@ -5,7 +5,8 @@ import { Link, useNavigate } from 'react-router-dom'
 import { toast } from 'sonner'
 import {
   assetsApi, ciTypeLabel, ciTypes,
-  type CiImportAction, type CiImportColumns, type CiImportReport, type CiImportTarget, type CiType,
+  type CiImportAction, type CiImportColumns, type CiImportReport, type CiImportRowResult,
+  type CiImportTarget, type CiImportType, type CiType,
 } from '../../api/assets'
 import { ApiError } from '../../api/client'
 import { Button } from '../../components/ui/Button'
@@ -30,15 +31,17 @@ export function CiImportWizard() {
   const navigate = useNavigate()
   const [step, setStep] = useState<Step>('file')
   const [file, setFile] = useState<File | null>(null)
-  const [type, setType] = useState<CiType>('Hardware')
+  const [type, setType] = useState<CiImportType>('Hardware')
   const [columns, setColumns] = useState<CiImportColumns | null>(null)
   const [mapping, setMapping] = useState<Record<string, string>>({})
   const [report, setReport] = useState<CiImportReport | null>(null)
 
-  // Only used to tell the operator how many CIs of this type already exist before they commit.
+  // Only used to tell the operator how many CIs of this type already exist before they commit; a mixed
+  // file spans all of them, so there is no one count to show.
   const existing = useQuery({
     queryKey: ['cis', { type, pageSize: 1 }],
-    queryFn: () => assetsApi.listCis({ type, pageSize: 1 }),
+    queryFn: () => assetsApi.listCis({ type: type as CiType, pageSize: 1 }),
+    enabled: type !== 'Mixed',
   })
 
   const inspect = useMutation({
@@ -55,8 +58,10 @@ export function CiImportWizard() {
     onSuccess: (result) => { setReport(result); setStep('preview') },
   })
 
+  // The commit is only reachable from the dry run, which listed every guessed type — that is exactly
+  // what the server asks this flag to attest.
   const commit = useMutation({
-    mutationFn: () => assetsApi.commitImport(file!, { type, columns: mapping }),
+    mutationFn: () => assetsApi.commitImport(file!, { type, columns: mapping, acceptInferredTypes: true }),
     onSuccess: (result) => {
       setReport(result)
       setStep('done')
@@ -97,10 +102,13 @@ export function CiImportWizard() {
       <div className="grid gap-4 sm:grid-cols-2">
         <label className="block">
           <span className="mb-1 block text-[13px] font-medium text-slate-600 dark:text-slate-300">CI type</span>
-          <select className="input" aria-label="CI type" value={type} onChange={(event) => setType(event.target.value as CiType)}>
+          <select className="input" aria-label="CI type" value={type} onChange={(event) => setType(event.target.value as CiImportType)}>
             {ciTypes.map((option) => <option key={option} value={option}>{ciTypeLabel(option)}</option>)}
+            <option value="Mixed">Mixed — read from a column</option>
           </select>
-          <span className="mt-1 block text-xs text-slate-500">Every row in the file is imported as this type. {existing.data ? `${existing.data.total} already registered.` : ''}</span>
+          <span className="mt-1 block text-xs text-slate-500">{type === 'Mixed'
+            ? 'Each row states its own type in a column you map next. Without one, the type is guessed from the columns the row fills and shown in the dry run.'
+            : `Every row in the file is imported as this type. ${existing.data ? `${existing.data.total} already registered.` : ''}`}</span>
         </label>
         <label className="block">
           <span className="mb-1 block text-[13px] font-medium text-slate-600 dark:text-slate-300">File</span>
@@ -118,6 +126,7 @@ export function CiImportWizard() {
     {step === 'map' && columns && <>
       <Card title={`Map the columns of ${columns.fileName}`} action={`${columns.rowCount} data rows`}>
         <p className="mb-4 text-sm text-slate-500">Rows are matched to existing CIs by serial number and asset tag, so map at least one of them — otherwise a second run would create everything twice.</p>
+        {type === 'Mixed' && <p className="mb-4 text-sm text-slate-500">Every type&rsquo;s columns are offered together: a row fills only the ones its own type has and ignores the rest. Map <strong>CI type</strong> if the file names the type; leave it unmapped and each row&rsquo;s type is guessed from the columns it fills.</p>}
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {columns.targets.map((target) => <MappingField key={target.key} target={target} headers={columns.headers}
             value={mapping[target.key] ?? ''} onChange={(header) => setColumnFor(target.key, header)} />)}
@@ -173,6 +182,10 @@ function MappingField({ target, headers, value, onChange }: {
   value: string
   onChange: (header: string) => void
 }) {
+  // A mixed file's columns belong to several types at once, so "required" is only ever true of some of
+  // them — the form says which rather than marking the field with a star it cannot honour.
+  const requiredFor = target.types?.filter((entry) => entry.isRequired).map((entry) => ciTypeLabel(entry.type)) ?? []
+  const offeredTo = target.types?.map((entry) => ciTypeLabel(entry.type)) ?? []
   return <label className="block">
     <span className="mb-1 block text-[13px] font-medium text-slate-600 dark:text-slate-300">
       {target.label}{target.isRequired && <span className="ml-1 text-red-600">*</span>}
@@ -182,6 +195,12 @@ function MappingField({ target, headers, value, onChange }: {
       <option value="">Not imported</option>
       {headers.map((header) => <option key={header} value={header}>{header}</option>)}
     </select>
+    {offeredTo.length > 0 && <span className="mt-1 block text-xs text-slate-500">
+      {requiredFor.length > 0 ? `Required for ${requiredFor.join(', ')}` : `Optional for ${offeredTo.join(', ')}`}
+      {requiredFor.length > 0 && requiredFor.length < offeredTo.length
+        ? `; optional for ${offeredTo.filter((label) => !requiredFor.includes(label)).join(', ')}`
+        : ''}
+    </span>}
   </label>
 }
 
@@ -205,15 +224,27 @@ function RowTable({ report }: { report: CiImportReport }) {
   const rows = [...report.rows].sort((left, right) =>
     Number(right.action === 'Error') - Number(left.action === 'Error') || left.lineNumber - right.lineNumber)
   const listed = rows.slice(0, maximumListedRows)
+  // The type column only earns its width on a mixed file — on a single-type import every row says the
+  // same thing, which the operator chose two steps ago.
+  const showsType = rows.some((row) => row.typeSource && row.typeSource !== 'Fixed')
+  const guessed = rows.filter((row) => row.typeSource === 'Inferred').length
+  const headers = showsType
+    ? ['Line', 'Action', 'Type', 'Name', 'Asset tag', 'Serial', 'Detail']
+    : ['Line', 'Action', 'Name', 'Asset tag', 'Serial', 'Detail']
   return <div className="mt-5">
+    {showsType && guessed > 0 && report.isDryRun && <p className="mb-3 text-[13px] text-amber-700 dark:text-amber-500">
+      {guessed} {guessed === 1 ? 'row has a guessed type' : 'rows have a guessed type'} — a CI&rsquo;s type cannot be
+      changed after it is created, so check them before importing.
+    </p>}
     <div className="overflow-x-auto rounded-xl border border-slate-200 dark:border-slate-800">
       <table className="w-full min-w-[720px] text-left text-sm">
-        <thead><tr>{['Line', 'Action', 'Name', 'Asset tag', 'Serial', 'Detail'].map((header) =>
+        <thead><tr>{headers.map((header) =>
           <th key={header} className="h-10 px-3 text-[13px] font-medium text-slate-500">{header}</th>)}</tr></thead>
         <tbody>
           {listed.map((row) => <tr key={row.lineNumber} className="border-t border-slate-200 dark:border-slate-800">
             <td className="h-11 px-3 font-mono text-xs text-slate-500 tabular-nums">{row.lineNumber}</td>
             <td className="h-11 px-3"><span className={`rounded-md px-2 py-0.5 text-xs font-medium ${actionTone[row.action]}`}>{actionLabel[row.action]}</span></td>
+            {showsType && <td className="h-11 px-3"><RowType row={row} /></td>}
             <td className="h-11 px-3 text-slate-700 dark:text-slate-200">{row.name ?? '—'}</td>
             <td className="h-11 px-3 font-mono text-xs text-slate-500">{row.assetTag ?? '—'}</td>
             <td className="h-11 px-3 font-mono text-xs text-slate-500">{row.serialNumber ?? '—'}</td>
@@ -224,6 +255,14 @@ function RowTable({ report }: { report: CiImportReport }) {
     </div>
     {rows.length > listed.length && <p className="mt-2 text-[13px] text-slate-500">Showing the first {maximumListedRows} of {rows.length} rows; the counts above cover all of them.</p>}
   </div>
+}
+
+function RowType({ row }: { row: CiImportRowResult }) {
+  if (!row.type) return <span className="text-[13px] text-slate-400">—</span>
+  return <span className="whitespace-nowrap text-slate-700 dark:text-slate-200">
+    {ciTypeLabel(row.type)}
+    {row.typeSource === 'Inferred' && <span className="ml-1.5 rounded-md bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700 dark:bg-amber-500/15 dark:text-amber-500">guessed</span>}
+  </span>
 }
 
 function Card({ title, action, children }: { title: string; action?: string; children: ReactNode }) {

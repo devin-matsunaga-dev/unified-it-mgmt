@@ -5,9 +5,10 @@
 ## Current position
 
 - **Phase:** 2 — Assets/CMDB
-- **Last completed WP:** WP-2.9 (Relationship editor — UI) — automated tests green; manual checklist not yet walked
-- **Current WP:** WP-2.10 (Mixed-type import)
-- **Current branch:** feat/wp-2.10-mixed-type-import
+- **Last completed WP:** WP-2.10 (Mixed-type import) — automated tests green; manual checklist not yet walked
+- **Current WP:** WP-2.11 (Assets UI polish) — added 2026-08-09 and sequenced *before* the Phase 2 gate. Its scope list in `WORK_PACKAGES.md` is still empty and must be filled in before implementation starts
+- **Current branch:** feat/wp-2.11-assets-ui-polish
+- **After it:** 🏁 Phase 2 gate — asset lifecycle + linking demo end-to-end, tag `v0.3-phase2`; then WP-3.1 (Device/check config API) opens Phase 3
 - **Last tag:** `v.0.2-phase1` (Phase 1 gate; note the stray dot — Phase 0 was tagged `v0.1-phase0`)
 
 ## Platform versions (law — see WORKFLOW.md table for EOL dates)
@@ -17,6 +18,12 @@
 ## In flight / carry-over notes
 
 <!-- Anything unfinished, known-broken, or deferred from the last session that the next session must know. Keep to a few lines; delete when resolved. -->
+
+- **The import wizard now accepts one sheet of everything (WP-2.10).** "Mixed — read from a column" sits beside the six CI types; the mapping step then offers the union of every type's attributes and custom fields, each labelled with the types that need it, plus a mappable **CI type** column. A row reads only the columns its own type declares and ignores the rest — but **only in mixed mode**: a single-type import still rejects a foreign attribute loudly, because there the operator declared the whole file to be one shape.
+
+- **A mapped type column is authoritative and a blank cell in it is an error, not a fallback to guessing.** Inference only runs when no type column is mapped. It reads the attribute keys exactly one type declares — derived from `CiTypeSchema`, not a hand-written list, so `hostname`, `vendor` and `ramGb` (shared by two types each) identify nothing. A row that matches two types, or none, is refused by line number rather than resolved by priority.
+
+- **A guessed type cannot be committed unseen: `CommitAsync` refuses (400) unless the mapping carries `acceptInferredTypes`.** The wizard sets it only on the button that follows the dry run, so the flag means "the operator read the guesses". This is a server-side rule, not a UI convention — a REST client scripting the commit has to send it too. The reason is that TPH type is permanent: fixing a wrong guess means deleting the CI, which the WP-2.3/2.4 delete guards block as soon as a relationship or ticket names it.
 
 - **The CMDB now seeds itself: 60 CIs, 61 relationships, 6 vendors, 6 contracts, 2 CI custom fields and 18 ticket links, all from `dotnet run --project src/Seeder`.** The estate is three site-local dependency trees — Primary Data Centre (6 levels deep), Head Office (4) and Regional Branch (6) — each rooted at that site's router. There are deliberately **no WAN edges between the sites**, so `impacted-by` on a router answers for one site rather than the whole estate; a real network would have them and WP-4.3's topology maps are where they belong.
 
@@ -102,7 +109,7 @@
 
 - A mapped **blank** cell means "leave the stored value alone", never "clear it". Consequence: an import can never empty a field. Clearing still needs the form or the API.
 
-- An import is one CI type for the whole file, because the mapping form is derived from the type. **WP-2.10 now owns mixed-type files** (a mappable `type` column, with inference shown in the dry run as the fallback). Until it ships, a mixed export has to be split into one sheet per type before importing.
+- A **single-type** import is still the default and is unchanged: one CI type for the whole file, mapping form derived from the type. WP-2.10 added mixed mode beside it, not in place of it.
 
 - The importer does not touch lifecycle state, ownership, custom-field *definitions*, or relationships. Created CIs land in InStock; moving them on is bulk edit's job. Relationship import is still nobody's (WP-2.9 owns the manual write surface).
 
@@ -198,7 +205,8 @@
 - [x] WP-2.7 Barcode/QR (2026-08-08) — **accepted with the phone sign-in leg deferred to WP-6.2; everything else verified on real hardware.** Added QRCoder and QuestPDF after asking, plus `apiDownload` in the web client, a "Scan" nav item, and a `public-host` AppHost parameter with pinned ports and a rendered realm redirect URI — none of which the WP text called for, but QR encoding, PDF layout, authorized binary downloads, a reachable `/scan` and a phone-reachable login respectively required. Verification found and fixed three defects in that LAN plumbing (endpoint bind address, parameter source, realm substitution) — see In flight
 - [x] WP-2.8 Seeder: infrastructure (2026-08-08) — added a `HelpdeskCiLinkSeeder` in the Helpdesk module and a `CiIds` map on the seed result, neither of which the WP text called for, but "some linked tickets" crosses a module boundary Assets may not cross; also seeded two CI custom fields, which the WP text did not mention but the WP-2.1 notes asked for
 - [x] WP-2.9 Relationship editor (UI) (2026-08-08) — frontend only; no API, migration or backend change. The WP's "delete-blocked 409" was not surfaced because the SPA has no delete-CI button to surface it on — see In flight
-- [ ] WP-2.10 Mixed-type import — added 2026-08-08; WP-2.5 deliberately fixed one CI type per file, but a real estate export is one sheet of everything
+- [x] WP-2.10 Mixed-type import (2026-08-08) — added an `acceptInferredTypes` confirmation to the commit payload, which the WP text did not call for but "never commit an inferred type the operator has not seen" required as a server-side rule rather than a wizard convention; no API route, migration or entity change
+- [ ] WP-2.11 Assets UI polish — added 2026-08-09; frontend-only, sequenced before the Phase 2 gate because these are the screens the gate demos. Scope list not yet written
 
 ### Phase 3 — Monitoring + Unified Loop
 - [ ] WP-3.1 Device/check config API

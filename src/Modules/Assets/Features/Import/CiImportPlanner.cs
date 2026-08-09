@@ -11,7 +11,8 @@ public sealed record CiImportRowValues(
     string? SerialNumber,
     string? Description,
     IReadOnlyDictionary<string, string?> Attributes,
-    IReadOnlyDictionary<string, string?> CustomFields);
+    IReadOnlyDictionary<string, string?> CustomFields,
+    string? TypeCell = null);
 
 /// <summary>
 /// The mapping half of the import: which columns a CI type offers, which header probably feeds which,
@@ -38,25 +39,66 @@ public static class CiImportPlanner
             ["hostname"] = CiImportTargets.Name,
         };
 
+    /// <summary>
+    /// The columns a file may fill. A null <paramref name="type"/> is a mixed import, which offers the
+    /// union of every type's attributes plus the type column itself; each union target carries the types
+    /// that declare it so the form can say which of them demand a value.
+    /// </summary>
     public static IReadOnlyList<CiImportTargetField> TargetsFor(
-        CiType type,
+        CiType? type,
         IReadOnlyList<CiCustomField> customFields) =>
     [
         new(CiImportTargets.Name, "Name", true, CiImportTargetKind.Core),
         new(CiImportTargets.AssetTag, "Asset tag", false, CiImportTargetKind.Core),
         new(CiImportTargets.SerialNumber, "Serial number", false, CiImportTargetKind.Core),
         new(CiImportTargets.Description, "Description", false, CiImportTargetKind.Core),
-        .. CiTypeSchema.For(type).Select(attribute => new CiImportTargetField(
-            CiImportTargets.AttributePrefix + attribute.Key,
-            attribute.Label,
-            attribute.IsRequired,
-            CiImportTargetKind.Attribute)),
-        .. customFields.Where(field => field.CiType == type).Select(field => new CiImportTargetField(
-            CiImportTargets.CustomFieldPrefix + field.Key,
-            field.Label,
-            field.IsRequired,
-            CiImportTargetKind.CustomField)),
+        .. type is null
+            ? new CiImportTargetField[] { new(CiImportTargets.Type, "CI type", false, CiImportTargetKind.Core) }
+            : [],
+        .. type is null
+            ? UnionTargets(
+                CiTypeSchema.All.SelectMany(entry => entry.Value.Select(attribute =>
+                    (Key: CiImportTargets.AttributePrefix + attribute.Key,
+                        attribute.Label,
+                        entry.Key,
+                        attribute.IsRequired))),
+                CiImportTargetKind.Attribute)
+            : CiTypeSchema.For(type.Value).Select(attribute => new CiImportTargetField(
+                CiImportTargets.AttributePrefix + attribute.Key,
+                attribute.Label,
+                attribute.IsRequired,
+                CiImportTargetKind.Attribute)),
+        .. type is null
+            ? UnionTargets(
+                customFields.Select(field =>
+                    (Key: CiImportTargets.CustomFieldPrefix + field.Key,
+                        field.Label,
+                        field.CiType,
+                        field.IsRequired)),
+                CiImportTargetKind.CustomField)
+            : customFields.Where(field => field.CiType == type.Value).Select(field => new CiImportTargetField(
+                CiImportTargets.CustomFieldPrefix + field.Key,
+                field.Label,
+                field.IsRequired,
+                CiImportTargetKind.CustomField)),
     ];
+
+    /// <summary>
+    /// Folds the same target key declared by several types into one column. It is never marked required
+    /// on its own — a Hardware row cannot be held to a Server's requirements — so required-ness travels
+    /// per type instead, and the first declaring type's label wins.
+    /// </summary>
+    private static IEnumerable<CiImportTargetField> UnionTargets(
+        IEnumerable<(string Key, string Label, CiType Type, bool IsRequired)> declarations,
+        CiImportTargetKind kind) =>
+        declarations
+            .GroupBy(declaration => declaration.Key, StringComparer.Ordinal)
+            .Select(group => new CiImportTargetField(
+                group.Key,
+                group.First().Label,
+                false,
+                kind,
+                [.. group.Select(declaration => new CiImportTargetType(declaration.Type, declaration.IsRequired))]));
 
     /// <summary>
     /// A first guess at the mapping so the operator confirms rather than fills in a whole form. Matches
@@ -104,7 +146,9 @@ public static class CiImportPlanner
         {
             if (targets.All(target => target.Key != targetKey))
             {
-                errors[ErrorKey(targetKey)] = [$"'{targetKey}' is not a column of a {mapping.Type} CI."];
+                errors[ErrorKey(targetKey)] = mapping.Type is null
+                    ? [$"'{targetKey}' is not a column of any CI type."]
+                    : [$"'{targetKey}' is not a column of a {mapping.Type} CI."];
                 continue;
             }
 
@@ -172,7 +216,8 @@ public static class CiImportPlanner
             Core(mapping, headers, row, CiImportTargets.SerialNumber),
             Core(mapping, headers, row, CiImportTargets.Description),
             attributes,
-            customFields);
+            customFields,
+            Core(mapping, headers, row, CiImportTargets.Type));
     }
 
     private static string? Core(

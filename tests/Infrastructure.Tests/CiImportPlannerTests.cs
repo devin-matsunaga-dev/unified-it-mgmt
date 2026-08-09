@@ -29,6 +29,80 @@ public sealed class CiImportPlannerTests
     }
 
     [Fact]
+    public void TargetsFor_Mixed_OffersTheTypeColumnAndTheUnionOfEveryTypesColumns()
+    {
+        var targets = CiImportPlanner.TargetsFor(null, [RackUnit]);
+
+        Assert.Contains(targets, target => target.Key == "type" && !target.IsRequired);
+        Assert.Contains(targets, target => target.Key == "attributes.manufacturer");
+        Assert.Contains(targets, target => target.Key == "attributes.portCount");
+        Assert.Contains(targets, target => target.Key == "customFields.rackUnit");
+    }
+
+    [Fact]
+    public void TargetsFor_Mixed_CarriesRequirednessPerTypeRatherThanOnTheColumn()
+    {
+        var targets = CiImportPlanner.TargetsFor(null, []);
+
+        // Shared by Server and Virtual, required by both — but never by a Hardware row, so the column
+        // itself must not claim to be required.
+        var hostname = Assert.Single(targets, target => target.Key == "attributes.hostname");
+        Assert.False(hostname.IsRequired);
+        Assert.Equal(
+            [CiType.Server, CiType.Virtual],
+            hostname.Types!.Select(entry => entry.Type).Order());
+        Assert.All(hostname.Types!, entry => Assert.True(entry.IsRequired));
+
+        var serviceTier = Assert.Single(targets, target => target.Key == "attributes.serviceTier");
+        Assert.False(Assert.Single(serviceTier.Types!).IsRequired);
+    }
+
+    [Fact]
+    public void TargetsFor_SingleType_CarriesNoPerTypeRequirements()
+    {
+        var targets = CiImportPlanner.TargetsFor(CiType.Server, [RackUnit]);
+
+        Assert.DoesNotContain(targets, target => target.Key == "type");
+        Assert.All(targets, target => Assert.Null(target.Types));
+    }
+
+    [Fact]
+    public void ValidateMapping_Mixed_RejectsATargetNoTypeDeclares()
+    {
+        var errors = CiImportPlanner.ValidateMapping(
+            new CiImportMapping(
+                null,
+                new Dictionary<string, string>
+                {
+                    ["name"] = "Name",
+                    ["assetTag"] = "Tag",
+                    ["attributes.invented"] = "Made up",
+                }),
+            CiImportPlanner.TargetsFor(null, []),
+            ["Name", "Tag", "Made up"]);
+
+        Assert.Contains(
+            "is not a column of any CI type",
+            Assert.Single(errors["mapping.attributes.invented"]));
+    }
+
+    [Fact]
+    public void Extract_Mixed_ReadsTheTypeCell()
+    {
+        var mapping = new CiImportMapping(null, new Dictionary<string, string>
+        {
+            ["name"] = "Name",
+            ["assetTag"] = "Tag",
+            ["type"] = "Kind",
+        });
+
+        var values = CiImportPlanner.Extract(
+            mapping, ["Name", "Tag", "Kind"], new CiImportRow(4, ["switch-1", "AT-9", "NetworkDevice"]));
+
+        Assert.Equal("NetworkDevice", values.TypeCell);
+    }
+
+    [Fact]
     public void Suggest_MatchesOnKeyLabelAndAlias()
     {
         var targets = CiImportPlanner.TargetsFor(CiType.Server, [RackUnit]);

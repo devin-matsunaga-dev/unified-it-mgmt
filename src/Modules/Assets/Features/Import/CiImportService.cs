@@ -26,7 +26,7 @@ public sealed class CiImportService(
 
     public async Task<CiImportColumnsResult> InspectAsync(
         IFormFile file,
-        CiType type,
+        CiType? type,
         CancellationToken cancellationToken)
     {
         var read = await CiImportFileReader.ReadAsync(file, cancellationToken);
@@ -68,6 +68,25 @@ public sealed class CiImportService(
             return planned.Failure;
         }
 
+        // A guessed type is only ever as good as the operator's reading of the dry run, and it cannot be
+        // corrected afterwards — the CI has to be deleted and made again. So a commit that would write
+        // one is refused until the wizard says the guesses were seen.
+        if (!mapping.AcceptInferredTypes
+            && planned.Rows.Any(row => row.Result.TypeSource == CiImportTypeSource.Inferred
+                && row.Result.Action is CiImportAction.Create or CiImportAction.Update))
+        {
+            return new(
+                CiImportOutcome.InvalidMapping,
+                Errors: new Dictionary<string, string[]>(StringComparer.Ordinal)
+                {
+                    [$"mapping.{CiImportTargets.Type}"] =
+                    [
+                        "This file has rows whose CI type was guessed. Review the guesses in the dry run "
+                        + "before importing, or map a CI type column.",
+                    ],
+                });
+        }
+
         var results = new List<CiImportRowResult>(planned.Rows.Count);
         foreach (var row in planned.Rows)
         {
@@ -84,7 +103,7 @@ public sealed class CiImportService(
             new
             {
                 FileName = Path.GetFileName(file.FileName),
-                mapping.Type,
+                Type = mapping.Type?.ToString() ?? CiImportTypeSelection.Mixed,
                 report.TotalRows,
                 report.Created,
                 report.Updated,
@@ -172,6 +191,11 @@ public sealed class CiImportService(
         Dictionary<string, int> seenSerials)
     {
         var errors = new List<string>();
+        var resolution = CiImportTypeResolver.Resolve(mapping, row);
+        if (resolution.Error is not null)
+        {
+            errors.Add(resolution.Error);
+        }
 
         // A file that names the same asset twice would create it once and then collide with itself, so
         // the later row is refused rather than silently overwriting the earlier one.
@@ -194,9 +218,9 @@ public sealed class CiImportService(
         }
 
         var existing = bySerial ?? byAssetTag;
-        if (existing is not null && existing.Type != mapping.Type)
+        if (existing is not null && resolution.Type is not null && existing.Type != resolution.Type)
         {
-            errors.Add($"'{existing.Name}' is already registered as a {existing.Type} CI, not a {mapping.Type}.");
+            errors.Add($"'{existing.Name}' is already registered as a {existing.Type} CI, not a {resolution.Type}.");
         }
 
         if (existing is not null && existing.LifecycleState == CiLifecycleState.Disposed)
@@ -211,32 +235,50 @@ public sealed class CiImportService(
 
         if (errors.Count > 0)
         {
-            return Failed(row, existing?.Id, errors);
+            return Failed(row, existing?.Id, errors, resolution);
         }
 
-        var attributes = Merge(row.Attributes, existing);
-        var bound = CiTypeSchema.Bind(mapping.Type, attributes);
-        var boundCustom = CiCustomFieldValueBinder.Bind(customFields, MergeCustom(row.CustomFields, existing));
+        // A mixed file is one sheet of everything, so most rows carry columns belonging to some other
+        // type. Those are this row's blanks, not its errors — a single-type import keeps rejecting them,
+        // because there the whole file was declared to be of one shape.
+        var type = resolution.Type!.Value;
+        var typeCustomFields = customFields.Where(field => field.CiType == type).ToList();
+        var stated = mapping.Type is null ? OnlyDeclaredAttributes(type, row.Attributes) : row.Attributes;
+        var statedCustom = mapping.Type is null
+            ? OnlyDeclaredCustomFields(typeCustomFields, row.CustomFields)
+            : row.CustomFields;
+
+        var attributes = Merge(stated, existing);
+        var bound = CiTypeSchema.Bind(type, attributes);
+        var boundCustom = CiCustomFieldValueBinder.Bind(typeCustomFields, MergeCustom(statedCustom, existing));
         errors.AddRange(bound.Errors.SelectMany(entry => entry.Value));
         errors.AddRange(boundCustom.Errors.SelectMany(entry => entry.Value));
         if (errors.Count > 0)
         {
-            return Failed(row, existing?.Id, errors);
+            return Failed(row, existing?.Id, errors, resolution);
         }
 
         if (existing is null)
         {
             return new(
                 new CiImportRowResult(
-                    row.LineNumber, CiImportAction.Create, row.Name, row.AssetTag, row.SerialNumber, null, []),
+                    row.LineNumber,
+                    CiImportAction.Create,
+                    row.Name,
+                    row.AssetTag,
+                    row.SerialNumber,
+                    null,
+                    [],
+                    type,
+                    resolution.Source),
                 new CreateCiRequest(
-                    mapping.Type,
+                    type,
                     row.Name!,
                     row.AssetTag,
                     row.SerialNumber,
                     row.Description,
                     attributes,
-                    row.CustomFields),
+                    statedCustom),
                 null);
         }
 
@@ -248,20 +290,36 @@ public sealed class CiImportService(
             && assetTag == existing.AssetTag
             && serialNumber == existing.SerialNumber
             && description == existing.Description
-            && SameAttributes(bound.Values, existing, mapping.Type)
+            && SameAttributes(bound.Values, existing, type)
             && SameCustomFields(boundCustom.Values, existing);
         if (unchanged)
         {
             return new(
                 new CiImportRowResult(
-                    row.LineNumber, CiImportAction.Skip, name, assetTag, serialNumber, existing.Id, []),
+                    row.LineNumber,
+                    CiImportAction.Skip,
+                    name,
+                    assetTag,
+                    serialNumber,
+                    existing.Id,
+                    [],
+                    type,
+                    resolution.Source),
                 null,
                 null);
         }
 
         return new(
             new CiImportRowResult(
-                row.LineNumber, CiImportAction.Update, name, assetTag, serialNumber, existing.Id, []),
+                row.LineNumber,
+                CiImportAction.Update,
+                name,
+                assetTag,
+                serialNumber,
+                existing.Id,
+                [],
+                type,
+                resolution.Source),
             null,
             new UpdateCiRequest(
                 name,
@@ -270,8 +328,28 @@ public sealed class CiImportService(
                 description,
                 existing.IsActive,
                 attributes,
-                MergeCustom(row.CustomFields, existing)));
+                MergeCustom(statedCustom, existing)));
     }
+
+    /// <summary>Drops the columns some other type owns, so a mixed file's other halves read as blanks.</summary>
+    private static IReadOnlyDictionary<string, string?> OnlyDeclaredAttributes(
+        CiType type,
+        IReadOnlyDictionary<string, string?> stated)
+    {
+        var declared = CiTypeSchema.For(type);
+        return stated
+            .Where(entry => declared.Any(definition =>
+                string.Equals(definition.Key, entry.Key, StringComparison.OrdinalIgnoreCase)))
+            .ToDictionary(entry => entry.Key, entry => entry.Value, StringComparer.Ordinal);
+    }
+
+    private static IReadOnlyDictionary<string, string?> OnlyDeclaredCustomFields(
+        IReadOnlyList<CiCustomField> fields,
+        IReadOnlyDictionary<string, string?> stated) =>
+        stated
+            .Where(entry => fields.Any(field =>
+                string.Equals(field.Key, entry.Key, StringComparison.OrdinalIgnoreCase)))
+            .ToDictionary(entry => entry.Key, entry => entry.Value, StringComparer.Ordinal);
 
     /// <summary>
     /// Loads every CI the file could match in one query. Rows carrying neither identifier match nothing
@@ -314,8 +392,9 @@ public sealed class CiImportService(
         return matches;
     }
 
-    private Task<List<CiCustomField>> CustomFieldsAsync(CiType type, CancellationToken cancellationToken) =>
-        dbContext.CiCustomFields.Where(field => field.CiType == type)
+    /// <summary>A mixed import needs every type's fields loaded; each row then reads only its own.</summary>
+    private Task<List<CiCustomField>> CustomFieldsAsync(CiType? type, CancellationToken cancellationToken) =>
+        dbContext.CiCustomFields.Where(field => type == null || field.CiType == type)
             .OrderBy(field => field.SortOrder).ThenBy(field => field.Label)
             .ToListAsync(cancellationToken);
 
@@ -392,10 +471,22 @@ public sealed class CiImportService(
         && bound.All(entry => existing.CustomFieldValues
             .Any(value => value.FieldId == entry.Key && value.Value == entry.Value));
 
-    private static PlannedRow Failed(CiImportRowValues row, Guid? matchedId, IReadOnlyList<string> errors) =>
+    private static PlannedRow Failed(
+        CiImportRowValues row,
+        Guid? matchedId,
+        IReadOnlyList<string> errors,
+        CiImportTypeResolution resolution) =>
         new(
             new CiImportRowResult(
-                row.LineNumber, CiImportAction.Error, row.Name, row.AssetTag, row.SerialNumber, matchedId, errors),
+                row.LineNumber,
+                CiImportAction.Error,
+                row.Name,
+                row.AssetTag,
+                row.SerialNumber,
+                matchedId,
+                errors,
+                resolution.Type,
+                resolution.Source),
             null,
             null);
 

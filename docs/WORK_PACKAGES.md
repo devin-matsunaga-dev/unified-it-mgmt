@@ -185,6 +185,15 @@ Session lifecycle: open branch → new chat with protocol + steering files + WP 
 - **Verify:** import one file holding a laptop, a server, a switch and a VM → all four land as the right type with the right attributes; a row whose type cell is blank or unrecognised is refused by line number while the rest import; drop the type column → the dry run shows a guessed type per row and committing produces the same four CIs; a row whose identifier matches an existing CI of another type is still refused (WP-2.5's guard).
 - **Why it exists:** WP-2.5 fixes one CI type per file because the attribute list — and so the whole mapping form — is derived from the type. A real estate export is one sheet of everything, and splitting it by hand before every import is exactly the manual work the wizard exists to remove. Inference needs the dry run as its safety net because TPH type is permanent: there is no path from Hardware to Server, only delete and re-create, which the delete guard blocks the moment a ticket or relationship names the CI.
 
+### WP-2.11 — Assets UI polish
+- Frontend-only changes to the Phase 2 asset screens, listed below. **The scope is exactly this list and nothing else** — an idea that is not written here is not in this package. `docs/DESIGN.md` is binding for every one of them: no new visual style, no new component library, no new page. If an item turns out to need an API change, stop and ask rather than growing the package.
+- **Scope — to be listed before implementation starts:**
+  - _(1)_
+  - _(2)_
+  - _(3)_
+- **Verify:** each scope item above gets its own numbered check in the completion report, performed in the browser against `aspire run`; plus one failure-path check; plus a pass over `/assets`, the CI 360° page, the import wizard and `/scan` at 1280px confirming nothing else moved.
+- **Why it exists:** these are the screens the Phase 2 gate demos, and the gate is the last look at them before Phase 3 buries them under monitoring work. Polish that lands after the tag is polish nobody sees in the demo; polish folded into WP-2.10 would have made that package's commit untrue and its verification ambiguous.
+
 **🏁 Phase 2 gate:** asset lifecycle + linking demo end-to-end. Tag `v0.3-phase2`.
 
 ---

@@ -5,8 +5,21 @@ namespace Modules.Assets.Features.Import;
 /// <summary>
 /// A column the wizard can map a spreadsheet header onto. Attribute and custom-field keys carry a
 /// prefix so a user-defined field can never collide with the CI's own columns.
+///
+/// <paramref name="Types"/> is populated only for a mixed-type import, where one target can belong to
+/// several types and be required by some of them: a Hardware row and a Server row read different halves
+/// of the same mapping form. It is null for a single-type import, whose <paramref name="IsRequired"/>
+/// says everything there is to say.
 /// </summary>
-public sealed record CiImportTargetField(string Key, string Label, bool IsRequired, CiImportTargetKind Kind);
+public sealed record CiImportTargetField(
+    string Key,
+    string Label,
+    bool IsRequired,
+    CiImportTargetKind Kind,
+    IReadOnlyList<CiImportTargetType>? Types = null);
+
+/// <summary>One CI type that declares a target, and whether that type demands a value for it.</summary>
+public sealed record CiImportTargetType(CiType Type, bool IsRequired);
 
 public enum CiImportTargetKind
 {
@@ -21,15 +34,74 @@ public static class CiImportTargets
     public const string AssetTag = "assetTag";
     public const string SerialNumber = "serialNumber";
     public const string Description = "description";
+
+    /// <summary>Offered only by a mixed-type import: the column stating what each row is.</summary>
+    public const string Type = "type";
     public const string AttributePrefix = "attributes.";
     public const string CustomFieldPrefix = "customFields.";
 }
 
 /// <summary>
-/// What the operator chose in the wizard: one CI type for the whole file, plus which header feeds
-/// which target column. Mixed-type files are not supported — the attribute list depends on the type.
+/// What the operator chose in the wizard: which header feeds which target column, and either one CI
+/// type for the whole file or — when <paramref name="Type"/> is null — a mixed file whose rows each
+/// state or imply their own type (see <see cref="CiImportTypeResolver"/>).
+///
+/// <paramref name="AcceptInferredTypes"/> is the operator confirming the guesses the dry run showed
+/// them. A commit that would create CIs of a guessed type without it is refused, because a TPH type is
+/// permanent: the wrong guess is only undone by deleting the CI.
 /// </summary>
-public sealed record CiImportMapping(CiType Type, IReadOnlyDictionary<string, string> Columns);
+public sealed record CiImportMapping(
+    CiType? Type,
+    IReadOnlyDictionary<string, string> Columns,
+    bool AcceptInferredTypes = false);
+
+/// <summary>Where a row's CI type came from, so the dry run can mark the ones that were guessed.</summary>
+public enum CiImportTypeSource
+{
+    /// <summary>The operator chose one type for the whole file.</summary>
+    Fixed = 1,
+
+    /// <summary>The row's own type column stated it.</summary>
+    Column = 2,
+
+    /// <summary>Guessed from the attribute columns the row carries.</summary>
+    Inferred = 3,
+}
+
+/// <summary>What one row of a mixed-type file turned out to be, or why it could not be decided.</summary>
+public sealed record CiImportTypeResolution(CiType? Type, CiImportTypeSource Source, string? Error);
+
+/// <summary>
+/// The wire form of the type choice: a CI type name, or <see cref="Mixed"/> for a file whose rows carry
+/// their own. A CI type is a TPH discriminator, so "mixed" cannot be a member of the enum itself.
+/// </summary>
+public static class CiImportTypeSelection
+{
+    public const string Mixed = "Mixed";
+
+    public static bool TryParse(string? value, out CiType? type)
+    {
+        type = null;
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return false;
+        }
+
+        var trimmed = value.Trim();
+        if (string.Equals(trimmed, Mixed, StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        if (Enum.TryParse<CiType>(trimmed, ignoreCase: true, out var parsed) && Enum.IsDefined(parsed))
+        {
+            type = parsed;
+            return true;
+        }
+
+        return false;
+    }
+}
 
 public enum CiImportAction
 {
@@ -46,7 +118,9 @@ public sealed record CiImportRowResult(
     string? AssetTag,
     string? SerialNumber,
     Guid? MatchedCiId,
-    IReadOnlyList<string> Errors);
+    IReadOnlyList<string> Errors,
+    CiType? Type = null,
+    CiImportTypeSource? TypeSource = null);
 
 /// <summary>The dry run and the commit return the same shape, so the preview is literally what happened.</summary>
 public sealed record CiImportReport(

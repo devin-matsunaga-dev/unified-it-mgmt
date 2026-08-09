@@ -201,6 +201,188 @@ public sealed class CiImportApiIntegrationTests : IAsyncLifetime
             StringComparison.Ordinal);
     }
 
+    /// <summary>
+    /// WP-2.10's first verification step: one file holding a laptop, a server, a switch and a VM lands
+    /// as four CIs of four types, each carrying only its own attributes.
+    /// </summary>
+    [Fact]
+    public async Task Commit_MixedFileWithATypeColumn_LandsEachRowAsTheTypeItStates()
+    {
+        var marker = Guid.NewGuid().ToString("N")[..8];
+
+        var report = await CommitAsync(MixedCsv(marker, withTypeColumn: true), MixedMapping(withTypeColumn: true));
+
+        Assert.Equal(4, report.Created);
+        Assert.Equal(0, report.Failed);
+        Assert.All(report.Rows, row => Assert.Equal("Column", row.TypeSource));
+        var landed = await ByNameAsync(marker);
+        Assert.Equal("Hardware", landed[$"{marker}-laptop"].Type);
+        Assert.Equal("Dell", landed[$"{marker}-laptop"].Attributes["manufacturer"]);
+        Assert.Equal("Server", landed[$"{marker}-server"].Type);
+        Assert.Equal("Ubuntu 24.04", landed[$"{marker}-server"].Attributes["operatingSystem"]);
+        // The server row's own columns only: the laptop's Make column is not part of a Server CI.
+        Assert.DoesNotContain("manufacturer", landed[$"{marker}-server"].Attributes.Keys);
+        Assert.Equal("NetworkDevice", landed[$"{marker}-switch"].Type);
+        Assert.Equal("48", landed[$"{marker}-switch"].Attributes["portCount"]);
+        Assert.Equal("Virtual", landed[$"{marker}-vm"].Type);
+        Assert.Equal("VMware ESXi", landed[$"{marker}-vm"].Attributes["hypervisor"]);
+    }
+
+    /// <summary>
+    /// WP-2.10's second verification step: a blank and an unrecognised type cell are refused by line
+    /// number while every other row imports.
+    /// </summary>
+    [Fact]
+    public async Task Commit_MixedFileWithABlankOrUnknownTypeCell_RefusesThoseRowsByLineNumber()
+    {
+        var marker = Guid.NewGuid().ToString("N")[..8];
+        var csv = new StringBuilder(MixedHeader(withTypeColumn: true))
+            .Append(CultureInfo.InvariantCulture, $"{marker}-laptop,{marker}-AT-1,{marker}-SN-1,Hardware,Dell,Latitude 5550,,,,,,,,,\n")
+            .Append(CultureInfo.InvariantCulture, $"{marker}-blank,{marker}-AT-2,{marker}-SN-2,,Dell,Latitude 5550,,,,,,,,,\n")
+            .Append(CultureInfo.InvariantCulture, $"{marker}-unknown,{marker}-AT-3,{marker}-SN-3,Photocopier,Dell,Latitude 5550,,,,,,,,,\n")
+            .Append(CultureInfo.InvariantCulture, $"{marker}-switch,{marker}-AT-4,{marker}-SN-4,Network device,,,,,,,10.20.0.1,Cisco,48,,\n")
+            .ToString();
+
+        var report = await CommitAsync(csv, MixedMapping(withTypeColumn: true));
+
+        Assert.Equal(2, report.Created);
+        Assert.Equal(2, report.Failed);
+        var blank = Assert.Single(report.Rows, row => row.LineNumber == 3);
+        Assert.Contains("blank", Assert.Single(blank.Errors), StringComparison.Ordinal);
+        var unknown = Assert.Single(report.Rows, row => row.LineNumber == 4);
+        Assert.Contains("'Photocopier' is not a CI type", Assert.Single(unknown.Errors), StringComparison.Ordinal);
+        Assert.Equal(2, (await GetAsync<CiPageDto>($"/api/cis?search={marker}&pageSize=200")).Total);
+    }
+
+    /// <summary>
+    /// WP-2.10's third verification step: with the type column dropped, the dry run shows a guess per
+    /// row and committing produces the same four CIs.
+    /// </summary>
+    [Fact]
+    public async Task MixedFileWithoutATypeColumn_GuessesEachRowsTypeAndCommitsToTheSameFourCis()
+    {
+        var marker = Guid.NewGuid().ToString("N")[..8];
+        var csv = MixedCsv(marker, withTypeColumn: false);
+
+        var dryRun = await PreviewAsync(csv, MixedMapping(withTypeColumn: false));
+
+        Assert.Equal(4, dryRun.Created);
+        Assert.All(dryRun.Rows, row => Assert.Equal("Inferred", row.TypeSource));
+        Assert.Equal(
+            ["Hardware", "Server", "NetworkDevice", "Virtual"],
+            dryRun.Rows.OrderBy(row => row.LineNumber).Select(row => row.Type));
+
+        var report = await CommitAsync(csv, MixedMapping(withTypeColumn: false, acceptInferredTypes: true));
+
+        Assert.Equal(4, report.Created);
+        var landed = await ByNameAsync(marker);
+        Assert.Equal("Hardware", landed[$"{marker}-laptop"].Type);
+        Assert.Equal("Server", landed[$"{marker}-server"].Type);
+        Assert.Equal("NetworkDevice", landed[$"{marker}-switch"].Type);
+        Assert.Equal("Virtual", landed[$"{marker}-vm"].Type);
+    }
+
+    /// <summary>
+    /// A guessed type is permanent once written, so the commit is refused until the wizard confirms the
+    /// operator has read the dry run. The dry run itself never needs the confirmation.
+    /// </summary>
+    [Fact]
+    public async Task Commit_GuessedTypesWithoutTheOperatorsConfirmation_IsRefused()
+    {
+        var marker = Guid.NewGuid().ToString("N")[..8];
+        using var content = Multipart(MixedCsv(marker, withTypeColumn: false));
+        content.Add(
+            new StringContent(JsonSerializer.Serialize(MixedMapping(withTypeColumn: false))),
+            "mapping");
+        using var request = Authenticated(HttpMethod.Post, "/api/ci-imports/commit");
+        request.Content = content;
+
+        using var response = await _client!.SendAsync(request);
+        var problem = await response.Content.ReadAsStringAsync();
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Contains("whose CI type was guessed", problem, StringComparison.Ordinal);
+        Assert.Equal(0, (await GetAsync<CiPageDto>($"/api/cis?search={marker}&pageSize=200")).Total);
+    }
+
+    /// <summary>
+    /// A row that names a type nothing in the file distinguishes cannot be guessed, and is reported
+    /// rather than assigned one.
+    /// </summary>
+    [Fact]
+    public async Task Commit_RowWhoseTypeCannotBeGuessed_IsReportedAndTheRestImport()
+    {
+        var marker = Guid.NewGuid().ToString("N")[..8];
+        var csv = new StringBuilder(MixedHeader(withTypeColumn: false))
+            // Hostname and RAM belong to both Server and Virtual, so this row says neither.
+            .Append(CultureInfo.InvariantCulture, $"{marker}-ambiguous,{marker}-AT-1,{marker}-SN-1,,,box-01,,,32,,,,,\n")
+            .Append(CultureInfo.InvariantCulture, $"{marker}-laptop,{marker}-AT-2,{marker}-SN-2,Dell,Latitude 5550,,,,,,,,,\n")
+            .ToString();
+
+        var report = await CommitAsync(csv, MixedMapping(withTypeColumn: false, acceptInferredTypes: true));
+
+        Assert.Equal(1, report.Created);
+        var failed = Assert.Single(report.Rows, row => row.Action == "Error");
+        Assert.Equal(2, failed.LineNumber);
+        Assert.Null(failed.Type);
+        Assert.Contains("could not be guessed", Assert.Single(failed.Errors), StringComparison.Ordinal);
+    }
+
+    /// <summary>WP-2.5's guard, restated for a mixed file: a CI's type is permanent.</summary>
+    [Fact]
+    public async Task Commit_MixedRowMatchingACiOfAnotherType_IsStillRefused()
+    {
+        var marker = Guid.NewGuid().ToString("N")[..8];
+        await CommitAsync(LaptopCsv(marker, 1), HardwareMapping);
+        var asServer = new StringBuilder(MixedHeader(withTypeColumn: true))
+            .Append(CultureInfo.InvariantCulture, $"{marker}-laptop-1,{marker}-AT-1,{marker}-SN-1,Server,,,app-01,Ubuntu 24.04,8,32,,,,,\n")
+            .ToString();
+
+        var report = await CommitAsync(asServer, MixedMapping(withTypeColumn: true));
+
+        Assert.Equal(1, report.Failed);
+        Assert.Contains(
+            "already registered as a Hardware CI",
+            Assert.Single(Assert.Single(report.Rows).Errors),
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Columns_ForAMixedImport_OffersTheTypeColumnAndEveryTypesAttributes()
+    {
+        using var content = Multipart(MixedCsv("mixedcols", withTypeColumn: true));
+        content.Add(new StringContent("Mixed"), "type");
+        using var request = Authenticated(HttpMethod.Post, "/api/ci-imports/columns");
+        request.Content = content;
+
+        using var response = await _client!.SendAsync(request);
+        var body = Assert.IsType<ColumnsDto>(await response.Content.ReadFromJsonAsync<ColumnsDto>());
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Contains(body.Targets, target => target.Key == "type");
+        Assert.Contains(body.Targets, target => target.Key == "attributes.manufacturer");
+        Assert.Contains(body.Targets, target => target.Key == "attributes.hypervisor");
+        // Required-ness travels per type: no column of a mixed file is required of every row.
+        var hostname = Assert.Single(body.Targets, target => target.Key == "attributes.hostname");
+        Assert.False(hostname.IsRequired);
+        Assert.Equal(["Server", "Virtual"], hostname.Types!.Select(entry => entry.Type).Order());
+        Assert.Equal("Type", body.SuggestedMapping["type"]);
+    }
+
+    [Fact]
+    public async Task Columns_WithAnUnknownTypeSelection_ReturnsValidationProblem()
+    {
+        using var content = Multipart(LaptopCsv("badtype", 1));
+        content.Add(new StringContent("Photocopier"), "type");
+        using var request = Authenticated(HttpMethod.Post, "/api/ci-imports/columns");
+        request.Content = content;
+
+        using var response = await _client!.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Contains("'Mixed'", await response.Content.ReadAsStringAsync(), StringComparison.Ordinal);
+    }
+
     [Fact]
     public async Task Columns_ProposesAMappingForTheHeadersItRecognises()
     {
@@ -305,6 +487,75 @@ public sealed class CiImportApiIntegrationTests : IAsyncLifetime
         },
     };
 
+    /// <summary>
+    /// One sheet of everything, the file WP-2.10 exists for: a laptop, a server, a switch and a VM, each
+    /// filling only its own type's columns and leaving the rest blank.
+    /// </summary>
+    private static string MixedCsv(string marker, bool withTypeColumn)
+    {
+        var csv = new StringBuilder(MixedHeader(withTypeColumn));
+        var rows = new[]
+        {
+            ($"{marker}-laptop", "Hardware", "Dell,Latitude 5550,,,,,,,,,"),
+            ($"{marker}-server", "Server", ",,app-01,Ubuntu 24.04,8,32,,,,,"),
+            ($"{marker}-switch", "Network device", ",,,,,,10.20.0.1,Cisco,48,,"),
+            ($"{marker}-vm", "Virtual", ",,vm-01,,,16,,,,VMware ESXi,4"),
+        };
+        var line = 1;
+        foreach (var (name, type, attributes) in rows)
+        {
+            var typeCell = withTypeColumn ? $"{type}," : string.Empty;
+            csv.Append(CultureInfo.InvariantCulture, $"{name},{marker}-AT-{line},{marker}-SN-{line},{typeCell}{attributes}\n");
+            line++;
+        }
+
+        return csv.ToString();
+    }
+
+    private static string MixedHeader(bool withTypeColumn) =>
+        "Name,Asset tag,Serial,"
+        + (withTypeColumn ? "Type," : string.Empty)
+        + "Make,Model,Hostname,OS,CPU cores,RAM,Management IP,Vendor,Ports,Hypervisor,vCPU cores\n";
+
+    private static object MixedMapping(bool withTypeColumn, bool acceptInferredTypes = false)
+    {
+        var columns = new Dictionary<string, string>
+        {
+            ["name"] = "Name",
+            ["assetTag"] = "Asset tag",
+            ["serialNumber"] = "Serial",
+            ["attributes.manufacturer"] = "Make",
+            ["attributes.model"] = "Model",
+            ["attributes.hostname"] = "Hostname",
+            ["attributes.operatingSystem"] = "OS",
+            ["attributes.cpuCores"] = "CPU cores",
+            ["attributes.ramGb"] = "RAM",
+            ["attributes.managementIp"] = "Management IP",
+            ["attributes.vendor"] = "Vendor",
+            ["attributes.portCount"] = "Ports",
+            ["attributes.hypervisor"] = "Hypervisor",
+            ["attributes.vcpuCores"] = "vCPU cores",
+        };
+        if (withTypeColumn)
+        {
+            columns["type"] = "Type";
+        }
+
+        return new { type = "Mixed", columns, acceptInferredTypes };
+    }
+
+    private async Task<Dictionary<string, CiDto>> ByNameAsync(string marker)
+    {
+        var page = await GetAsync<CiPageDto>($"/api/cis?search={marker}&pageSize=200");
+        var byName = new Dictionary<string, CiDto>(StringComparer.Ordinal);
+        foreach (var item in page.Items)
+        {
+            byName[item.Name] = await GetAsync<CiDto>($"/api/cis/{item.Id}");
+        }
+
+        return byName;
+    }
+
     private static string LaptopCsv(string marker, int rows)
     {
         var csv = new StringBuilder("Name,Asset tag,Serial,Make,Model\n");
@@ -369,7 +620,9 @@ public sealed class CiImportApiIntegrationTests : IAsyncLifetime
         string? AssetTag,
         string? SerialNumber,
         Guid? MatchedCiId,
-        List<string> Errors);
+        List<string> Errors,
+        string? Type,
+        string? TypeSource);
 
     private sealed record ColumnsDto(
         string FileName,
@@ -379,7 +632,14 @@ public sealed class CiImportApiIntegrationTests : IAsyncLifetime
         List<TargetDto> Targets,
         Dictionary<string, string> SuggestedMapping);
 
-    private sealed record TargetDto(string Key, string Label, bool IsRequired, string Kind);
+    private sealed record TargetDto(
+        string Key,
+        string Label,
+        bool IsRequired,
+        string Kind,
+        List<TargetTypeDto>? Types);
+
+    private sealed record TargetTypeDto(string Type, bool IsRequired);
 
     private sealed record CiDto(
         Guid Id,

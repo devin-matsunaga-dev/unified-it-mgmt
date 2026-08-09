@@ -195,8 +195,18 @@ export type UpdateCiInput = Omit<CreateCiInput, 'type'> & { isActive: boolean }
 
 export type CiImportTargetKind = 'Core' | 'Attribute' | 'CustomField'
 
-/** A column an import can fill. Attribute and custom-field keys are prefixed so they cannot collide. */
-export type CiImportTarget = { key: string; label: string; isRequired: boolean; kind: CiImportTargetKind }
+/**
+ * A column an import can fill. Attribute and custom-field keys are prefixed so they cannot collide.
+ * `types` is sent only by a mixed-type import, where one column belongs to several CI types and is
+ * required by only some of them.
+ */
+export type CiImportTarget = {
+  key: string
+  label: string
+  isRequired: boolean
+  kind: CiImportTargetKind
+  types?: { type: CiType; isRequired: boolean }[] | null
+}
 
 export type CiImportColumns = {
   fileName: string
@@ -210,6 +220,9 @@ export type CiImportColumns = {
 
 export type CiImportAction = 'Create' | 'Update' | 'Skip' | 'Error'
 
+/** Where a row's CI type came from. `Inferred` is a guess the operator has to see before committing. */
+export type CiImportTypeSource = 'Fixed' | 'Column' | 'Inferred'
+
 export type CiImportRowResult = {
   lineNumber: number
   action: CiImportAction
@@ -218,6 +231,8 @@ export type CiImportRowResult = {
   serialNumber: string | null
   matchedCiId: string | null
   errors: string[]
+  type?: CiType | null
+  typeSource?: CiImportTypeSource | null
 }
 
 export type CiImportReport = {
@@ -230,8 +245,18 @@ export type CiImportReport = {
   rows: CiImportRowResult[]
 }
 
-/** One CI type for the whole file, plus targetKey → header for each mapped column. */
-export type CiImportMapping = { type: CiType; columns: Record<string, string> }
+/** A file is one CI type, or 'Mixed' — every row then states or implies its own. */
+export type CiImportType = CiType | 'Mixed'
+
+/**
+ * The chosen type plus targetKey → header for each mapped column. `acceptInferredTypes` is the
+ * operator confirming the guesses the dry run showed; the server refuses a commit without it.
+ */
+export type CiImportMapping = {
+  type: CiImportType
+  columns: Record<string, string>
+  acceptInferredTypes?: boolean
+}
 
 /** Stock label formats. Standard is 3 × 7 on A4, Small is 4 × 12; a single label prints on its own page. */
 export type CiLabelSize = 'Standard' | 'Small'
@@ -313,7 +338,7 @@ export const assetsApi = {
   listTypeSchemas: () => apiRequest<CiTypeSchema[]>('/api/ci-type-schemas'),
   // Each step re-sends the file the browser already holds, so a half-mapped import is never parked
   // on the server between steps.
-  inspectImport: (file: File, type: CiType) =>
+  inspectImport: (file: File, type: CiImportType) =>
     apiUpload<CiImportColumns>('/api/ci-imports/columns', formData(file, ['type', type])),
   previewImport: (file: File, mapping: CiImportMapping) =>
     apiUpload<CiImportReport>('/api/ci-imports/preview', formData(file, ['mapping', JSON.stringify(mapping)])),

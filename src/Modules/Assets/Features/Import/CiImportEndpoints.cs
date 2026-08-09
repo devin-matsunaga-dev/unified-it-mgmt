@@ -27,17 +27,17 @@ public static class CiImportEndpoints
             .DisableAntiforgery();
 
         group.MapPost("/columns", async (
-            IFormFile file, [FromForm] CiType type, ICiImportService service, CancellationToken cancellationToken) =>
+            IFormFile file, [FromForm] string? type, ICiImportService service, CancellationToken cancellationToken) =>
         {
-            if (!Enum.IsDefined(type))
+            if (!CiImportTypeSelection.TryParse(type, out var selected))
             {
                 return Results.ValidationProblem(new Dictionary<string, string[]>
                 {
-                    ["type"] = ["Choose a CI type for the import."],
+                    ["type"] = [$"Choose a CI type for the import, or '{CiImportTypeSelection.Mixed}' to read it from a column."],
                 });
             }
 
-            var result = await service.InspectAsync(file, type, cancellationToken);
+            var result = await service.InspectAsync(file, selected, cancellationToken);
             return result.Outcome switch
             {
                 CiImportOutcome.Success => Results.Ok(result.Columns),
@@ -75,13 +75,10 @@ public static class CiImportEndpoints
     private static bool TryReadMapping(string mapping, out CiImportMapping parsed, out IResult problem)
     {
         parsed = new(default, new Dictionary<string, string>());
+        MappingPayload? payload;
         try
         {
-            var payload = JsonSerializer.Deserialize<MappingPayload>(mapping, MappingSerializerOptions);
-            if (payload is not null)
-            {
-                parsed = new(payload.Type, payload.Columns ?? []);
-            }
+            payload = JsonSerializer.Deserialize<MappingPayload>(mapping, MappingSerializerOptions);
         }
         catch (JsonException)
         {
@@ -90,6 +87,21 @@ public static class CiImportEndpoints
                 ["mapping"] = ["The column mapping could not be read."],
             });
             return false;
+        }
+
+        if (payload is not null)
+        {
+            if (!CiImportTypeSelection.TryParse(payload.Type, out var selected))
+            {
+                problem = Results.ValidationProblem(new Dictionary<string, string[]>
+                {
+                    ["mapping.type"] =
+                        [$"Choose a CI type for the import, or '{CiImportTypeSelection.Mixed}' to read it from a column."],
+                });
+                return false;
+            }
+
+            parsed = new(selected, payload.Columns ?? [], payload.AcceptInferredTypes ?? false);
         }
 
         var validation = new CiImportMappingValidator().Validate(parsed);
@@ -117,13 +129,15 @@ public static class CiImportEndpoints
         detail: error);
 
     /// <summary>The wire shape, whose members may be absent, kept apart from the validated mapping.</summary>
-    private sealed record MappingPayload(CiType Type, Dictionary<string, string>? Columns);
+    private sealed record MappingPayload(string? Type, Dictionary<string, string>? Columns, bool? AcceptInferredTypes);
 
     private sealed class CiImportMappingValidator : AbstractValidator<CiImportMapping>
     {
         public CiImportMappingValidator()
         {
-            RuleFor(mapping => mapping.Type).IsInEnum();
+            // A null type is the mixed-type import; anything else was already checked when it was parsed.
+            RuleFor(mapping => mapping.Type).Must(type => type is null || Enum.IsDefined(type.Value))
+                .WithMessage("Choose a CI type for the import.");
             RuleFor(mapping => mapping.Columns).NotEmpty()
                 .WithMessage("Map at least one column before importing.");
             RuleFor(mapping => mapping.Columns).Must(columns => columns.Count <= 100)
