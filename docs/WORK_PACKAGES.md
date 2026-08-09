@@ -327,6 +327,7 @@ Session lifecycle: open branch → new chat with protocol + steering files + WP 
 ### WP-6.2 — Reverse proxy + TLS
 - Caddy/Nginx front: internal-CA wildcard cert, TLS termination, HTTP→HTTPS redirect, security headers, WebSocket/SignalR pass-through; services only on internal Docker network.
 - **Verify:** valid padlock on corporate browsers; direct container port access from LAN refused; SignalR live updates work through the proxy.
+- **Also re-run WP-2.7's deferred check here:** scan a printed QR label with a phone and complete the sign-in that follows. It could not be done in WP-2.7 because PKCE needs `crypto.subtle`, which browsers expose only in a secure context, so the sign-in button throws before it navigates on a plain-HTTP LAN address. TLS is what unblocks it; it is the last unproven claim in Phase 2.
 
 ### WP-6.3 — Entra ID cutover **[SENSITIVE]**
 - Swap OIDC to Entra ID (or Keycloak-federated-AD): app registration, AD groups → roles mapping, session 8-12h + silent refresh; document rollback to Keycloak.

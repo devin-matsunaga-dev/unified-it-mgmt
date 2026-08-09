@@ -1,5 +1,5 @@
 import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query'
-import { ArrowLeft, Pencil, ShieldCheck, SlidersHorizontal, Ticket } from 'lucide-react'
+import { ArrowLeft, Pencil, QrCode, ShieldCheck, SlidersHorizontal, Ticket } from 'lucide-react'
 import { useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { toast } from 'sonner'
@@ -10,6 +10,7 @@ import { Button } from '../../components/ui/Button'
 import { PriorityPill, StatusPill, formatLocal } from '../tickets/ticketUi'
 import { CiCoverageDialog } from './CiCoverageDialog'
 import { CiFormDialog, type CiFormSubmit } from './CiFormDialog'
+import { CiLabelDialog } from './CiLabelDialog'
 import { CiLifecycleDrawer } from './CiLifecycleDrawer'
 import { CiRelationsGraph } from './CiRelationsGraph'
 import { ciLifecycleLabel, ciLifecycleTone, describeAssignment } from './lifecycle'
@@ -21,6 +22,7 @@ export function CiDetailPage() {
   const [editing, setEditing] = useState(false)
   const [lifecycleOpen, setLifecycleOpen] = useState(false)
   const [coverageOpen, setCoverageOpen] = useState(false)
+  const [labelOpen, setLabelOpen] = useState(false)
 
   const ci = useQuery({ queryKey: ['cis', id], queryFn: () => assetsApi.getCi(id), enabled: Boolean(id) })
   const schemas = useQuery({ queryKey: ['ci-type-schemas'], queryFn: assetsApi.listTypeSchemas, staleTime: 0, refetchOnMount: 'always' })
@@ -66,6 +68,7 @@ export function CiDetailPage() {
       </div>
       <div className="flex gap-2 xl:ml-auto">
         <Button variant="secondary" onClick={() => setEditing(true)}><Pencil size={16} />Edit</Button>
+        <Button variant="secondary" onClick={() => setLabelOpen(true)}><QrCode size={16} />Label</Button>
         <Button variant="secondary" onClick={() => setLifecycleOpen(true)}><SlidersHorizontal size={16} />Lifecycle</Button>
       </div>
     </header>
@@ -194,6 +197,8 @@ export function CiDetailPage() {
     <CiLifecycleDrawer ci={lifecycleOpen ? item : null} states={lifecycleStates.data ?? []} onClose={() => setLifecycleOpen(false)} />
 
     <CiCoverageDialog ci={coverageOpen ? item : null} onClose={() => setCoverageOpen(false)} />
+
+    <CiLabelDialog selection={labelOpen ? [item] : []} onClose={() => setLabelOpen(false)} />
   </div>
 }
 

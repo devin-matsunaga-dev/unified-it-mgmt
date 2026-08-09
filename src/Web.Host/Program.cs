@@ -6,6 +6,7 @@ using Modules.Assets.Features.BulkEdit;
 using Modules.Assets.Features.Cis;
 using Modules.Assets.Features.Contracts;
 using Modules.Assets.Features.Import;
+using Modules.Assets.Features.Labels;
 using Modules.Assets.Features.Lifecycle;
 using Modules.Assets.Features.Relationships;
 using Modules.Helpdesk;
@@ -84,6 +85,7 @@ app.MapCiRelationshipEndpoints();
 app.MapCiImportEndpoints();
 app.MapCiBulkEditEndpoints();
 app.MapContractEndpoints();
+app.MapCiLabelEndpoints();
 
 app.Run();
 

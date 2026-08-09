@@ -44,6 +44,33 @@ export async function apiUpload<T>(path: string, body: FormData): Promise<T> {
   return read<T>(response)
 }
 
+/** A generated file plus the name the server gave it. */
+export type DownloadedFile = { blob: Blob; fileName: string }
+
+/**
+ * Binary responses: a PDF cannot go through apiRequest, which parses every body as JSON, but a failed
+ * download still answers with an RFC 7807 problem that has to surface as an ApiError like any other.
+ */
+export async function apiDownload(path: string, init?: RequestInit): Promise<DownloadedFile> {
+  const user = await userManager.getUser()
+  if (!user || user.expired) {
+    throw new ApiError(401, 'Your session has expired. Please sign in again.')
+  }
+
+  const response = await fetch(`${apiBaseUrl}${path}`, {
+    ...init,
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${user.access_token}`, ...init?.headers },
+  })
+  if (!response.ok) {
+    await read<unknown>(response)
+  }
+  return { blob: await response.blob(), fileName: fileNameFrom(response.headers.get('Content-Disposition')) }
+}
+
+function fileNameFrom(disposition: string | null) {
+  return /filename\*?=(?:UTF-8'')?"?([^";]+)"?/i.exec(disposition ?? '')?.[1] ?? 'download.pdf'
+}
+
 async function read<T>(response: Response): Promise<T> {
   if (!response.ok) {
     const problem = await response.json().catch(() => null) as

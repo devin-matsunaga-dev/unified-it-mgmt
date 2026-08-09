@@ -5,10 +5,9 @@
 ## Current position
 
 - **Phase:** 2 — Assets/CMDB
-- **Last completed WP:** WP-2.6 (Contracts, warranty, vendors)
-- **Current WP:** WP-2.7 (Barcode/QR)
-- **Current branch:** feat/wp-2.7-barcode-qr
-- **Next WP once WP-2.7 verifies:** WP-2.8 (Seeder: infrastructure), branch `feat/wp-2.8-seeder-infrastructure`
+- **Last completed WP:** WP-2.7 (Barcode/QR) — accepted with one check deferred to WP-6.2; see In flight
+- **Current WP:** WP-2.8 (Seeder: infrastructure)
+- **Current branch:** feat/wp-2.8-seeder-infrastructure
 - **Last tag:** `v.0.2-phase1` (Phase 1 gate; note the stray dot — Phase 0 was tagged `v0.1-phase0`)
 
 ## Platform versions (law — see WORKFLOW.md table for EOL dates)
@@ -18,6 +17,38 @@
 ## In flight / carry-over notes
 
 <!-- Anything unfinished, known-broken, or deferred from the last session that the next session must know. Keep to a few lines; delete when resolved. -->
+
+- **⏳ WP-2.7 owes one check to WP-6.2: signing in on a phone.** A printed label was scanned with a real phone and resolved to the correct asset URL, and label generation, batch sheets, code lookup (asset tag / serial / label URL / unknown) and the 401 and 404 failure paths were all confirmed against the running stack. What could **not** be completed is the sign-in that follows: `oidc-client-ts` always uses PKCE for `response_type: 'code'`, PKCE needs `crypto.subtle`, and browsers expose it only in a secure context — HTTPS or `localhost`. On `http://<lan-ip>:5173` the sign-in button throws before it navigates and looks dead. **This is a platform rule, not a bug, and no configuration fixes it.** When WP-6.2 (Proxy + TLS) lands, re-run the phone scan end to end; that is the last unproven claim in Phase 2.
+
+- **Three real defects in WP-2.7's LAN plumbing were found by verification and fixed (2026-08-08).** All three had shipped looking correct: (1) the pinned ports bound to loopback only, because pinning a port does not make it reachable — Aspire's DCP proxies to `localhost` unless `EndpointAnnotation.TargetHost` says otherwise, so the LAN address was refused; (2) `public-host` is now read from `builder.Configuration["Parameters:public-host"]`, because `AddParameter(name, value)` takes a *given* value; (3) the realm's `${PUBLIC_HOST}` placeholder never substituted anything — see the next note.
+
+- **Keycloak's realm import does not resolve placeholders from the environment, so AppHost renders the realm itself.** Probed directly against Keycloak 26.3: `${PUBLIC_HOST}` stays literal and fails the import with "A redirect URI is not a valid URI", while `${PUBLIC_HOST:localhost}` and `${env.PUBLIC_HOST:localhost}` both silently collapse to their default — whether the value arrives as a container environment variable or a `-D` system property. AppHost now substitutes `${PUBLIC_HOST}` into `src/AppHost/obj/keycloak/it-platform-realm.json` and bind-mounts that; the template keeps the bare token. Confirmed by importing a rendered copy into a throwaway Keycloak and reading the client back. **Do not reintroduce a `:default` placeholder** — it fails silently and looks configured.
+
+- **Reaching the stack from a phone needs two things outside this repo, both on the Windows host.** WSL must be in mirrored mode (already set in `C:\Users\localadmin\.wslconfig`), and WSL's Hyper-V firewall blocks all inbound by default — `Get-NetFirewallHyperVVMSetting` shows `DefaultInboundAction: Block`, which drops LAN packets silently. A targeted rule opens only what is needed: `New-NetFirewallHyperVRule -Name "WSL-it-platform-lan" -Direction Inbound -VMCreatorId '{40E0AC32-46A5-438A-A0B2-2B479E8F2E90}' -Protocol TCP -LocalPorts 5000,5173,8080 -Action Allow` (elevated). Remove it when not verifying — it exposes the Keycloak admin console and the API to the LAN.
+
+- **During a LAN run the *desktop* browser cannot reach the stack at all.** Windows reaching its own mirrored WSL IP is treated as loopback and needs `hostAddressLoopback=true` under an `[experimental]` section in `.wslconfig` plus `wsl --shutdown`. Until that is set, a LAN run is phone-only: the desktop cannot even load `/assets`, so PDFs have to be fetched another way (this session pulled them to the Windows desktop with `curl` from WSL). A plain `aspire run` on `localhost` is unaffected.
+
+- **Reaching the stack from another device is now one parameter: `env 'Parameters__public-host=<lan-ip>' aspire run`.** It must be `env` (or `dotnet user-secrets set "Parameters:public-host"`) — the hyphen makes it an illegal shell identifier, so a bare `Parameters__public-host=… aspire run` prefix is refused by bash before Aspire ever sees it. It feeds the Keycloak authority, the API base URL, the CORS origin, the label base URL and the realm's redirect URI together, because Keycloak stamps its token issuer from the host it was called on and the API demands an exact match — mixing `localhost` and the LAN address anywhere in that chain gives `invalid_token`. Default is `localhost`, which is exactly the previous behaviour.
+
+- **Aspire ports are now pinned** — Keycloak 8080, API 5000, SPA 5173 — because the values above have to be predictable before the run starts. This replaces dynamic allocation, so the `ss -lntp | grep Web.Host` dance in the API-token recipe is no longer needed, and a port clash now fails the run instead of being routed around.
+
+- **The realm import only runs against an empty Keycloak volume.** The redirect-URI change is therefore invisible on an existing database: `docker volume rm it-platform-keycloak-data` (with the stack down) before the first LAN run, or add the URI by hand in the admin console.
+
+- **The printed QR carries an absolute URL, so it is only as good as `Assets:Labels:PublicBaseUrl`.** AppHost now sets it from `public-host`; it otherwise defaults to `http://localhost:5173`, falling back to `WebClient:Origin` when blank. A sticker outlives the config, so a label printed against the wrong base URL is wrong until it is reprinted — set `public-host` before printing anything real.
+
+- WSL2 here runs in NAT mode (`.wslconfig` has no `networkingMode`), so the LAN cannot reach WSL at all until `networkingMode=mirrored` is set and `wsl --shutdown` run. Without it the `public-host` parameter is correct but unreachable.
+
+- `/scan` is inside the authenticated agent shell, so a phone has to complete a Keycloak sign-in once before a scan resolves. The redirect after login lands on the scanned asset.
+
+- The scan box takes a typed or wedge-scanned code — there is **no in-browser camera scanner**, because `getUserMedia` needs a secure context and a LAN address over plain HTTP is not one. The phone's own camera app is the camera scanner; this page is for handheld scanners and codes read by eye.
+
+- Label printing writes nothing and is **not audited**, unlike every other CI surface. If "who printed what, when" is ever wanted it needs its own table — the audit log will not have it retroactively.
+
+- QuestPDF is used under its **Community licence** (free below $1M revenue) and is the second file-format dependency after ClosedXML. `QuestPDF.Settings.License` is set in `CiLabelDocument`'s static constructor; nothing else in the solution may render PDFs without doing the same.
+
+- A batch sheet is capped at 200 labels and refuses the whole sheet (404) if any selected CI has since been deleted. The list page's selection is per-page, so "print labels" only ever covers what is on screen — the same WP-2.5 rule bulk edit follows.
+
+- Label layout is fixed in code (`LabelSpec`): Standard 63.5 × 33.9 mm three-up, Small 45.7 × 21.2 mm four-up, both on A4 at 100% scale. There is no custom-size or custom-content option, and "fit to page" printing will misalign both against label stock.
 
 - WP-2.6's 21 integration tests and 19 unit tests pass against a real Postgres (Testcontainers); the manual checklist has **not** been walked yet.
 
@@ -141,7 +172,7 @@
 - [x] WP-2.4 Ticket↔asset + 360 pages (2026-08-07) — branch was `feat/wp-2.4-ticket-asset-linking-360-pages`, not the name previously recorded here; added `Platform/Integration` read ports and a People list + nav item, neither of which the WP text called for but the module boundary and hand-verification required
 - [x] WP-2.5 Import + bulk edit (2026-08-08) — branch was `feat/wp-2.5-import-wizard-bulk-edit`, not the name previously recorded here; added ClosedXML (the first file-format dependency, `.xlsx` only) after asking, and `apiUpload`/`ApiError.errors` in the web client, neither of which the WP text called for but multipart upload and field-level mapping errors required
 - [x] WP-2.6 Contracts/warranty (2026-08-08) — added a `/api/cis/{id}/coverage` endpoint rather than extending the CI payload, and a manual `POST /api/contract-notifications/runs` trigger, neither of which the WP text called for but the WP-2.5 importer and the resetting dev database respectively required
-- [ ] WP-2.7 Barcode/QR
+- [x] WP-2.7 Barcode/QR (2026-08-08) — **accepted with the phone sign-in leg deferred to WP-6.2; everything else verified on real hardware.** Added QRCoder and QuestPDF after asking, plus `apiDownload` in the web client, a "Scan" nav item, and a `public-host` AppHost parameter with pinned ports and a rendered realm redirect URI — none of which the WP text called for, but QR encoding, PDF layout, authorized binary downloads, a reachable `/scan` and a phone-reachable login respectively required. Verification found and fixed three defects in that LAN plumbing (endpoint bind address, parameter source, realm substitution) — see In flight
 - [ ] WP-2.8 Seeder: infrastructure
 - [ ] WP-2.9 Relationship editor (UI) — added 2026-08-07; no WP owned the write surface, and Phase 4 discovery never covers logical edges
 - [ ] WP-2.10 Mixed-type import — added 2026-08-08; WP-2.5 deliberately fixed one CI type per file, but a real estate export is one sheet of everything

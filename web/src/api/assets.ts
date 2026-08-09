@@ -1,4 +1,4 @@
-import { apiRequest, apiUpload } from './client'
+import { apiDownload, apiRequest, apiUpload } from './client'
 
 export type CiType = 'Hardware' | 'Server' | 'NetworkDevice' | 'Software' | 'Virtual' | 'Logical'
 export type CiAttributeKind = 'Text' | 'Integer' | 'IpAddress'
@@ -233,7 +233,15 @@ export type CiImportReport = {
 /** One CI type for the whole file, plus targetKey → header for each mapped column. */
 export type CiImportMapping = { type: CiType; columns: Record<string, string> }
 
-export type CiOwnershipChange = { ownerUserId: string | null; departmentId: string | null; siteId: string | null }
+/** Stock label formats. Standard is 3 × 7 on A4, Small is 4 × 12; a single label prints on its own page. */
+export type CiLabelSize = 'Standard' | 'Small'
+
+export const ciLabelSizes: { value: CiLabelSize; label: string; hint: string }[] = [
+  { value: 'Standard', label: 'Standard', hint: '63.5 × 33.9 mm — 3 × 7 per A4 sheet' },
+  { value: 'Small', label: 'Small', hint: '45.7 × 21.2 mm — 4 × 12 per A4 sheet' },
+]
+
+export type CiOwnershipChange ={ ownerUserId: string | null; departmentId: string | null; siteId: string | null }
 
 export type BulkEditCisInput = {
   ciIds: string[]
@@ -311,6 +319,12 @@ export const assetsApi = {
     apiUpload<CiImportReport>('/api/ci-imports/preview', formData(file, ['mapping', JSON.stringify(mapping)])),
   commitImport: (file: File, mapping: CiImportMapping) =>
     apiUpload<CiImportReport>('/api/ci-imports/commit', formData(file, ['mapping', JSON.stringify(mapping)])),
+  // Labels come back as PDFs, so they go through apiDownload rather than the JSON client.
+  getCiLabel: (id: string, size: CiLabelSize) => apiDownload(`/api/cis/${id}/label?size=${size}`),
+  getCiLabelSheet: (ciIds: string[], size: CiLabelSize) =>
+    apiDownload('/api/ci-labels/sheets', { method: 'POST', body: JSON.stringify({ ciIds, size }) }),
+  // The scan page's one call: a label URL, a bare id, an asset tag, or a serial number in; the CI out.
+  lookupCi: (code: string) => apiRequest<Ci>(`/api/cis/lookup?code=${encodeURIComponent(code)}`),
   bulkEditCis: (input: BulkEditCisInput) =>
     apiRequest<BulkEditReport>('/api/cis/bulk-edit', { method: 'POST', body: JSON.stringify(input) }),
   createCustomField: (input: { ciType: CiType; key: string; label: string; type: CiCustomFieldType; isRequired: boolean; options?: string[]; sortOrder?: number }) =>

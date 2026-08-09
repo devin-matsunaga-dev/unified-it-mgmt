@@ -7,6 +7,7 @@ import { ForbiddenPage } from './pages/ForbiddenPage'
 import { CiDetailPage } from './features/assets/CiDetailPage'
 import { CiImportWizard } from './features/assets/CiImportWizard'
 import { CiListPage } from './features/assets/CiListPage'
+import { ScanPage } from './features/assets/ScanPage'
 import { ContractDetailPage } from './features/contracts/ContractDetailPage'
 import { ContractListPage } from './features/contracts/ContractListPage'
 import { VendorListPage } from './features/contracts/VendorListPage'
@@ -39,6 +40,7 @@ export function App() {
       <Route path="assets" element={<ProtectedRoute roles={['Admin', 'Technician', 'Manager']}><CiListPage /></ProtectedRoute>} />
       <Route path="assets/import" element={<ProtectedRoute roles={['Admin', 'Technician', 'Manager']}><CiImportWizard /></ProtectedRoute>} />
       <Route path="assets/:id" element={<ProtectedRoute roles={['Admin', 'Technician', 'Manager']}><CiDetailPage /></ProtectedRoute>} />
+      <Route path="scan" element={<ProtectedRoute roles={['Admin', 'Technician', 'Manager']}><ScanPage /></ProtectedRoute>} />
       <Route path="contracts" element={<ProtectedRoute roles={['Admin', 'Technician', 'Manager']}><ContractListPage /></ProtectedRoute>} />
       <Route path="contracts/vendors" element={<ProtectedRoute roles={['Admin', 'Technician', 'Manager']}><VendorListPage /></ProtectedRoute>} />
       <Route path="contracts/:id" element={<ProtectedRoute roles={['Admin', 'Technician', 'Manager']}><ContractDetailPage /></ProtectedRoute>} />

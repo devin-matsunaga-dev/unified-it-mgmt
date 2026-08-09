@@ -1,5 +1,5 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { ChevronLeft, ChevronRight, Layers, Pencil, Plus, Search, Server, SlidersHorizontal, Upload } from 'lucide-react'
+import { ChevronLeft, ChevronRight, Layers, Pencil, Plus, QrCode, Search, Server, SlidersHorizontal, Upload } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { toast } from 'sonner'
@@ -9,6 +9,7 @@ import { directoryApi } from '../../api/directory'
 import { Button } from '../../components/ui/Button'
 import { CiBulkEditDialog } from './CiBulkEditDialog'
 import { CiFormDialog, type CiFormSubmit } from './CiFormDialog'
+import { CiLabelDialog } from './CiLabelDialog'
 import { CiLifecycleDrawer } from './CiLifecycleDrawer'
 import { ciLifecycleLabel, ciLifecycleStates, ciLifecycleTone } from './lifecycle'
 
@@ -22,6 +23,7 @@ export function CiListPage() {
   const [peeking, setPeeking] = useState<Ci | null>(null)
   const [selectedIds, setSelectedIds] = useState<string[]>([])
   const [bulkOpen, setBulkOpen] = useState(false)
+  const [labelsOpen, setLabelsOpen] = useState(false)
 
   // Search runs on the server, so keystrokes are debounced into the query filter.
   useEffect(() => {
@@ -81,6 +83,7 @@ export function CiListPage() {
       {selection.length > 0 && <div className="flex flex-wrap items-center gap-3 border-b border-slate-200 bg-blue-50 px-4 py-3 text-[13px] dark:border-slate-800 dark:bg-blue-500/10">
         <span className="font-medium text-blue-700 dark:text-blue-400">{selection.length} selected</span>
         <Button variant="secondary" className="h-8 px-3 text-[13px]" onClick={() => setBulkOpen(true)}><Layers size={15} />Bulk edit</Button>
+        <Button variant="secondary" className="h-8 px-3 text-[13px]" onClick={() => setLabelsOpen(true)}><QrCode size={15} />Print labels</Button>
         <Button variant="ghost" className="h-8 px-3 text-[13px]" onClick={() => setSelectedIds([])}>Clear selection</Button>
       </div>}
 
@@ -160,6 +163,8 @@ export function CiListPage() {
 
     <CiBulkEditDialog selection={bulkOpen ? selection : []} onClose={() => setBulkOpen(false)}
       onApplied={() => { setBulkOpen(false); setSelectedIds([]) }} />
+
+    <CiLabelDialog selection={labelsOpen ? selection : []} onClose={() => setLabelsOpen(false)} />
   </div>
 }
 

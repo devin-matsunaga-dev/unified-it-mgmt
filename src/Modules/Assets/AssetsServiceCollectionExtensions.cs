@@ -6,6 +6,7 @@ using Modules.Assets.Features.BulkEdit;
 using Modules.Assets.Features.Cis;
 using Modules.Assets.Features.Contracts;
 using Modules.Assets.Features.Import;
+using Modules.Assets.Features.Labels;
 using Modules.Assets.Features.Lifecycle;
 using Modules.Assets.Features.Relationships;
 using Platform.Integration;
@@ -31,6 +32,7 @@ public static class AssetsServiceCollectionExtensions
         services.AddScoped<ICiRelationshipService, CiRelationshipService>();
         services.AddScoped<ICiImportService, CiImportService>();
         services.AddScoped<ICiBulkEditService, CiBulkEditService>();
+        services.AddScoped<ICiLabelService, CiLabelService>();
         services.AddScoped<IVendorService, VendorService>();
         services.AddScoped<IContractService, ContractService>();
         services.AddScoped<IContractExpiryService, ContractExpiryService>();
