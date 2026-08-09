@@ -19,6 +19,11 @@ using Modules.Helpdesk.Features.Categories;
 using Modules.Helpdesk.Features.Views;
 using Modules.Helpdesk.Features.Interactions;
 using Modules.Helpdesk.Features.Sla;
+using Modules.Monitoring;
+using Modules.Monitoring.Data;
+using Modules.Monitoring.Features.Devices;
+using Modules.Monitoring.Features.MaintenanceWindows;
+using Modules.Monitoring.Features.PollerConfig;
 using Platform;
 using Platform.Auditing;
 using Platform.Data;
@@ -42,6 +47,7 @@ builder.Services.AddPlatformAuthentication(builder.Configuration);
 builder.Services.AddPlatformServices(builder.Configuration);
 builder.Services.AddHelpdeskServices(builder.Configuration);
 builder.Services.AddAssetsServices(builder.Configuration);
+builder.Services.AddMonitoringServices(builder.Configuration);
 builder.Services.AddHealthChecks()
     .AddTypeActivatedCheck<DependencyEndpointHealthCheck>(
         "keycloak",
@@ -58,6 +64,7 @@ if (app.Configuration.GetValue("Platform:ApplyMigrations", true))
     await scope.ServiceProvider.GetRequiredService<PlatformDbContext>().Database.MigrateAsync();
     await scope.ServiceProvider.GetRequiredService<HelpdeskDbContext>().Database.MigrateAsync();
     await scope.ServiceProvider.GetRequiredService<AssetsDbContext>().Database.MigrateAsync();
+    await scope.ServiceProvider.GetRequiredService<MonitoringDbContext>().Database.MigrateAsync();
 }
 
 app.UseMiddleware<CorrelationIdMiddleware>();
@@ -86,6 +93,9 @@ app.MapCiImportEndpoints();
 app.MapCiBulkEditEndpoints();
 app.MapContractEndpoints();
 app.MapCiLabelEndpoints();
+app.MapMonitoredDeviceEndpoints();
+app.MapMaintenanceWindowEndpoints();
+app.MapPollerEndpoints();
 
 app.Run();
 

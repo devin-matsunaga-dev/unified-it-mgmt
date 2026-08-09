@@ -46,6 +46,12 @@ public static class AuthenticationServiceCollectionExtensions
             .AddPolicy(AuthorizationPolicies.CanManageAssets, policy => policy.RequireRole(
                 PlatformRoles.Admin,
                 PlatformRoles.Technician,
+                PlatformRoles.Manager))
+            // Same agent-only shape as the CMDB. Additive: it exists so the monitoring surface can
+            // diverge from Assets later without editing a policy two modules already depend on.
+            .AddPolicy(AuthorizationPolicies.CanManageMonitoring, policy => policy.RequireRole(
+                PlatformRoles.Admin,
+                PlatformRoles.Technician,
                 PlatformRoles.Manager));
 
         return services;

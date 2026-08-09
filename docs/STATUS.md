@@ -4,12 +4,12 @@
 
 ## Current position
 
-- **Phase:** 2 — Assets/CMDB
-- **Last completed WP:** WP-2.11 (Assets UI polish) — automated tests green; manual checklist not yet walked
-- **Current WP:** 🏁 **Phase 2 gate** — asset lifecycle + linking demo end-to-end, then tag `v0.3-phase2`. No code package; walk the demo, run `aspire update` per the phase-gate rule, and clear as much of the unwalked-checklist backlog below as the gate needs
-- **Current branch:** main (the gate is a demo and a tag, not a feature branch)
-- **After it:** WP-3.1 (Device/check config API) opens Phase 3
-- **Last tag:** `v.0.2-phase1` (Phase 1 gate; note the stray dot — Phase 0 was tagged `v0.1-phase0`)
+- **Phase:** 3 — Monitoring + Unified Loop
+- **Last completed WP:** WP-3.1 (Monitoring.Api: device + check config) — automated tests green (436 solution-wide); manual checklist walked against a live `aspire run` on 2026-08-10, 30/30 checks plus the audit read. WP-3.1 is API-only, so the walk was `curl` against `localhost:5000` rather than a browser pass
+- **Current WP:** WP-3.2 (Python poller skeleton + heartbeat) — **[SENSITIVE — bus creds]**
+- **Current branch:** `feat/wp-3.2-poller-skeleton-heartbeat`
+- **After it:** WP-3.3 (ICMP/SNMP polling)
+- **Last tag:** `v.0.2-phase1` (Phase 1 gate; note the stray dot — Phase 0 was tagged `v0.1-phase0`). **`v0.3-phase2` is not cut yet — see In flight.**
 
 ## Platform versions (law — see WORKFLOW.md table for EOL dates)
 
@@ -18,6 +18,26 @@
 ## In flight / carry-over notes
 
 <!-- Anything unfinished, known-broken, or deferred from the last session that the next session must know. Keep to a few lines; delete when resolved. -->
+
+- **⚠️ The Phase 2 gate's two non-demo tasks are still outstanding.** The manual checklists were walked and accepted (2026-08-10), and Phase 3 has started, but **`v0.3-phase2` was never tagged** and **`aspire update` was never run** — both were part of the gate. Tagging retroactively means picking a commit; `04e0f82` (WP-2.11) is the last Phase 2 commit and is the honest choice. The `aspire update` should happen on its own branch, not folded into a feature package.
+
+- **A monitored device is a CI plus an address, and nothing stops that CI being deleted (WP-3.1).** `assets.ci` delete is guarded against relationships (WP-2.3) and ticket links (WP-2.4), but not against `monitoring.monitored_devices` — that would need an `IMonitoredDeviceDirectory` port in `Platform/Integration` implemented by Monitoring, and the WP text did not call for it. Consequence today: deleting a monitored CI leaves the device pointing at nothing, and its `CiName` reads null on the device list and in the poller config. **The port is the fix, and it belongs to whichever WP first cares.**
+
+- **Config deltas are per *device*, not per field or per check.** A check edit re-sends its whole device; the poller's unit of work is a device. `PollerConfigDeltaPlanner` decides "changed" against "removed" purely by whether the device is *currently* enabled and in the poller's group — so deleting, disabling and moving a device between groups all come out right without the planner reading the change kind. A device that moves groups deliberately writes **two** rows (upsert against the new group, removal against the old).
+
+- **Config versions are allocated by the application under `pg_advisory_xact_lock`, not by a sequence or identity column.** This is deliberate and load-bearing: identity values can commit out of order, so a poller reading `max(version)` while a lower version was still uncommitted would never see that change again. Every write in the module must therefore call `IMonitoringConfigLog.RecordAsync` **inside its own transaction** — the lock is transaction-scoped. Anything that writes devices or checks outside these services and skips it will be invisible to every poller.
+
+- **`GET /api/pollers/{name}/config` writes.** It records `last_config_version`/`last_config_fetched_at` on the poller row. It is the only write behind a GET in the module and it is deliberately **not** audited — a poller reading its own config has no before/after entity state. WP-3.2's heartbeat is the consumer of those two columns.
+
+- **Poller registration and config fetch currently sit behind `CanManageMonitoring`, which is wrong and known.** The poller has no identity until WP-3.2 issues it credentials, so an interim policy was the only option. **WP-3.2 must move these two endpoints onto the poller's own credential** — a poller should not need an agent's rights to read its own configuration, and today an EndUser is refused but any Technician token works.
+
+- **Nothing in the SPA touches monitoring yet.** WP-3.1 is API-only: no React, no nav item, no screen. The endpoints are reachable only from a REST client until WP-3.9 builds the dashboards. Same position `/api/ci-custom-fields` and `/api/ticket-categories` are in.
+
+- **The monitoring surface publishes no events and seeds no data.** Devices, checks and windows are audited but nothing is published (the WP-2.6 contracts/vendors precedent), and there is no seeder — so a fresh `aspire run` has an empty `monitoring` schema and every demo device has to be created by hand or by WP-3.12's simulator rig. If Phase 3's demos need a fixture that survives an AppHost restart, it needs a seeder like the CMDB got in WP-2.8.
+
+- **Never assert `Assert.Equal` on a timestamp that crosses Postgres.** A create response is built from the in-memory entity at .NET's 100ns tick precision; the same row read back carries `timestamptz`, which keeps microseconds. An exact compare therefore passes about one time in ten — it cost a flaky `RegisterPoller_Twice_KeepsOneRegistration` in this WP before it was caught. Compare with a tolerance (a millisecond cleanly separates truncation from any real difference) or assert the ordering instead.
+
+- **Device list search covers the address only.** A CI's name lives in the Assets schema, which Monitoring may not query, and `ICiDirectory` answers by id rather than by search term. Searching devices by CI name would mean widening the port.
 
 - **The asset table sorts in the browser only, and says so (WP-2.11).** `/api/cis` orders by `Name` then `Id` (`CiService.cs:96`) and takes no sort parameter, while the list pages at 25 — so a header click reorders the page on screen and nothing beyond it. The footer states "Sorted within this page of N — not across all M" whenever a sort is active and more than one page exists. **Sorting the whole estate needs a `sort` parameter on `/api/cis`**, which is a backend change no WP owns yet. The ticket list has the same client-side mechanism and gets away with it only because it fetches a single page of 200.
 
@@ -221,7 +241,7 @@
 - [x] WP-2.11 Assets UI polish (2026-08-09) — frontend only; no API, migration, entity or contract change. Scope was written item by item during the session rather than up front, and grew from three placeholders to six items; item (6) (column sorting) was added after the session flagged it as needing a backend change for a complete answer, and shipped browser-side with its limitation stated in the UI
 
 ### Phase 3 — Monitoring + Unified Loop
-- [ ] WP-3.1 Device/check config API
+- [x] WP-3.1 Device/check config API (2026-08-10) — first real code in `Modules.Monitoring`, which was an empty skeleton. Added a `CanManageMonitoring` policy and a `monitoring.config_changes` change log with application-allocated versions, neither of which the WP text named but "versioned config, only deltas" required as a stored history rather than a computed diff. The poller endpoints sit behind the operator policy as an interim — WP-3.2 owns moving them (see In flight)
 - [ ] WP-3.2 Poller skeleton + heartbeat
 - [ ] WP-3.3 ICMP/SNMP polling
 - [ ] WP-3.4 Metrics storage
