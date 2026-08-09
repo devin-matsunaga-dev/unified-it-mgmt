@@ -5,9 +5,9 @@
 ## Current position
 
 - **Phase:** 2 — Assets/CMDB
-- **Last completed WP:** WP-2.8 (Seeder: infrastructure) — automated tests green; manual checklist not yet walked
-- **Current WP:** WP-2.9 (Relationship editor — UI)
-- **Current branch:** feat/wp-2.9-relationship-editor
+- **Last completed WP:** WP-2.9 (Relationship editor — UI) — automated tests green; manual checklist not yet walked
+- **Current WP:** WP-2.10 (Mixed-type import)
+- **Current branch:** feat/wp-2.10-mixed-type-import
 - **Last tag:** `v.0.2-phase1` (Phase 1 gate; note the stray dot — Phase 0 was tagged `v0.1-phase0`)
 
 ## Platform versions (law — see WORKFLOW.md table for EOL dates)
@@ -120,7 +120,15 @@
 
 - `/api/tickets` now also accepts `ciId` and `requester`. Both are members of `TicketListFilter`, so a saved view could in principle persist them, but no UI offers them — the saved-view editor only exposes the WP-1.10 filters.
 
-- The relations mini-graph on the asset page is read-only and capped at 3 hops in each direction. Creating and deleting relationships is still API-only (WP-2.3's state) — **WP-2.9 now owns the write surface**. The seeded estate means a demo chain no longer has to be built by hand, but any *new* edge still needs a REST client. `assetsApi.createRelationship`/`deleteRelationship`/`getRelationships` already exist in `web/src/api/assets.ts` and are deliberately unused; WP-2.9 is their caller.
+- **Relationships are now created and removed in the browser (WP-2.9).** The asset page's Relations card lists the CI's *direct* edges above the hop-banded graph, with "Relate to…" and a per-edge two-step remove. The graph itself is unchanged: still read-only, still capped at 3 hops each way, still showing nodes rather than editable edges.
+
+- **The relate dialog always writes the open CI as the edge's source** — one sentence, "this CI ⟨runs on / connects to / depends on / is hosted on⟩ that CI". There is no direction toggle: to record the reverse, open the other CI and relate from there. Consequence: the edge list shows both directions but only ever *creates* upstream ones.
+
+- **The picker deliberately does not filter out illegal choices.** The CI itself, a disposed CI and an already-related pair are all selectable, and the server's refusal (400 `TargetCiId`, or a 409 detail) renders as an inline error under the chosen CI. That is what makes the WP-2.3 guards demonstrable by hand; it also means every guard message the operator sees is the server's exact words, so changing one in `CiRelationshipService` changes the UI with no frontend edit.
+
+- **A disposed CI's "Relate to…" button is disabled with a note**, mirroring the coverage dialog's freeze — the server would 409 anyway, but a dead-looking button with no explanation reads as a fault.
+
+- **The "delete-blocked 409" named in the WP-2.9 text has no browser surface, because there is no delete-CI button anywhere in the SPA.** `assetsApi.deleteCi` exists in `web/src/api/assets.ts` and is called by nothing; the guard is real and integration-tested but reachable only from a REST client. If CI deletion is ever wanted in the UI, that 409 is the message to surface — and the relations list is where the operator will look for the reason.
 
 - People (`/people`, `/people/:userId`) is a new agent-only nav section over `/api/directory/users`. The list filters in the browser over all users — fine for 20 seeded people, not for a real directory.
 
@@ -189,7 +197,7 @@
 - [x] WP-2.6 Contracts/warranty (2026-08-08) — added a `/api/cis/{id}/coverage` endpoint rather than extending the CI payload, and a manual `POST /api/contract-notifications/runs` trigger, neither of which the WP text called for but the WP-2.5 importer and the resetting dev database respectively required
 - [x] WP-2.7 Barcode/QR (2026-08-08) — **accepted with the phone sign-in leg deferred to WP-6.2; everything else verified on real hardware.** Added QRCoder and QuestPDF after asking, plus `apiDownload` in the web client, a "Scan" nav item, and a `public-host` AppHost parameter with pinned ports and a rendered realm redirect URI — none of which the WP text called for, but QR encoding, PDF layout, authorized binary downloads, a reachable `/scan` and a phone-reachable login respectively required. Verification found and fixed three defects in that LAN plumbing (endpoint bind address, parameter source, realm substitution) — see In flight
 - [x] WP-2.8 Seeder: infrastructure (2026-08-08) — added a `HelpdeskCiLinkSeeder` in the Helpdesk module and a `CiIds` map on the seed result, neither of which the WP text called for, but "some linked tickets" crosses a module boundary Assets may not cross; also seeded two CI custom fields, which the WP text did not mention but the WP-2.1 notes asked for
-- [ ] WP-2.9 Relationship editor (UI) — added 2026-08-07; no WP owned the write surface, and Phase 4 discovery never covers logical edges
+- [x] WP-2.9 Relationship editor (UI) (2026-08-08) — frontend only; no API, migration or backend change. The WP's "delete-blocked 409" was not surfaced because the SPA has no delete-CI button to surface it on — see In flight
 - [ ] WP-2.10 Mixed-type import — added 2026-08-08; WP-2.5 deliberately fixed one CI type per file, but a real estate export is one sheet of everything
 
 ### Phase 3 — Monitoring + Unified Loop

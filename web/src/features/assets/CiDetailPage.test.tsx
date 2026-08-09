@@ -2,7 +2,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { render, screen, waitFor, within } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { vi } from 'vitest'
-import { assetsApi, type Ci, type CiGraph, type CiTypeSchema } from '../../api/assets'
+import { assetsApi, type Ci, type CiGraph, type CiRelationships, type CiTypeSchema } from '../../api/assets'
 import { helpdeskApi, type Ticket } from '../../api/helpdesk'
 import { CiDetailPage } from './CiDetailPage'
 
@@ -55,6 +55,13 @@ const impact: CiGraph = {
   edges: [{ id: 'edge-2', sourceCiId: 'ci-vm', targetCiId: host.id, type: 'RunsOn' }],
 }
 
+// The same two edges the graphs above are built from, as the direct relationships the card lists.
+const relationships: CiRelationships = {
+  ciId: host.id,
+  upstream: [{ id: 'edge-1', sourceCiId: host.id, sourceCiName: 'esx-01', sourceCiType: 'Server', targetCiId: 'ci-switch', targetCiName: 'core-sw-01', targetCiType: 'NetworkDevice', type: 'ConnectsTo', description: null, createdBy: 'technician1', createdAt: '2026-08-03T00:00:00Z' }],
+  downstream: [{ id: 'edge-2', sourceCiId: 'ci-vm', sourceCiName: 'vm-payroll', sourceCiType: 'Virtual', targetCiId: host.id, targetCiName: 'esx-01', targetCiType: 'Server', type: 'RunsOn', description: null, createdBy: 'technician1', createdAt: '2026-08-04T00:00:00Z' }],
+}
+
 const ticket: Ticket = {
   id: 'ticket-1', number: 'INC-000042', title: 'Host fan failure', description: 'Loud', type: 'Incident',
   urgency: 'High', impact: 'High', priority: 'Critical', status: 'InProgress', requesterId: 'enduser1',
@@ -77,6 +84,7 @@ describe('CiDetailPage', () => {
     vi.mocked(assetsApi.listLifecycleStates).mockResolvedValue([{ state: 'Deployed', allowedTargets: ['InStock', 'InRepair', 'Retired'] }])
     vi.mocked(assetsApi.getAncestors).mockResolvedValue(ancestors)
     vi.mocked(assetsApi.getImpactedBy).mockResolvedValue(impact)
+    vi.mocked(assetsApi.getRelationships).mockResolvedValue(relationships)
     vi.mocked(assetsApi.getLifecycleHistory).mockResolvedValue([{ id: 'history-1', ciId: host.id, fromState: 'InStock', toState: 'Deployed', note: 'Racked', actorId: 'technician1', occurredAt: '2026-08-02T00:00:00Z' }])
     vi.mocked(assetsApi.getAssignments).mockResolvedValue([])
     vi.mocked(helpdeskApi.listTickets).mockResolvedValue({ items: [ticket], total: 1, page: 1, pageSize: 200 })
@@ -105,10 +113,12 @@ describe('CiDetailPage', () => {
     renderPage()
 
     const relations = (await screen.findByRole('heading', { name: 'Relations' })).closest('section')!
+    // Scoped to the bands: the editable edge list above them links the same two CIs by name.
+    const graph = await within(relations).findByLabelText('Dependency graph')
     // The impacted-by walk includes the CI itself at depth 0; the centre band already shows it.
-    await waitFor(() => expect(within(relations).getByRole('link', { name: /core-sw-01/ })).toHaveAttribute('href', '/assets/ci-switch'))
-    expect(within(relations).getByRole('link', { name: /vm-payroll/ })).toHaveAttribute('href', '/assets/ci-vm')
-    expect(within(relations).queryByRole('link', { name: /esx-01/ })).not.toBeInTheDocument()
+    await waitFor(() => expect(within(graph).getByRole('link', { name: /core-sw-01/ })).toHaveAttribute('href', '/assets/ci-switch'))
+    expect(within(graph).getByRole('link', { name: /vm-payroll/ })).toHaveAttribute('href', '/assets/ci-vm')
+    expect(within(graph).queryByRole('link', { name: /esx-01/ })).not.toBeInTheDocument()
     expect(within(relations).getByText('2 relationships')).toBeInTheDocument()
   })
 
