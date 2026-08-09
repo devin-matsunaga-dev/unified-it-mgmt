@@ -5,9 +5,9 @@
 ## Current position
 
 - **Phase:** 2 — Assets/CMDB
-- **Last completed WP:** WP-2.7 (Barcode/QR) — accepted with one check deferred to WP-6.2; see In flight
-- **Current WP:** WP-2.8 (Seeder: infrastructure)
-- **Current branch:** feat/wp-2.8-seeder-infrastructure
+- **Last completed WP:** WP-2.8 (Seeder: infrastructure) — automated tests green; manual checklist not yet walked
+- **Current WP:** WP-2.9 (Relationship editor — UI)
+- **Current branch:** feat/wp-2.9-relationship-editor
 - **Last tag:** `v.0.2-phase1` (Phase 1 gate; note the stray dot — Phase 0 was tagged `v0.1-phase0`)
 
 ## Platform versions (law — see WORKFLOW.md table for EOL dates)
@@ -17,6 +17,24 @@
 ## In flight / carry-over notes
 
 <!-- Anything unfinished, known-broken, or deferred from the last session that the next session must know. Keep to a few lines; delete when resolved. -->
+
+- **The CMDB now seeds itself: 60 CIs, 61 relationships, 6 vendors, 6 contracts, 2 CI custom fields and 18 ticket links, all from `dotnet run --project src/Seeder`.** The estate is three site-local dependency trees — Primary Data Centre (6 levels deep), Head Office (4) and Regional Branch (6) — each rooted at that site's router. There are deliberately **no WAN edges between the sites**, so `impacted-by` on a router answers for one site rather than the whole estate; a real network would have them and WP-4.3's topology maps are where they belong.
+
+- **The estate is a hand-written table in `AssetsEstate`, and ids come from array position.** Appending a CI, contract or relationship is safe; **reordering or inserting in the middle renumbers everything after it**, which on a live database means duplicates rather than updates. The dev database is recreated constantly so this is cheap to recover from — but it is the one way to break the seeder's idempotency.
+
+- **The seeder writes through `AssetsDbContext`, so seeded CIs are not audited and publish no events.** That is deliberate (they are reference data, not operator actions), and it is the opposite of the WP-2.5 importer, which routes every row through `ICiService`. The consequence is that `CiTypeSchema` is not applied automatically: `AssetsInfrastructureSeeder.Materialise` binds through it by hand, and `AssetsEstateTests` asserts the whole estate conforms. Anything else that ever writes CIs outside `CiService` has to do the same.
+
+- **Seeded warranties and contracts are on purpose close to expiry, so the WP-2.6 renewal job fires on its first pass.** Two contracts (Dell ProSupport at +21 days, Northwind ERP support at +5) and several warranties sit inside the 30/7/0 windows, and one contract plus four warranties are already expired. Expect a handful of `assets.contract_notifications` rows and log lines within a minute of the first `aspire run` — that is the feature working, not a fault. Retired and Disposed CIs are skipped by the job, so the two dated-out user assets stay quiet.
+
+- **All dates are offsets from the day the seeder runs**, not fixed calendar dates, because a fresh database is minutes old and fixed dates drift. Re-running on a later day does **not** move the dates of rows already written — only newly created ones use the new "today".
+
+- **The seeded estate depends on the platform demo data and fails loudly without it.** `AssetsInfrastructureSeeder` checks every username, department code and site code the estate names up front and throws one sentence before writing anything. Run order in `src/Seeder/Program.cs` is fixed: platform → helpdesk reference → helpdesk history → assets estate → ticket links.
+
+- **Ticket↔CI links are seeded by a second class, `HelpdeskCiLinkSeeder`, which takes the CI ids as an argument** — Helpdesk owns the link and may not reference Assets. It links the 6 newest tickets in each of three categories (Laptop or desktop → hardware, Network and connectivity → network devices, Business applications → business services), 18 in total. Tickets that are on order, retired or disposed are never linked.
+
+- Both seeded CI custom fields (`purchase_order` on Hardware, `backup_schedule` on Server) are **optional**. A required one would make every CI created by hand — and the existing API tests that post one — fail validation. If the required-field path ever needs demonstrating, that is a deliberate change with test fallout.
+
+- The seeded estate has **no cycle** in its graph, so `containsCycle` is false everywhere. Cycles are supported (WP-2.3) but a seeded one would make every demo traversal report a cycle, which reads as a fault.
 
 - **⏳ WP-2.7 owes one check to WP-6.2: signing in on a phone.** A printed label was scanned with a real phone and resolved to the correct asset URL, and label generation, batch sheets, code lookup (asset tag / serial / label URL / unknown) and the 401 and 404 failure paths were all confirmed against the running stack. What could **not** be completed is the sign-in that follows: `oidc-client-ts` always uses PKCE for `response_type: 'code'`, PKCE needs `crypto.subtle`, and browsers expose it only in a secure context — HTTPS or `localhost`. On `http://<lan-ip>:5173` the sign-in button throws before it navigates and looks dead. **This is a platform rule, not a bug, and no configuration fixes it.** When WP-6.2 (Proxy + TLS) lands, re-run the phone scan end to end; that is the last unproven claim in Phase 2.
 
@@ -102,7 +120,7 @@
 
 - `/api/tickets` now also accepts `ciId` and `requester`. Both are members of `TicketListFilter`, so a saved view could in principle persist them, but no UI offers them — the saved-view editor only exposes the WP-1.10 filters.
 
-- The relations mini-graph on the asset page is read-only and capped at 3 hops in each direction. Creating and deleting relationships is still API-only (WP-2.3's state) — **WP-2.9 now owns the write surface**. Until it ships, every demo chain has to be POSTed with a REST client. `assetsApi.createRelationship`/`deleteRelationship`/`getRelationships` already exist in `web/src/api/assets.ts` and are deliberately unused; WP-2.9 is their caller.
+- The relations mini-graph on the asset page is read-only and capped at 3 hops in each direction. Creating and deleting relationships is still API-only (WP-2.3's state) — **WP-2.9 now owns the write surface**. The seeded estate means a demo chain no longer has to be built by hand, but any *new* edge still needs a REST client. `assetsApi.createRelationship`/`deleteRelationship`/`getRelationships` already exist in `web/src/api/assets.ts` and are deliberately unused; WP-2.9 is their caller.
 
 - People (`/people`, `/people/:userId`) is a new agent-only nav section over `/api/directory/users`. The list filters in the browser over all users — fine for 20 seeded people, not for a real directory.
 
@@ -120,7 +138,6 @@
 - Full-text search uses the `english` dictionary for every ticket; there is no per-locale text-search configuration. Terms are prefix-matched and AND-ed, so it narrows as you type, but it is not fuzzy — a typo inside a word ("aurroa") still finds nothing. Trigram/`pg_trgm` similarity is the fix if that becomes a complaint.
 - Canned responses are managed from the "Manage" dialog in the ticket reply composer (any agent); saved views are managed inline on the ticket list. Neither has an admin screen under a settings area.
 - Status and priority list filters are single-select in the UI, although the API and the saved-view payload accept several of each.
-- The CMDB has no seeder yet, and the dev database resets on most AppHost restarts, so every CI and CI custom field must be created by hand for a demo. WP-2.8 (Seeder: infrastructure) owns fixing this; until then, verification of the assets screens starts from an empty list.
 - CI custom fields are managed through the API only (`POST/DELETE /api/ci-custom-fields`, AdminOnly) — there is no admin screen, same as the WP-1.9 ticket categories. The form reads them from `/api/ci-type-schemas`.
 - CI attributes are enforced above the database: TPH makes every per-type column nullable, so `CiTypeSchema` is the only thing stopping a Server row with no hostname. Anything writing CIs outside `CiService` (a seeder, an importer) must bind through `CiTypeSchema.Bind` or it will write half-populated rows.
 - `/api/cis` list search is `ILIKE` over name/asset tag/serial only — there is no full-text index on the assets schema like the one WP-1.10 added for tickets. Revisit if the CMDB grows past a few thousand rows.
@@ -129,12 +146,10 @@
 - Traversal depth is capped at 10 (default 5) and the value is clamped, not rejected; the response echoes the effective `maxDepth` and a `maxDepthReached` flag. A graph deeper than 10 hops silently ends there apart from that flag.
 - Cycles are allowed in the data and traversed safely; responses carry `containsCycle`. Nothing warns an operator at creation time that they have just closed a loop — the flag only appears once someone runs a traversal.
 - The CTE's cycle guard is a per-path visited array, so a very wide diamond-heavy graph does more work than a plain visited-set walk would. Fine at CMDB scale with a 10-hop cap; revisit if WP-2.8's seeded estate or a real import makes traversals slow.
-- There is still no CMDB seeder (WP-2.8), so the VM→Host→Switch→Router chain has to be built by hand for a demo, and it is gone after an AppHost restart.
 - Lifecycle and ownership live in a right-side drawer, reachable from the "Lifecycle" button on both the assets list and the CI detail page.
 - `/api/directory/users|departments|sites` are new agent-only (`CanManageAssets`) read endpoints over the Platform demo directory. They are the picker source for CI ownership; if another surface needs them for EndUsers, the policy has to be revisited.
 - A CI's owner/department/site are ids plus name snapshots. Renaming a department in `platform.departments` will not update the CIs already assigned to it — the same trade-off WP-1.7 made for ticket requesters.
 - Disposed CIs are frozen: `PUT /api/cis/{id}`, the assignment endpoint, and any further transition all return 409. Nothing in the UI can un-dispose a CI, which is deliberate.
-- The CMDB still has no seeder (WP-2.8), so lifecycle and ownership must be verified against hand-created CIs — but the ownership pickers do work on a fresh database, because the Platform demo seeder already provides the 20 users, 4 departments, and 3 sites.
 - `CanManageAssets` (Admin/Technician/Manager) is a new authorization policy added by WP-2.1. It is additive — the existing `AdminOnly` and `CanManageTickets` policies are untouched.
 - Dev Postgres resets between `aspire run`s whenever AppHost configuration changes (the unnamed `.WithDataVolume()` name embeds a config hash, so a new empty volume is mounted). This is **intentional** — see DECISIONS.md. Consequence: anything created through the API by hand is gone after a restart, so demo/verification fixtures must live in the seeder.
 
@@ -173,7 +188,7 @@
 - [x] WP-2.5 Import + bulk edit (2026-08-08) — branch was `feat/wp-2.5-import-wizard-bulk-edit`, not the name previously recorded here; added ClosedXML (the first file-format dependency, `.xlsx` only) after asking, and `apiUpload`/`ApiError.errors` in the web client, neither of which the WP text called for but multipart upload and field-level mapping errors required
 - [x] WP-2.6 Contracts/warranty (2026-08-08) — added a `/api/cis/{id}/coverage` endpoint rather than extending the CI payload, and a manual `POST /api/contract-notifications/runs` trigger, neither of which the WP text called for but the WP-2.5 importer and the resetting dev database respectively required
 - [x] WP-2.7 Barcode/QR (2026-08-08) — **accepted with the phone sign-in leg deferred to WP-6.2; everything else verified on real hardware.** Added QRCoder and QuestPDF after asking, plus `apiDownload` in the web client, a "Scan" nav item, and a `public-host` AppHost parameter with pinned ports and a rendered realm redirect URI — none of which the WP text called for, but QR encoding, PDF layout, authorized binary downloads, a reachable `/scan` and a phone-reachable login respectively required. Verification found and fixed three defects in that LAN plumbing (endpoint bind address, parameter source, realm substitution) — see In flight
-- [ ] WP-2.8 Seeder: infrastructure
+- [x] WP-2.8 Seeder: infrastructure (2026-08-08) — added a `HelpdeskCiLinkSeeder` in the Helpdesk module and a `CiIds` map on the seed result, neither of which the WP text called for, but "some linked tickets" crosses a module boundary Assets may not cross; also seeded two CI custom fields, which the WP text did not mention but the WP-2.1 notes asked for
 - [ ] WP-2.9 Relationship editor (UI) — added 2026-08-07; no WP owned the write surface, and Phase 4 discovery never covers logical edges
 - [ ] WP-2.10 Mixed-type import — added 2026-08-08; WP-2.5 deliberately fixed one CI type per file, but a real estate export is one sheet of everything
 
