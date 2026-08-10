@@ -23,6 +23,7 @@ using Modules.Monitoring;
 using Modules.Monitoring.Data;
 using Modules.Monitoring.Features.Devices;
 using Modules.Monitoring.Features.MaintenanceWindows;
+using Modules.Monitoring.Features.Metrics;
 using Modules.Monitoring.Features.PollerConfig;
 using Platform;
 using Platform.Auditing;
@@ -97,6 +98,7 @@ app.MapContractEndpoints();
 app.MapCiLabelEndpoints();
 app.MapMonitoredDeviceEndpoints();
 app.MapMaintenanceWindowEndpoints();
+app.MapMetricEndpoints();
 app.MapPollerEndpoints();
 
 app.Run();

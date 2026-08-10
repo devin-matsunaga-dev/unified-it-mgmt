@@ -10,6 +10,11 @@ public sealed class MonitoringDbContext(DbContextOptions<MonitoringDbContext> op
     public DbSet<MaintenanceWindowDevice> MaintenanceWindowDevices => Set<MaintenanceWindowDevice>();
     public DbSet<Poller> Pollers => Set<Poller>();
     public DbSet<MonitoringConfigChange> ConfigChanges => Set<MonitoringConfigChange>();
+    public DbSet<DeviceMetric> DeviceMetrics => Set<DeviceMetric>();
+    public DbSet<DeviceInventoryFact> DeviceInventoryFacts => Set<DeviceInventoryFact>();
+
+    /// <summary>Result shape of a bucketed metric query; never mapped to a table.</summary>
+    public DbSet<MetricBucket> MetricBuckets => Set<MetricBucket>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -18,6 +23,7 @@ public sealed class MonitoringDbContext(DbContextOptions<MonitoringDbContext> op
 
         foreach (var entity in modelBuilder.Model.GetEntityTypes())
         {
+            // Query-result shapes (MetricBucket) map to no table, so only rename the ones that do.
             if (entity.GetTableName() is { } tableName)
             {
                 entity.SetTableName(ToSnakeCase(tableName));

@@ -55,7 +55,14 @@ public sealed class MessageBusOutboxIntegrationTests(InfrastructureFixture infra
             var dbContext = beforeBusScope.ServiceProvider.GetRequiredService<PlatformDbContext>();
             Assert.Equal(2, await dbContext.Set<OutboxMessage>().CountAsync(message =>
                 message.Body.Contains(dedupeKey)));
-            Assert.Empty(await dbContext.ConsumerDedupeEntries.ToListAsync());
+            // This test's own key, not the whole table. Until WP-3.4 the SystemPing consumer was the
+            // only user of the dedupe helper, so "empty" and "nothing consumed this yet" were the
+            // same statement; DeviceTelemetryConsumer now writes a row per poller cycle into the
+            // database this collection shares, and the broad assertion started failing on test order
+            // rather than on anything about the outbox.
+            Assert.Empty(await dbContext.ConsumerDedupeEntries
+                .Where(entry => entry.Key == $"system-ping:{dedupeKey}")
+                .ToListAsync());
         }
 
         var services = _services!;

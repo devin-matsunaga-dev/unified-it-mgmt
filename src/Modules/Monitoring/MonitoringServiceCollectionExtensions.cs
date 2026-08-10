@@ -7,6 +7,7 @@ using Modules.Monitoring.Data;
 using Modules.Monitoring.Features.Devices;
 using Modules.Monitoring.Features.Heartbeats;
 using Modules.Monitoring.Features.MaintenanceWindows;
+using Modules.Monitoring.Features.Metrics;
 using Modules.Monitoring.Features.PollerConfig;
 using Quartz;
 
@@ -29,6 +30,8 @@ public static class MonitoringServiceCollectionExtensions
         services.AddScoped<IMaintenanceWindowService, MaintenanceWindowService>();
         services.AddScoped<IPollerService, PollerService>();
         services.AddScoped<IPollerHeartbeatService, PollerHeartbeatService>();
+        services.AddScoped<IMetricIngestionService, MetricIngestionService>();
+        services.AddScoped<IMetricQueryService, MetricQueryService>();
 
         services.AddOptions<PollerHeartbeatOptions>()
             .Bind(configuration.GetSection(PollerHeartbeatOptions.SectionName))
@@ -66,5 +69,6 @@ public static class MonitoringServiceCollectionExtensions
     {
         ArgumentNullException.ThrowIfNull(bus);
         bus.AddConsumer<PollerHeartbeatConsumer>();
+        bus.AddConsumer<DeviceTelemetryConsumer>();
     }
 }

@@ -98,6 +98,62 @@ public sealed class PollerConfiguration : IEntityTypeConfiguration<Poller>
     }
 }
 
+public sealed class DeviceMetricConfiguration : IEntityTypeConfiguration<DeviceMetric>
+{
+    public void Configure(EntityTypeBuilder<DeviceMetric> builder)
+    {
+        builder.ToTable("device_metrics", "monitoring");
+
+        // Natural key, time first: a hypertable refuses a unique index that does not carry its
+        // partitioning column, and this ordering is also the one a series query reads.
+        builder.HasKey(metric => new { metric.Time, metric.DeviceId, metric.CheckId, metric.MetricName });
+        // text rather than varchar(n), against the convention the rest of the schema follows:
+        // create_hypertable warns about every varchar column it is handed, because a length-limited
+        // type compresses worse in a chunk. Lengths are enforced by the ingestion service instead.
+        builder.Property(metric => metric.MetricName).HasColumnType("text").IsRequired();
+        builder.Property(metric => metric.Unit).HasColumnType("text");
+        builder.Property(metric => metric.PollerName).HasColumnType("text").IsRequired();
+
+        // "This device's CPU over the last day" — device, then metric, then time descending.
+        builder.HasIndex(metric => new { metric.DeviceId, metric.MetricName, metric.Time })
+            .IsDescending(false, false, true);
+
+        // Deliberately no foreign key to monitored_devices. Timescale drops chunks out from under
+        // the table on a retention pass, and a reading is a fact about a moment that stays true
+        // after the device row is deleted.
+    }
+}
+
+public sealed class DeviceInventoryFactConfiguration : IEntityTypeConfiguration<DeviceInventoryFact>
+{
+    public void Configure(EntityTypeBuilder<DeviceInventoryFact> builder)
+    {
+        builder.ToTable("device_inventory_facts", "monitoring");
+        builder.HasKey(fact => new { fact.DeviceId, fact.Name });
+        builder.Property(fact => fact.Name).HasMaxLength(100).IsRequired();
+        builder.Property(fact => fact.Value).HasMaxLength(1_000).IsRequired();
+
+        // Unlike a metric, this is current state rather than history, so it goes with its device.
+        builder.HasOne(fact => fact.Device).WithMany()
+            .HasForeignKey(fact => fact.DeviceId)
+            .OnDelete(DeleteBehavior.Cascade);
+    }
+}
+
+public sealed class MetricBucketConfiguration : IEntityTypeConfiguration<MetricBucket>
+{
+    /// <summary>Unmapped from any table: rows only ever arrive from a <c>FromSql</c> aggregation.</summary>
+    public void Configure(EntityTypeBuilder<MetricBucket> builder)
+    {
+        builder.HasNoKey().ToTable((string?)null);
+        builder.Property(bucket => bucket.Bucket).HasColumnName("bucket");
+        builder.Property(bucket => bucket.AvgValue).HasColumnName("avg_value");
+        builder.Property(bucket => bucket.MinValue).HasColumnName("min_value");
+        builder.Property(bucket => bucket.MaxValue).HasColumnName("max_value");
+        builder.Property(bucket => bucket.SampleCount).HasColumnName("sample_count");
+    }
+}
+
 public sealed class MonitoringConfigChangeConfiguration : IEntityTypeConfiguration<MonitoringConfigChange>
 {
     public void Configure(EntityTypeBuilder<MonitoringConfigChange> builder)
