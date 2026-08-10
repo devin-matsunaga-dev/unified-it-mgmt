@@ -13,6 +13,11 @@
     <PackageReference Include="Microsoft.EntityFrameworkCore" Version="10.0.0" />
     <PackageReference Include="Minio" Version="7.0.0" />
     <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="10.0.0" />
+    <!-- WP-3.6: the alert→ticket rate limit and circuit breaker are rate-limit state, which
+         ARCHITECTURE §5 puts in Redis. Named here for the same reason WP-3.5 named it in Monitoring:
+         the host already carries it transitively through Aspire, and naming it is what lets the module
+         hold an IConnectionMultiplexer without depending on how the host acquired one. -->
+    <PackageReference Include="StackExchange.Redis" Version="2.13.1" />
   </ItemGroup>
 
   <ItemGroup>

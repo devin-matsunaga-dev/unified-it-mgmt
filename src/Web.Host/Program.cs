@@ -47,7 +47,11 @@ builder.Services.AddCors(options => options.AddPolicy("WebClient", policy => pol
 builder.Services.AddPlatformAuthentication(builder.Configuration);
 builder.Services.AddPlatformServices(
     builder.Configuration,
-    MonitoringServiceCollectionExtensions.AddMonitoringConsumers);
+    bus =>
+    {
+        MonitoringServiceCollectionExtensions.AddMonitoringConsumers(bus);
+        HelpdeskServiceCollectionExtensions.AddHelpdeskConsumers(bus);
+    });
 builder.Services.AddHelpdeskServices(builder.Configuration);
 builder.Services.AddAssetsServices(builder.Configuration);
 builder.Services.AddMonitoringServices(builder.Configuration);

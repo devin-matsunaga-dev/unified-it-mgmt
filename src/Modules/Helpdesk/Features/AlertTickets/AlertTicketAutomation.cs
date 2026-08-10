@@ -1,0 +1,365 @@
+using System.Security.Claims;
+
+using Contracts.Events;
+
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
+
+using Modules.Helpdesk.Data;
+using Modules.Helpdesk.Features.Interactions;
+using Modules.Helpdesk.Features.Tickets;
+
+using Platform.Auditing;
+using Platform.Notifications;
+
+namespace Modules.Helpdesk.Features.AlertTickets;
+
+public interface IAlertTicketAutomation
+{
+    Task RaiseAsync(AlertRaised alert, CancellationToken cancellationToken);
+
+    Task ClearAsync(AlertCleared alert, CancellationToken cancellationToken);
+}
+
+/// <summary>
+/// Everything impure about alert→ticket automation: the durable dedupe row, the ticket writes, the
+/// bounds and the admin notice. The decisions themselves live in <see cref="AlertTicketPolicy"/>,
+/// <see cref="TicketStatusPath"/> and <see cref="IAlertAutomationGuard"/>, which is why none of them
+/// can see any of this — the same split WP-3.5 made between its engine and its state machine.
+/// <para>
+/// Every ticket write goes through <see cref="ITicketService"/> and
+/// <see cref="IInteractionService"/> rather than the DbContext, so an automated ticket is validated,
+/// SLA-clocked, audited and published exactly like one an agent typed. The cost is a transaction per
+/// write, which is right for something that happens once per problem.
+/// </para>
+/// </summary>
+public sealed class AlertTicketAutomation(
+    HelpdeskDbContext dbContext,
+    ITicketService ticketService,
+    IInteractionService interactionService,
+    IAlertAutomationGuard guard,
+    IAuditService auditService,
+    INotificationService notificationService,
+    IOptions<AlertTicketOptions> options,
+    ILogger<AlertTicketAutomation> logger) : IAlertTicketAutomation
+{
+    /// <summary>
+    /// Not an agent and not an end user. It matters that it is neither: the ticket surfaces enforce
+    /// "agent-only" by refusing <c>EndUser</c> rather than by requiring a role, so this actor can
+    /// write, and every row it writes says plainly that nobody performed it.
+    /// </summary>
+    private static readonly ClaimsPrincipal SystemActor = new(new ClaimsIdentity(
+        [
+            new Claim(ClaimTypes.NameIdentifier, "system:monitoring"),
+            new Claim(ClaimTypes.Name, "Monitoring"),
+        ],
+        "Monitoring"));
+
+    public async Task RaiseAsync(AlertRaised alert, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(alert);
+        if (!options.Value.Enabled)
+        {
+            logger.LogDebug("Alert→ticket automation is disabled; {RuleId} opened no ticket.", alert.RuleId);
+            return;
+        }
+
+        var key = AlertTicketPolicy.DedupeKey(alert.DeviceId, alert.RuleId);
+        var entry = await ClaimAsync(key, alert, cancellationToken);
+        var before = Snapshot(entry);
+
+        var previousSeverity = entry.LastSeverity;
+        var isFirstRaise = entry.OccurrenceCount == 0;
+        entry.OccurrenceCount++;
+        entry.AlertId = alert.AlertId;
+        entry.LastSeverity = alert.Severity;
+        entry.LastRaisedAt = alert.RaisedAt;
+
+        var existing = await LoadTicketAsync(entry.TicketId, cancellationToken);
+        if (existing is not null && !IsFinished(existing))
+        {
+            // The heart of the WP: the same problem, again, is a note on the ticket that already
+            // exists. Internal, because the requester of an automated ticket is the platform itself
+            // and a public comment would mail nobody while looking like it had mailed somebody.
+            await CommentAsync(
+                existing.Id,
+                AlertTicketPolicy.RecurrenceNote(alert, entry.OccurrenceCount, isFirstRaise ? null : previousSeverity),
+                cancellationToken);
+            await SaveAsync(entry, before, "Annotated", cancellationToken);
+            logger.LogInformation(
+                "Alert {RuleId} recurred at {Severity}; annotated {TicketNumber} rather than opening a second ticket.",
+                alert.RuleId, alert.Severity, existing.Number);
+            return;
+        }
+
+        var decision = await guard.EvaluateAsync(
+            key, CountRecentTicketsAsync, alert.RaisedAt, cancellationToken);
+        if (!decision.IsAllowed)
+        {
+            entry.SuppressedCount++;
+            await SaveAsync(entry, before, "Suppressed", cancellationToken);
+            logger.LogWarning(
+                "Alert {RuleId} opened no ticket: {Reason}. Suppressed {SuppressedCount} time(s) for this rule.",
+                alert.RuleId, decision.Reason, entry.SuppressedCount);
+            if (decision.Verdict == AutomationVerdict.BreakerTripped)
+            {
+                await NotifyBreakerAsync(decision, alert, cancellationToken);
+            }
+
+            return;
+        }
+
+        var draft = AlertTicketPolicy.Compose(alert);
+        var created = await ticketService.CreateAsync(
+            new CreateTicketRequest(
+                draft.Title,
+                draft.Description,
+                TicketType.Incident,
+                draft.Urgency,
+                draft.Impact,
+                RequesterId: null,
+                QueueId: await ResolveQueueIdAsync(cancellationToken)),
+            SystemActor,
+            cancellationToken);
+        if (created.Outcome != TicketWriteOutcome.Success || created.Ticket is null)
+        {
+            // Nothing to retry against: the draft is composed from the event and does not depend on
+            // anything that could have been fixed since. The row keeps the occurrence so the raise is
+            // not lost, and the alert stays visible on the monitoring side.
+            logger.LogError(
+                "Alert {RuleId} could not be ticketed: {Outcome}.", alert.RuleId, created.Outcome);
+            await SaveAsync(entry, before, "TicketFailed", cancellationToken);
+            return;
+        }
+
+        if (existing is not null)
+        {
+            // The WP-1.2 graph has no edge out of Resolved or Closed, so a rule that recurs after its
+            // ticket was finished gets a new one. The two are joined by a note in each direction —
+            // silently starting again is what makes a ticket history unreadable.
+            await CommentAsync(
+                existing.Id,
+                AlertTicketPolicy.SupersededNote(created.Ticket.Number, alert.Severity),
+                cancellationToken);
+            await CommentAsync(
+                created.Ticket.Id,
+                AlertTicketPolicy.SupersedesNote(existing.Number),
+                cancellationToken);
+        }
+
+        entry.TicketId = created.Ticket.Id;
+        entry.TicketCreatedAt = created.Ticket.CreatedAt;
+        entry.TicketCount++;
+        entry.AutoResolvedAt = null;
+        await SaveAsync(entry, before, "TicketOpened", cancellationToken);
+        logger.LogInformation(
+            "Alert {RuleId} at {Severity} opened {TicketNumber}.",
+            alert.RuleId, alert.Severity, created.Ticket.Number);
+    }
+
+    public async Task ClearAsync(AlertCleared alert, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(alert);
+        var key = AlertTicketPolicy.DedupeKey(alert.DeviceId, alert.RuleId);
+        var entry = await dbContext.AlertTickets
+            .SingleOrDefaultAsync(item => item.DedupeKey == key, cancellationToken);
+        if (entry is null)
+        {
+            // A clear for something this platform never ticketed: the automation was off, or the raise
+            // was suppressed before any row existed. A fact rather than a fault.
+            logger.LogInformation("Alert {RuleId} cleared but had no ticket record.", alert.RuleId);
+            return;
+        }
+
+        var before = Snapshot(entry);
+        entry.LastClearedAt = alert.OccurredAt;
+
+        var ticket = await LoadTicketAsync(entry.TicketId, cancellationToken);
+        if (ticket is null)
+        {
+            await SaveAsync(entry, before, "Cleared", cancellationToken);
+            return;
+        }
+
+        var note = AlertTicketPolicy.ResolutionNote(alert);
+        await CommentAsync(ticket.Id, note, cancellationToken);
+        if (IsFinished(ticket))
+        {
+            // Somebody resolved it by hand first. The note above still lands, because "monitoring
+            // agrees this is over" is worth having on the ticket.
+            await SaveAsync(entry, before, "Cleared", cancellationToken);
+            return;
+        }
+
+        if (await AdvanceToResolvedAsync(ticket, note, cancellationToken))
+        {
+            entry.AutoResolvedAt = alert.OccurredAt;
+            await SaveAsync(entry, before, "AutoResolved", cancellationToken);
+            logger.LogInformation(
+                "Alert {RuleId} cleared after {DurationSeconds}s; auto-resolved {TicketNumber}.",
+                alert.RuleId, alert.DurationSeconds, ticket.Number);
+            return;
+        }
+
+        await SaveAsync(entry, before, "Cleared", cancellationToken);
+    }
+
+    /// <summary>
+    /// Takes the ticket to Resolved along whatever route the transition graph permits, one guarded
+    /// hop at a time. A hop that is refused stops the walk and leaves the ticket where it stands: an
+    /// agent who moved it mid-clear has a better claim on its status than this does.
+    /// </summary>
+    private async Task<bool> AdvanceToResolvedAsync(
+        Ticket ticket,
+        string resolutionNote,
+        CancellationToken cancellationToken)
+    {
+        var statuses = await dbContext.TicketStatuses.ToDictionaryAsync(status => status.Id, cancellationToken);
+        var edges = await dbContext.TicketStatusTransitions
+            .Select(transition => new { transition.FromStatusId, transition.ToStatusId })
+            .ToListAsync(cancellationToken);
+        var path = TicketStatusPath.Find(
+            [.. edges.Select(edge => (edge.FromStatusId, edge.ToStatusId))],
+            ticket.StatusId,
+            DefaultTicketStatuses.ResolvedId);
+        if (path is null)
+        {
+            logger.LogWarning(
+                "Ticket {TicketNumber} cannot reach Resolved from {Status}; it was left as it is.",
+                ticket.Number, statuses[ticket.StatusId].Name);
+            return false;
+        }
+
+        foreach (var statusId in path)
+        {
+            var status = statuses[statusId];
+            var result = await ticketService.TransitionAsync(
+                ticket.Id,
+                new TransitionTicketRequest(status.Name, status.RequiresResolutionNote ? resolutionNote : null),
+                SystemActor,
+                cancellationToken);
+            if (result.Outcome != TransitionTicketOutcome.Success)
+            {
+                logger.LogWarning(
+                    "Ticket {TicketNumber} could not be moved to {Status} while auto-resolving: {Error}",
+                    ticket.Number, status.Name, result.Error);
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// Claims the dedupe key before anything else happens. Two consumers racing on one rule both try
+    /// to insert; the loser's unique-index violation faults its message, and the retry finds the
+    /// winner's row and annotates it. That is what makes "one ticket per alert" a database constraint
+    /// rather than only a hope about ordering.
+    /// </summary>
+    private async Task<AlertTicket> ClaimAsync(string key, AlertRaised alert, CancellationToken cancellationToken)
+    {
+        var existing = await dbContext.AlertTickets
+            .SingleOrDefaultAsync(item => item.DedupeKey == key, cancellationToken);
+        if (existing is not null)
+        {
+            return existing;
+        }
+
+        var entry = new AlertTicket
+        {
+            Id = Guid.CreateVersion7(),
+            DedupeKey = key,
+            DeviceId = alert.DeviceId,
+            CiId = alert.CiId,
+            RuleId = alert.RuleId,
+            AlertId = alert.AlertId,
+            LastSeverity = alert.Severity,
+            FirstRaisedAt = alert.RaisedAt,
+            LastRaisedAt = alert.RaisedAt,
+        };
+        dbContext.AlertTickets.Add(entry);
+        await dbContext.SaveChangesAsync(cancellationToken);
+        return entry;
+    }
+
+    private Task<int> CountRecentTicketsAsync(DateTimeOffset since, CancellationToken cancellationToken) =>
+        dbContext.AlertTickets.CountAsync(item => item.TicketCreatedAt >= since, cancellationToken);
+
+    private Task<Ticket?> LoadTicketAsync(Guid? ticketId, CancellationToken cancellationToken) =>
+        ticketId is null
+            ? Task.FromResult<Ticket?>(null)
+            : dbContext.Tickets.Include(ticket => ticket.Status)
+                .SingleOrDefaultAsync(ticket => ticket.Id == ticketId, cancellationToken);
+
+    private static bool IsFinished(Ticket ticket) =>
+        ticket.StatusId == DefaultTicketStatuses.ResolvedId || ticket.StatusId == DefaultTicketStatuses.ClosedId;
+
+    private Task CommentAsync(Guid ticketId, string body, CancellationToken cancellationToken) =>
+        interactionService.AddCommentAsync(
+            ticketId, new CreateCommentRequest(body, IsInternal: true), SystemActor, cancellationToken);
+
+    private async Task SaveAsync(
+        AlertTicket entry,
+        object before,
+        string action,
+        CancellationToken cancellationToken)
+    {
+        await dbContext.SaveChangesAsync(cancellationToken);
+        // Audited under the system actor, following WP-3.2's missed heartbeat and WP-3.5's raise —
+        // which is also what flushes the outbox for anything the ticket writes published.
+        await auditService.WriteAsync(
+            SystemActor, action, "AlertTicket", entry.Id.ToString(), before, Snapshot(entry), cancellationToken);
+    }
+
+    private async Task NotifyBreakerAsync(
+        AutomationDecision decision,
+        AlertRaised alert,
+        CancellationToken cancellationToken)
+    {
+        var settings = options.Value;
+        await notificationService.SendAsync(new NotificationMessage(
+            settings.AdminRecipient,
+            new NotificationTemplate(
+                "AlertTicketBreakerTripped",
+                "Alert→ticket automation has stopped opening tickets",
+                string.Join(Environment.NewLine,
+                    $"The alert→ticket circuit breaker tripped: {decision.Reason}.",
+                    $"It stays open for {settings.BreakerCooldownSeconds}s, during which alerts are recorded but no tickets are opened.",
+                    $"The alert that tripped it: {alert.RuleId} on device {alert.DeviceId} at {alert.Severity}.",
+                    "Alerts themselves are unaffected — check the monitoring side for what is actually failing.")),
+            new { alert.RuleId, alert.DeviceId, alert.Severity }), cancellationToken);
+        logger.LogError(
+            "Alert→ticket circuit breaker tripped ({Reason}); {Recipient} was notified.",
+            decision.Reason, settings.AdminRecipient);
+    }
+
+    private static object Snapshot(AlertTicket entry) => new
+    {
+        entry.DedupeKey,
+        entry.RuleId,
+        entry.TicketId,
+        entry.LastSeverity,
+        entry.OccurrenceCount,
+        entry.SuppressedCount,
+        entry.TicketCount,
+        entry.LastRaisedAt,
+        entry.LastClearedAt,
+        entry.AutoResolvedAt,
+    };
+
+    private async Task<Guid?> ResolveQueueIdAsync(CancellationToken cancellationToken)
+    {
+        // By name, then the first queue, then none — the WP-1.8 portal rule. An automated ticket that
+        // enters no queue is never round-robined to anybody, so falling back is better than insisting.
+        var name = options.Value.QueueName;
+        var queue = await dbContext.TicketQueues
+            .Where(item => item.Name == name)
+            .Select(item => (Guid?)item.Id)
+            .SingleOrDefaultAsync(cancellationToken);
+        return queue ?? await dbContext.TicketQueues
+            .OrderBy(item => item.Name)
+            .Select(item => (Guid?)item.Id)
+            .FirstOrDefaultAsync(cancellationToken);
+    }
+}
