@@ -1,0 +1,59 @@
+{
+  "messageId": "0199c0de-0000-7000-8000-00000000fee1",
+  "conversationId": "0199c0de-0000-7000-8000-0000000c0ffe",
+  "messageType": [
+    "urn:message:Contracts.Events:DeviceTelemetryReported"
+  ],
+  "message": {
+    "eventId": "0199c0de-0000-7000-8000-00000000fee1",
+    "occurredAt": "2026-08-10T12:00:00+00:00",
+    "pollerName": "POLLER_NAME_PLACEHOLDER",
+    "pollerGroup": "default",
+    "cycleNumber": 7,
+    "results": [
+      {
+        "deviceId": "0199c0de-0000-7000-8000-00000000d001",
+        "ciId": "0199c0de-0000-7000-8000-00000000c001",
+        "checkId": "0199c0de-0000-7000-8000-0000000c4ec1",
+        "checkType": "Icmp",
+        "checkName": "Reachability",
+        "address": "10.10.20.31",
+        "observedAt": "2026-08-10T12:00:00+00:00",
+        "succeeded": true,
+        "latencyMs": 1.42,
+        "error": null,
+        "metrics": [
+          {
+            "name": "icmp.rtt_ms",
+            "value": 1.42,
+            "text": null,
+            "unit": "ms"
+          },
+          {
+            "name": "icmp.packet_loss_percent",
+            "value": 0.0,
+            "text": null,
+            "unit": "%"
+          }
+        ]
+      },
+      {
+        "deviceId": "0199c0de-0000-7000-8000-00000000d001",
+        "ciId": "0199c0de-0000-7000-8000-00000000c001",
+        "checkId": "0199c0de-0000-7000-8000-0000000c4ec2",
+        "checkType": "Snmp",
+        "checkName": "SNMP: CPU",
+        "address": "10.10.20.31",
+        "observedAt": "2026-08-10T12:00:00+00:00",
+        "succeeded": false,
+        "latencyMs": null,
+        "error": "The agent at 10.10.20.31 did not answer within 5s.",
+        "metrics": []
+      }
+    ]
+  },
+  "sentTime": "2026-08-10T12:00:00+00:00",
+  "headers": {
+    "poller-source": "POLLER_NAME_PLACEHOLDER"
+  }
+}

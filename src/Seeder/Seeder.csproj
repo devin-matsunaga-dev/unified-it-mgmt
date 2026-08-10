@@ -9,5 +9,6 @@
     <ProjectReference Include="../Platform/Platform.csproj" />
     <ProjectReference Include="../Modules/Helpdesk/Modules.Helpdesk.csproj" />
     <ProjectReference Include="../Modules/Assets/Modules.Assets.csproj" />
+    <ProjectReference Include="../Modules/Monitoring/Modules.Monitoring.csproj" />
   </ItemGroup>
 </Project>

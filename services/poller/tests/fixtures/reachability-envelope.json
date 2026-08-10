@@ -1,0 +1,23 @@
+{
+  "messageId": "0199c0de-0000-7000-8000-00000000dead",
+  "conversationId": "0199c0de-0000-7000-8000-0000000c0ffe",
+  "messageType": [
+    "urn:message:Contracts.Events:DeviceReachabilityChanged"
+  ],
+  "message": {
+    "eventId": "0199c0de-0000-7000-8000-00000000dead",
+    "occurredAt": "2026-08-10T12:00:00+00:00",
+    "deviceId": "0199c0de-0000-7000-8000-00000000d001",
+    "ciId": "0199c0de-0000-7000-8000-00000000c001",
+    "address": "10.10.20.31",
+    "pollerName": "POLLER_NAME_PLACEHOLDER",
+    "pollerGroup": "default",
+    "isReachable": false,
+    "consecutiveFailures": 2,
+    "error": "No reply from 10.10.20.31 after 3 packets."
+  },
+  "sentTime": "2026-08-10T12:00:00+00:00",
+  "headers": {
+    "poller-source": "POLLER_NAME_PLACEHOLDER"
+  }
+}

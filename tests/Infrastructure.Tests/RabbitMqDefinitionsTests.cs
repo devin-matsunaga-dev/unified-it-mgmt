@@ -28,20 +28,42 @@ public sealed class RabbitMqDefinitionsTests
     }
 
     [Fact]
-    public void Render_DeclaresTheHeartbeatExchangeAsMassTransitWould()
+    public void DeviceTelemetryExchange_MatchesTheNameMassTransitPublishesUnder()
     {
-        using var document = JsonDocument.Parse(Render());
+        var urn = MessageUrn.ForType<DeviceTelemetryReported>().ToString();
 
-        var exchange = Assert.Single(document.RootElement.GetProperty("exchanges").EnumerateArray());
-        Assert.Equal(RabbitMqDefinitions.PollerHeartbeatExchange, exchange.GetProperty("name").GetString());
-        // A type or durability mismatch fails the API's own declaration with PRECONDITION_FAILED.
-        Assert.Equal("fanout", exchange.GetProperty("type").GetString());
-        Assert.True(exchange.GetProperty("durable").GetBoolean());
-        Assert.False(exchange.GetProperty("auto_delete").GetBoolean());
+        Assert.Equal($"urn:message:{RabbitMqDefinitions.DeviceTelemetryExchange}", urn);
     }
 
     [Fact]
-    public void Render_PollerPermissions_GrantWriteOnTheHeartbeatExchangeAndNothingElse()
+    public void DeviceReachabilityExchange_MatchesTheNameMassTransitPublishesUnder()
+    {
+        var urn = MessageUrn.ForType<DeviceReachabilityChanged>().ToString();
+
+        Assert.Equal($"urn:message:{RabbitMqDefinitions.DeviceReachabilityExchange}", urn);
+    }
+
+    [Fact]
+    public void Render_DeclaresEveryPollerExchangeAsMassTransitWould()
+    {
+        using var document = JsonDocument.Parse(Render());
+
+        var exchanges = document.RootElement.GetProperty("exchanges").EnumerateArray().ToArray();
+
+        Assert.Equal(
+            RabbitMqDefinitions.PollerExchanges,
+            [.. exchanges.Select(exchange => exchange.GetProperty("name").GetString()!)]);
+        foreach (var exchange in exchanges)
+        {
+            // A type or durability mismatch fails the API's own declaration with PRECONDITION_FAILED.
+            Assert.Equal("fanout", exchange.GetProperty("type").GetString());
+            Assert.True(exchange.GetProperty("durable").GetBoolean());
+            Assert.False(exchange.GetProperty("auto_delete").GetBoolean());
+        }
+    }
+
+    [Fact]
+    public void Render_PollerPermissions_GrantWriteOnThePollerExchangesAndNothingElse()
     {
         using var document = JsonDocument.Parse(Render());
 
@@ -52,9 +74,49 @@ public sealed class RabbitMqDefinitionsTests
         // these two are the whole of "cannot declare a queue" and "cannot consume from one".
         Assert.Equal("", permission.GetProperty("configure").GetString());
         Assert.Equal("", permission.GetProperty("read").GetString());
+        // The alternation is parenthesised. Without the group the anchors would bind to the first
+        // and last branch only — "^A or B or C$" — and the middle branch would match any resource
+        // whose name merely contains it.
         Assert.Equal(
-            "^Contracts\\.Events:PollerHeartbeat$",
+            "^(Contracts\\.Events:PollerHeartbeat|Contracts\\.Events:DeviceTelemetryReported|" +
+            "Contracts\\.Events:DeviceReachabilityChanged)$",
             permission.GetProperty("write").GetString());
+    }
+
+    /// <summary>
+    /// The pattern names its exchanges one by one. A prefix — <c>^Contracts\.Events:.*$</c> — would
+    /// read as "anything this platform publishes", which is a licence to forge a TicketCreated, and
+    /// it is the obvious shortcut to reach for the next time an exchange is added here.
+    /// </summary>
+    [Theory]
+    [InlineData("Contracts.Events:TicketCreated")]
+    [InlineData("Contracts.Events:CiDeleted")]
+    [InlineData("Contracts.Events:PollerHeartbeatMissed")]
+    public void Render_PollerWritePattern_DoesNotMatchAnotherEventsExchange(string exchange)
+    {
+        using var document = JsonDocument.Parse(Render());
+
+        var write = document.RootElement.GetProperty("permissions").EnumerateArray()
+            .Single(entry => entry.GetProperty("user").GetString() == "poller")
+            .GetProperty("write").GetString()!;
+
+        // The pattern carries its own anchors, so it is applied here exactly as RabbitMQ applies it.
+        Assert.DoesNotMatch(write, exchange);
+    }
+
+    [Theory]
+    [InlineData("Contracts.Events:PollerHeartbeat")]
+    [InlineData("Contracts.Events:DeviceTelemetryReported")]
+    [InlineData("Contracts.Events:DeviceReachabilityChanged")]
+    public void Render_PollerWritePattern_MatchesEveryExchangeThePollerPublishesTo(string exchange)
+    {
+        using var document = JsonDocument.Parse(Render());
+
+        var write = document.RootElement.GetProperty("permissions").EnumerateArray()
+            .Single(entry => entry.GetProperty("user").GetString() == "poller")
+            .GetProperty("write").GetString()!;
+
+        Assert.Matches(write, exchange);
     }
 
     /// <summary>

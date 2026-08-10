@@ -35,21 +35,32 @@ public sealed class PollerEnvelopeTests
     private static readonly string[] AddressFields =
         ["sourceAddress", "destinationAddress", "responseAddress", "faultAddress"];
 
-    [Fact]
-    public void Envelope_MessageType_IsTheUrnMassTransitRoutesOn()
+    /// <summary>Every envelope the poller publishes, and the event each one carries.</summary>
+    public static TheoryData<string, Type> Envelopes() => new()
     {
-        using var envelope = JsonDocument.Parse(Fixture());
+        { "heartbeat-envelope.json", typeof(PollerHeartbeat) },
+        { "telemetry-envelope.json", typeof(DeviceTelemetryReported) },
+        { "reachability-envelope.json", typeof(DeviceReachabilityChanged) },
+    };
+
+    [Theory]
+    [MemberData(nameof(Envelopes))]
+    public void Envelope_MessageType_IsTheUrnMassTransitRoutesOn(string fixture, Type contract)
+    {
+        using var envelope = JsonDocument.Parse(Fixture(fixture));
 
         var messageTypes = envelope.RootElement.GetProperty("messageType").EnumerateArray()
             .Select(type => type.GetString() ?? string.Empty).ToArray();
 
-        Assert.Equal([MessageUrn.ForType<PollerHeartbeat>().ToString()], messageTypes);
+        Assert.Equal([MessageUrn.ForType(contract).ToString()], messageTypes);
     }
 
-    [Fact]
-    public void Envelope_EveryAddressField_IsAbsentOrAnAbsoluteUri()
+    [Theory]
+    [MemberData(nameof(Envelopes))]
+    public void Envelope_EveryAddressField_IsAbsentOrAnAbsoluteUri(string fixture, Type contract)
     {
-        using var envelope = JsonDocument.Parse(Fixture());
+        _ = contract;
+        using var envelope = JsonDocument.Parse(Fixture(fixture));
 
         foreach (var field in AddressFields)
         {
@@ -66,13 +77,87 @@ public sealed class PollerEnvelopeTests
     }
 
     /// <summary>
+    /// Named one by one rather than by count, for every event the poller sends: a property the
+    /// poller renamed or never sends arrives as a default, which on a metric reads as a zero.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(Envelopes))]
+    public void Envelope_Message_CarriesEveryPropertyOfItsContract(string fixture, Type contract)
+    {
+        using var envelope = JsonDocument.Parse(Fixture(fixture));
+        var sent = envelope.RootElement.GetProperty("message").EnumerateObject()
+            .Select(property => property.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var property in contract.GetProperties())
+        {
+            Assert.True(sent.Contains(property.Name),
+                $"The poller does not send '{property.Name}', so the consumer reads its default.");
+        }
+    }
+
+    /// <summary>
+    /// The telemetry payload, read exactly as a consumer's serializer reads it — including the two
+    /// nested levels, which is where a hand-built envelope is most likely to diverge.
+    /// </summary>
+    [Fact]
+    public void TelemetryEnvelope_Message_DeserialisesWithItsResultsAndMetrics()
+    {
+        using var envelope = JsonDocument.Parse(Fixture("telemetry-envelope.json"));
+        var body = envelope.RootElement.GetProperty("message").GetRawText();
+
+        var telemetry = JsonSerializer.Deserialize<DeviceTelemetryReported>(
+            body, SystemTextJsonMessageSerializer.Options);
+
+        Assert.NotNull(telemetry);
+        Assert.Equal("POLLER_NAME_PLACEHOLDER", telemetry.PollerName);
+        Assert.Equal(7, telemetry.CycleNumber);
+        Assert.Equal(2, telemetry.Results.Count);
+
+        var measured = telemetry.Results[0];
+        Assert.True(measured.Succeeded);
+        Assert.Equal("Icmp", measured.CheckType);
+        Assert.Equal(1.42, measured.LatencyMs);
+        Assert.Null(measured.Error);
+        var metric = measured.Metrics[0];
+        Assert.Equal("icmp.rtt_ms", metric.Name);
+        Assert.Equal(1.42, metric.Value);
+        Assert.Equal("ms", metric.Unit);
+        // A number and a name are different things, and WP-3.4 tells them apart by which is null.
+        Assert.Null(metric.Text);
+
+        // A check that failed still travels: a timeout is a fact about the device.
+        var failed = telemetry.Results[1];
+        Assert.False(failed.Succeeded);
+        Assert.NotNull(failed.Error);
+        Assert.Empty(failed.Metrics);
+    }
+
+    [Fact]
+    public void ReachabilityEnvelope_Message_DeserialisesIntoTheContract()
+    {
+        using var envelope = JsonDocument.Parse(Fixture("reachability-envelope.json"));
+        var body = envelope.RootElement.GetProperty("message").GetRawText();
+
+        var change = JsonSerializer.Deserialize<DeviceReachabilityChanged>(
+            body, SystemTextJsonMessageSerializer.Options);
+
+        Assert.NotNull(change);
+        Assert.NotEqual(Guid.Empty, change.DeviceId);
+        Assert.NotEqual(Guid.Empty, change.CiId);
+        Assert.False(change.IsReachable);
+        Assert.Equal(2, change.ConsecutiveFailures);
+        Assert.Equal("10.10.20.31", change.Address);
+        Assert.NotNull(change.Error);
+    }
+
+    /// <summary>
     /// The payload itself, read exactly as the consumer's serializer reads it: a property the
     /// poller renamed or dropped would arrive as a default rather than as an error.
     /// </summary>
     [Fact]
     public void Envelope_Message_DeserialisesIntoTheContractWithEveryFieldPopulated()
     {
-        using var envelope = JsonDocument.Parse(Fixture());
+        using var envelope = JsonDocument.Parse(Fixture("heartbeat-envelope.json"));
         var body = envelope.RootElement.GetProperty("message").GetRawText();
 
         var heartbeat = JsonSerializer.Deserialize<PollerHeartbeat>(
@@ -90,25 +175,7 @@ public sealed class PollerEnvelopeTests
         Assert.Equal(3, heartbeat.CycleNumber);
     }
 
-    /// <summary>
-    /// Named one by one rather than by count, so adding a field to the event fails here until the
-    /// poller sends it — the failure mode otherwise is a silent zero on the consumer's side.
-    /// </summary>
-    [Fact]
-    public void Envelope_Message_CarriesEveryPropertyOfTheContract()
-    {
-        using var envelope = JsonDocument.Parse(Fixture());
-        var sent = envelope.RootElement.GetProperty("message").EnumerateObject()
-            .Select(property => property.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
-
-        foreach (var property in typeof(PollerHeartbeat).GetProperties())
-        {
-            Assert.True(sent.Contains(property.Name),
-                $"The poller does not send '{property.Name}', so the consumer reads its default.");
-        }
-    }
-
-    private static string Fixture()
+    private static string Fixture(string name)
     {
         var directory = new DirectoryInfo(AppContext.BaseDirectory);
         while (directory is not null && !File.Exists(Path.Combine(directory.FullName, "ItPlatform.slnx")))
@@ -118,6 +185,6 @@ public sealed class PollerEnvelopeTests
 
         var root = directory ?? throw new DirectoryNotFoundException("Could not locate the repository root.");
         return File.ReadAllText(Path.Combine(
-            root.FullName, "services", "poller", "tests", "fixtures", "heartbeat-envelope.json"));
+            root.FullName, "services", "poller", "tests", "fixtures", name));
     }
 }

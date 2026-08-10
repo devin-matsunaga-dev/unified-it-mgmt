@@ -13,6 +13,13 @@ CONTENT_TYPE = "application/vnd.masstransit+json"
 HEARTBEAT_MESSAGE_URN = "urn:message:Contracts.Events:PollerHeartbeat"
 
 
+class NullPublisher:
+    """Accepts and drops. Stands in where a publisher is optional, so no caller tests for None."""
+
+    async def publish(self, envelope: dict[str, Any]) -> None:
+        return None
+
+
 def build_envelope(
     message: dict[str, Any],
     message_urn: str,
@@ -52,14 +59,18 @@ class Publisher(Protocol):
     async def publish(self, envelope: dict[str, Any]) -> None: ...
 
 
-class HeartbeatPublisher:
+class ExchangePublisher:
     """
-    Publishes to the heartbeat exchange and nothing else.
+    Publishes to one exchange and nothing else.
 
-    It deliberately never declares that exchange: the poller's account has no `configure`
-    permission, and the broker's definitions file declares it at boot. A declare here would fail
-    with ACCESS_REFUSED and take the poller down — which is the permission model working, but at
-    the wrong moment.
+    One instance per exchange rather than one publisher taking a name, so that the set of exchanges
+    this process can reach is fixed where it is wired up — and matches, one for one, the closed list
+    the poller's broker credential grants (`RabbitMqDefinitions.PollerExchanges`).
+
+    It deliberately never declares its exchange: the poller's account has no `configure` permission,
+    and the broker's definitions file declares it at boot. A declare here would fail with
+    ACCESS_REFUSED and take the poller down — which is the permission model working, but at the
+    wrong moment.
     """
 
     def __init__(

@@ -1,11 +1,15 @@
 [project]
 name = "poller"
 version = "0.1.0"
-description = "IT Platform polling agent: fetches its configuration and reports that it is alive."
+description = "IT Platform polling agent: ICMP and SNMP polling with batched telemetry."
 requires-python = ">=3.13"
 dependencies = [
     "aio-pika>=9.5.5",
     "httpx>=0.28.1",
+    # ICMP has no standard-library implementation, and the alternatives are hand-rolling the
+    # protocol or parsing `ping` output per locale. Needs CAP_NET_RAW for its raw socket.
+    "icmplib>=3.0.4",
+    "pysnmp>=7.1.28",
 ]
 
 [project.optional-dependencies]
@@ -37,6 +41,13 @@ select = ["E", "F", "I", "N", "UP", "B", "ASYNC", "RUF"]
 python_version = "3.13"
 strict = true
 files = ["src", "tests"]
+
+# Neither library ships type information. They are confined to `checks/icmp.py` and
+# `checks/pysnmp_transport.py`, which is why everything above them is checked strictly against this
+# repo's own protocols rather than against `Any`.
+[[tool.mypy.overrides]]
+module = ["icmplib.*", "pysnmp.*"]
+ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

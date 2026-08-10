@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from typing import Any
 
 import pytest
@@ -8,6 +9,9 @@ import pytest
 from poller.agent import PollerAgent
 from poller.api import ConfigVersionRejectedError, PollerNotRegisteredError
 from poller.bus import HEARTBEAT_MESSAGE_URN
+from poller.checks import CheckOutcome, Metric
+from poller.polling import PollingEngine
+from poller.scheduler import CheckScheduler
 from poller.settings import Settings
 from tests.test_config import delta, snapshot
 
@@ -22,7 +26,11 @@ SETTINGS = Settings(
     oidc_client_secret="secret",
     amqp_url="amqp://poller:secret@localhost:5672/",
     heartbeat_exchange="Contracts.Events:PollerHeartbeat",
+    telemetry_exchange="Contracts.Events:DeviceTelemetryReported",
+    reachability_exchange="Contracts.Events:DeviceReachabilityChanged",
     http_timeout_seconds=10.0,
+    max_concurrent_checks=50,
+    icmp_privileged=True,
 )
 
 
@@ -192,3 +200,206 @@ async def test_cycle_number_increments_once_per_cycle(cycles: int) -> None:
         await agent.run_cycle()
 
     assert agent.cycle_number == cycles
+
+
+# --- polling (WP-3.3) ----------------------------------------------------------------------------
+
+def polled_device(
+    device_id: str = "d1", check_type: str = "Icmp", interval: int = 1,
+) -> dict[str, Any]:
+    return {
+        "deviceId": device_id,
+        "ciId": f"ci-{device_id}",
+        "address": "10.0.0.5",
+        "checks": [{
+            "checkId": f"chk-{device_id}",
+            "type": check_type,
+            "name": "Reachability",
+            "intervalSeconds": interval,
+            "timeoutSeconds": 5,
+            "parameters": {},
+        }],
+    }
+
+
+def polled_snapshot(*devices: dict[str, Any], version: int = 1) -> dict[str, Any]:
+    return {
+        "configVersion": version,
+        "isFullSnapshot": True,
+        "devices": list(devices),
+        "removedDeviceIds": [],
+        "maintenanceWindows": [],
+    }
+
+
+class StubRunner:
+    def __init__(self, outcome: CheckOutcome | Exception) -> None:
+        self.outcome = outcome
+
+    async def run(
+        self, address: str, parameters: Mapping[str, str], timeout_seconds: float,
+    ) -> CheckOutcome:
+        if isinstance(self.outcome, Exception):
+            raise self.outcome
+        return self.outcome
+
+
+REACHED = CheckOutcome(succeeded=True, latency_ms=2.0, metrics=(Metric("icmp.rtt_ms", value=2.0),))
+
+
+class AdvancingClock:
+    """Moves on a couple of seconds per cycle, so a one-second check is due in every one."""
+
+    def __init__(self, step: float = 2.0) -> None:
+        self.now = 1000.0
+        self.step = step
+
+    def __call__(self) -> float:
+        self.now += self.step
+        return self.now
+
+
+def polling_agent(
+    api: FakeApi,
+    runner: StubRunner,
+    heartbeat: FakePublisher,
+    telemetry: FakePublisher,
+    reachability: FakePublisher,
+) -> PollerAgent:
+    return PollerAgent(
+        SETTINGS,
+        api,
+        heartbeat,
+        engine=PollingEngine({"Icmp": runner}),
+        scheduler=CheckScheduler(clock=AdvancingClock()),
+        telemetry_publisher=telemetry,
+        reachability_publisher=reachability,
+    )
+
+
+async def test_run_cycle_polls_the_configured_devices_and_publishes_one_telemetry_batch() -> None:
+    telemetry = FakePublisher()
+    agent = polling_agent(
+        FakeApi([polled_snapshot(polled_device("d1"), polled_device("d2"))]),
+        StubRunner(REACHED),
+        FakePublisher(),
+        telemetry,
+        FakePublisher(),
+    )
+
+    await agent.run_cycle()
+
+    # One message for the whole cycle, not one per check.
+    assert len(telemetry.published) == 1
+    results = telemetry.published[0]["message"]["results"]
+    assert {result["deviceId"] for result in results} == {"d1", "d2"}
+
+
+async def test_run_cycle_publishes_a_reachability_event_only_when_the_state_changes() -> None:
+    reachability = FakePublisher()
+    runner = StubRunner(REACHED)
+    agent = polling_agent(
+        FakeApi([polled_snapshot(polled_device()), polled_snapshot(polled_device(), version=1)]),
+        runner,
+        FakePublisher(),
+        FakePublisher(),
+        reachability,
+    )
+
+    await agent.run_cycle()
+    await agent.run_cycle()
+
+    assert len(reachability.published) == 1
+    assert reachability.published[0]["message"]["isReachable"] is True
+
+
+async def test_run_cycle_a_device_that_stops_answering_is_reported_as_unreachable() -> None:
+    reachability = FakePublisher()
+    runner = StubRunner(REACHED)
+    agent = polling_agent(
+        FakeApi([polled_snapshot(polled_device()), polled_snapshot(polled_device(), version=1)]),
+        runner,
+        FakePublisher(),
+        FakePublisher(),
+        reachability,
+    )
+
+    await agent.run_cycle()
+    runner.outcome = CheckOutcome.failure("no reply")
+    await agent.run_cycle()
+
+    assert [event["message"]["isReachable"] for event in reachability.published] == [True, False]
+
+
+async def test_run_cycle_a_failing_telemetry_publish_still_leaves_a_heartbeat() -> None:
+    heartbeat = FakePublisher()
+    agent = polling_agent(
+        FakeApi([polled_snapshot(polled_device())]),
+        StubRunner(REACHED),
+        heartbeat,
+        FakePublisher(fail_times=1),
+        FakePublisher(),
+    )
+
+    await agent.run_cycle()
+
+    # The heartbeat is the poller saying it completed a cycle, and it did. A lost measurement is
+    # taken again next cycle; a lost heartbeat looks like an outage.
+    assert len(heartbeat.published) == 1
+
+
+async def test_run_cycle_a_check_that_explodes_never_stops_the_cycle() -> None:
+    heartbeat = FakePublisher()
+    telemetry = FakePublisher()
+    agent = polling_agent(
+        FakeApi([polled_snapshot(polled_device())]),
+        StubRunner(RuntimeError("the library exploded")),
+        heartbeat,
+        telemetry,
+        FakePublisher(),
+    )
+
+    await agent.run_cycle()
+
+    assert len(heartbeat.published) == 1
+    assert telemetry.published[0]["message"]["results"][0]["succeeded"] is False
+
+
+async def test_run_cycle_with_no_devices_publishes_no_telemetry_at_all() -> None:
+    telemetry = FakePublisher()
+    agent = polling_agent(
+        FakeApi([polled_snapshot()]),
+        StubRunner(REACHED),
+        FakePublisher(),
+        telemetry,
+        FakePublisher(),
+    )
+
+    await agent.run_cycle()
+
+    # An empty batch every fifteen seconds per poller is noise the bus does not need.
+    assert telemetry.published == []
+
+
+async def test_run_cycle_a_rejected_config_version_makes_every_check_due_again() -> None:
+    telemetry = FakePublisher()
+    agent = polling_agent(
+        FakeApi([
+            # An hour-long interval, so a second poll in the next cycle can only happen because the
+            # rejection made the poller forget when each check last ran.
+            polled_snapshot(polled_device(interval=3600), version=40),
+            ConfigVersionRejectedError("version 40 is ahead of this server"),
+            polled_snapshot(polled_device(interval=3600), version=2),
+        ]),
+        StubRunner(REACHED),
+        FakePublisher(),
+        telemetry,
+        FakePublisher(),
+    )
+
+    await agent.run_cycle()
+    await agent.run_cycle()
+
+    # Everything the poller believed came from a history the server has disowned, including which
+    # devices were up and when each check last ran.
+    assert len(telemetry.published) == 2

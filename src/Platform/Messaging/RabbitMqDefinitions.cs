@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Text.RegularExpressions;
 
 namespace Platform.Messaging;
 
@@ -46,21 +47,49 @@ public static class RabbitMqDefinitions
     /// </summary>
     public const string PollerHeartbeatExchange = "Contracts.Events:PollerHeartbeat";
 
+    /// <summary>The measurements one poller cycle produced. WP-3.3.</summary>
+    public const string DeviceTelemetryExchange = "Contracts.Events:DeviceTelemetryReported";
+
+    /// <summary>A device starting or stopping answering. WP-3.3.</summary>
+    public const string DeviceReachabilityExchange = "Contracts.Events:DeviceReachabilityChanged";
+
+    /// <summary>
+    /// Everything the poller is allowed to publish, and the exchanges the definitions file therefore
+    /// has to declare on its behalf. Adding a member here widens a credential — it is the whole
+    /// permission model in one list, which is why it is one list.
+    /// </summary>
+    public static readonly IReadOnlyList<string> PollerExchanges =
+    [
+        PollerHeartbeatExchange,
+        DeviceTelemetryExchange,
+        DeviceReachabilityExchange,
+    ];
+
     /// <summary>The permission pattern that matches nothing. RabbitMQ spells "no rights" as an empty regex.</summary>
     public const string DenyAll = "";
 
     /// <summary>
-    /// The publish-only account: it may write to the heartbeat exchange and do nothing else. It
-    /// cannot declare a queue (no <c>configure</c>) and cannot consume from one (no <c>read</c>), so
-    /// a stolen poller credential cannot read a ticket, an alert, or another poller's traffic.
+    /// The publish-only account: it may write to the exchanges in <see cref="PollerExchanges"/> and
+    /// do nothing else. It cannot declare a queue (no <c>configure</c>) and cannot consume from one
+    /// (no <c>read</c>), so a stolen poller credential cannot read a ticket, an alert, or another
+    /// poller's traffic — and it cannot publish one either, because the write pattern is anchored to
+    /// a closed list of names rather than to a prefix.
     /// </summary>
     public static RabbitMqAccount PublishOnlyPoller(string username, string password) => new(
         username,
         password,
         Configure: DenyAll,
-        Write: $"^{PollerHeartbeatExchange.Replace(".", "\\.", StringComparison.Ordinal)}$",
+        Write: WritePattern(PollerExchanges),
         Read: DenyAll,
         Tags: []);
+
+    /// <summary>
+    /// An anchored alternation of literal exchange names. Anchored and escaped deliberately:
+    /// <c>Contracts\.Events:.*</c> would read as "any event this platform defines", which is a
+    /// licence to forge a <c>TicketCreated</c>.
+    /// </summary>
+    private static string WritePattern(IReadOnlyList<string> exchanges) =>
+        $"^({string.Join('|', exchanges.Select(Regex.Escape))})$";
 
     /// <summary>The platform's own account: the API declares its own topology, so it keeps full rights.</summary>
     public static RabbitMqAccount Administrator(string username, string password) => new(
@@ -118,18 +147,18 @@ public static class RabbitMqDefinitions
             ["policies"] = new JsonArray(),
             ["queues"] = new JsonArray(),
             // Declared durable and fanout to match exactly what MassTransit declares for the same
-            // message type. A mismatch on either would fail the API's own declaration with
+            // message types. A mismatch on either would fail the API's own declaration with
             // PRECONDITION_FAILED and take the bus down on start-up.
-            ["exchanges"] = new JsonArray(new JsonObject
+            ["exchanges"] = new JsonArray([.. PollerExchanges.Select(name => (JsonNode)new JsonObject
             {
-                ["name"] = PollerHeartbeatExchange,
+                ["name"] = name,
                 ["vhost"] = VirtualHost,
                 ["type"] = "fanout",
                 ["durable"] = true,
                 ["auto_delete"] = false,
                 ["internal"] = false,
                 ["arguments"] = new JsonObject(),
-            }),
+            })]),
             ["bindings"] = new JsonArray(),
         };
 

@@ -7,6 +7,8 @@ using Modules.Assets.Data;
 using Modules.Assets.Seeding;
 using Modules.Helpdesk.Data;
 using Modules.Helpdesk.Seeding;
+using Modules.Monitoring.Data;
+using Modules.Monitoring.Seeding;
 
 var connectionString = Environment.GetEnvironmentVariable("ConnectionStrings__database");
 if (string.IsNullOrWhiteSpace(connectionString))
@@ -48,4 +50,24 @@ var linkResult = await new HelpdeskCiLinkSeeder(helpdeskDbContext).SeedAsync(new
     assetsResult.NetworkCiIds,
     assetsResult.ServiceCiIds));
 Console.WriteLine($"Ticket asset links ready. Added {linkResult.LinksAdded} ticket to CI links.");
+
+// Monitored devices last: they name CIs the estate has just written, and Monitoring may not
+// reference Assets, so the ids arrive as an argument the same way the ticket links' did.
+var monitoringOptions = new DbContextOptionsBuilder<MonitoringDbContext>()
+    .UseNpgsql(connectionString)
+    .Options;
+await using var monitoringDbContext = new MonitoringDbContext(monitoringOptions);
+await monitoringDbContext.Database.MigrateAsync();
+var monitoringResult = await new MonitoringDemoSeeder(monitoringDbContext).SeedAsync(
+    new MonitoringSeedPlan(
+        // Defaults keep `dotnet run --project src/Seeder` working outside Aspire; under `aspire run`
+        // these name the simulator container as the poller's own container reaches it — by name on
+        // the session network, which is the only route that works from inside a container.
+        Environment.GetEnvironmentVariable("Monitoring__Seed__SnmpAddress") ?? "snmpsim",
+        int.TryParse(Environment.GetEnvironmentVariable("Monitoring__Seed__SnmpPort"), out var snmpPort)
+            ? snmpPort
+            : 161,
+        [.. assetsResult.NetworkCiIds.Take(3)],
+        Environment.GetEnvironmentVariable("Monitoring__Seed__PollerGroup") ?? "default"));
+Console.WriteLine($"Monitored devices ready. Added {monitoringResult.DevicesAdded} devices and {monitoringResult.ChecksAdded} checks.");
 return 0;

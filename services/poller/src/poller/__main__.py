@@ -11,8 +11,11 @@ import httpx
 
 from .agent import PollerAgent
 from .api import PlatformApiClient
-from .bus import HeartbeatPublisher
+from .bus import ExchangePublisher
+from .checks.icmp import IcmpCheck
+from .checks.snmp import SnmpCheck
 from .logging import configure_logging
+from .polling import PollingEngine
 from .settings import Settings
 
 logger = logging.getLogger("poller")
@@ -46,7 +49,20 @@ async def main() -> None:
             agent = PollerAgent(
                 settings,
                 PlatformApiClient(settings, http),
-                HeartbeatPublisher(connection, settings.heartbeat_exchange),
+                ExchangePublisher(connection, settings.heartbeat_exchange),
+                # Keyed by the check type as the API spells it, matched case-insensitively. A type
+                # with no runner here is reported as one this poller cannot run, rather than
+                # dropped: TCP and HTTP arrive in WP-3.8.
+                engine=PollingEngine(
+                    {
+                        "Icmp": IcmpCheck(privileged=settings.icmp_privileged),
+                        "Snmp": SnmpCheck(),
+                    },
+                    max_concurrency=settings.max_concurrent_checks,
+                ),
+                telemetry_publisher=ExchangePublisher(connection, settings.telemetry_exchange),
+                reachability_publisher=ExchangePublisher(
+                    connection, settings.reachability_exchange),
             )
             await agent.run_forever(stop)
 

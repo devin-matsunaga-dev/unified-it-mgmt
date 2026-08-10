@@ -7,6 +7,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 
 DEFAULT_HEARTBEAT_EXCHANGE = "Contracts.Events:PollerHeartbeat"
+DEFAULT_TELEMETRY_EXCHANGE = "Contracts.Events:DeviceTelemetryReported"
+DEFAULT_REACHABILITY_EXCHANGE = "Contracts.Events:DeviceReachabilityChanged"
 
 
 class MissingSettingError(RuntimeError):
@@ -37,7 +39,11 @@ class Settings:
     oidc_client_secret: str
     amqp_url: str
     heartbeat_exchange: str
+    telemetry_exchange: str
+    reachability_exchange: str
     http_timeout_seconds: float
+    max_concurrent_checks: int
+    icmp_privileged: bool
 
     @classmethod
     def from_env(cls, environ: Mapping[str, str] | None = None) -> Settings:
@@ -59,7 +65,18 @@ class Settings:
             oidc_client_secret=_required(env, "POLLER_OIDC_CLIENT_SECRET"),
             amqp_url=_required(env, "POLLER_AMQP_URL"),
             heartbeat_exchange=env.get("POLLER_HEARTBEAT_EXCHANGE") or DEFAULT_HEARTBEAT_EXCHANGE,
+            telemetry_exchange=env.get("POLLER_TELEMETRY_EXCHANGE") or DEFAULT_TELEMETRY_EXCHANGE,
+            reachability_exchange=(
+                env.get("POLLER_REACHABILITY_EXCHANGE") or DEFAULT_REACHABILITY_EXCHANGE),
             http_timeout_seconds=float(env.get("POLLER_HTTP_TIMEOUT_SECONDS") or "10"),
+            max_concurrent_checks=_positive_int(env, "POLLER_MAX_CONCURRENT_CHECKS", 50),
+            # Which socket the ICMP check opens. Raw needs CAP_NET_RAW *effective*, which a non-root
+            # container does not get from `--cap-add` alone; the datagram socket needs only a
+            # `net.ipv4.ping_group_range` covering this process's group, which AppHost sets for the
+            # poller's uid. Default true so that running the poller as root outside a container
+            # behaves the way `ping` does; AppHost sets it false.
+            icmp_privileged=(env.get("POLLER_ICMP_PRIVILEGED") or "true").strip().casefold()
+            not in ("false", "0", "no"),
         )
 
 

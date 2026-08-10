@@ -49,10 +49,11 @@ var rabbitMqUsername = builder.AddParameter("rabbitmq-username", "itplatform");
 var rabbitMqPassword = AddGeneratedPassword(builder, "rabbitmq-password");
 
 // The poller is the first thing on this bus that is not the platform itself, so it gets an account
-// of its own rather than the API's. Its rights are write-only, on one exchange: RabbitMQ has no
-// "publish-only" flag, so it is expressed as an empty configure pattern, an empty read pattern, and
-// a write pattern that matches exactly the heartbeat exchange. Because it cannot declare that
-// exchange either, the definitions file below declares it.
+// of its own rather than the API's. Its rights are write-only, on a closed list of exchanges:
+// RabbitMQ has no "publish-only" flag, so it is expressed as an empty configure pattern, an empty
+// read pattern, and a write pattern anchored to exactly the heartbeat and telemetry exchanges
+// (`RabbitMqDefinitions.PollerExchanges`). Because it cannot declare them either, the definitions
+// file below does.
 var pollerBusUsername = builder.AddParameter("poller-bus-username", "poller");
 var pollerBusPassword = AddGeneratedPassword(builder, "poller-bus-password");
 
@@ -183,9 +184,33 @@ var webHost = builder.AddProject<Projects.Web_Host>("web-host")
     })
     .WithHttpHealthCheck("/health");
 
+// The devices the poller polls. One container answers as several devices: snmpsim serves a different
+// recording per community string, so "healthy" and "degraded" are one process and one port. Stopping
+// it is how "the target goes away → a down event" is verified by hand.
+// Deliberately no published endpoint. The only thing that polls it is the poller, which is a
+// container on the same Aspire session network, so it reaches "snmpsim" by name on 161 directly.
+// Publishing a host port instead sends the traffic through DCP's proxy, which binds loopback unless
+// told otherwise (the WP-2.7 trap) — reachable from the host and not from the container that needs
+// it, which is exactly how the first live walk of this package found every SNMP check timing out.
+const string SnmpSimHost = "snmpsim";
+const int SnmpSimPort = 161;
+var snmpSimDataPath = Path.Combine(builder.Environment.ContentRootPath, "snmpsim");
+var snmpSim = builder.AddContainer(SnmpSimHost, "tandrup/snmpsim")
+    .WithBindMount(snmpSimDataPath, "/usr/local/snmpsim/data", isReadOnly: true);
+
 // A container rather than a Python executable resource, because "stop the poller and watch the
 // platform notice" is a verification step, and `docker stop` is how that is done.
 builder.AddDockerfile("poller", "../../services/poller")
+    // ICMP needs either a raw socket or an ICMP datagram socket, and this is the second.
+    // `--cap-add=NET_RAW` looks like the obvious answer and does not work: Docker puts an added
+    // capability in the permitted set, and a container running as a non-root user (this one is uid
+    // 10001, deliberately) gets an empty effective set unless the binary carries a file capability.
+    // Probed both ways — raw sockets fail with "Root privileges are required" under `--cap-add`
+    // alone. Granting one uid the right to open a ping socket is narrower than NET_RAW anyway, and
+    // it needs nothing set on the image.
+    // The range must match the Dockerfile's uid; nothing but a failing ping says so if it drifts.
+    .WithContainerRuntimeArgs("--sysctl", "net.ipv4.ping_group_range=10001 10001")
+    .WithEnvironment("POLLER_ICMP_PRIVILEGED", "false")
     .WithEnvironment("POLLER_NAME", "poller-1")
     .WithEnvironment("POLLER_GROUP", "default")
     .WithEnvironment("POLLER_AGENT_VERSION", "0.1.0")
@@ -203,11 +228,21 @@ builder.AddDockerfile("poller", "../../services/poller")
         $"{rabbitMq.GetEndpoint("tcp").Property(EndpointProperty.Port)}/"))
     .WaitFor(webHost)
     .WaitFor(rabbitMq)
-    .WaitFor(keycloak);
+    .WaitFor(keycloak)
+    .WaitFor(snmpSim);
 
 builder.AddProject<Projects.Seeder>("seeder")
     .WithReference(database)
-    .WaitFor(webHost);
+    // The seeded devices name the simulator by an address the *poller's container* can reach. That
+    // is the container network, not the host: unlike Keycloak, nothing outside the session network
+    // needs to talk to the simulator.
+    .WithEnvironment("Monitoring__Seed__SnmpAddress", SnmpSimHost)
+    .WithEnvironment(
+        "Monitoring__Seed__SnmpPort",
+        SnmpSimPort.ToString(System.Globalization.CultureInfo.InvariantCulture))
+    .WithEnvironment("Monitoring__Seed__PollerGroup", "default")
+    .WaitFor(webHost)
+    .WaitFor(snmpSim);
 
 builder.AddViteApp("web", "../../web")
     .WithReference(webHost)

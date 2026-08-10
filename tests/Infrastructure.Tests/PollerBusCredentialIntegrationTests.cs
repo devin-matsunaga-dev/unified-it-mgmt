@@ -80,19 +80,24 @@ public sealed class PollerBusCredentialIntegrationTests(PollerBusFixture broker)
 
     public Task DisposeAsync() => Task.CompletedTask;
 
+    public static TheoryData<string> PollerExchanges() =>
+        [.. RabbitMqDefinitions.PollerExchanges];
+
     /// <summary>
     /// The credential works at all — otherwise every refusal below proves nothing. It also proves
-    /// the password hash the renderer writes is one RabbitMQ accepts.
+    /// the password hash the renderer writes is one RabbitMQ accepts, and that each exchange the
+    /// poller publishes to was really declared by the document, since it has no right to declare one.
     /// </summary>
-    [Fact]
-    public async Task PollerCredential_PublishingToTheHeartbeatExchange_Succeeds()
+    [Theory]
+    [MemberData(nameof(PollerExchanges))]
+    public async Task PollerCredential_PublishingToAPollerExchange_Succeeds(string exchange)
     {
         await using var connection = await OpenAsync(
             PollerBusFixture.PollerUsername, PollerBusFixture.PollerPassword);
         await using var channel = await CreateConfirmingChannelAsync(connection);
 
         await channel.BasicPublishAsync(
-            RabbitMqDefinitions.PollerHeartbeatExchange,
+            exchange,
             routingKey: string.Empty,
             mandatory: false,
             body: Encoding.UTF8.GetBytes("{}"));
