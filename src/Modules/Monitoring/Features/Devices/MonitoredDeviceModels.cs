@@ -55,6 +55,19 @@ public sealed record MonitoredDevicePageResponse(
     int Page,
     int PageSize);
 
+/// <summary>
+/// The per-check overrides of WP-3.5's alert tuning. Every member is optional and a null one means
+/// "use the platform default from <c>Monitoring:Alerting</c>" — a check never stores a copy of the
+/// defaults, so raising the platform's sustain count raises it for every check that never asked for
+/// something else.
+/// </summary>
+public sealed record AlertTuningRequest(
+    int? SustainedCycles = null,
+    int? RecoveryCycles = null,
+    double? HysteresisPercent = null,
+    int? FlapThreshold = null,
+    int? FlapWindowSeconds = null);
+
 public sealed record CreateCheckRequest(
     CheckType Type,
     string Name,
@@ -64,7 +77,8 @@ public sealed record CreateCheckRequest(
     double? CriticalThreshold = null,
     ThresholdComparison Comparison = ThresholdComparison.GreaterThan,
     IReadOnlyDictionary<string, string>? Parameters = null,
-    bool IsEnabled = true);
+    bool IsEnabled = true,
+    AlertTuningRequest? AlertTuning = null);
 
 public sealed record UpdateCheckRequest(
     string Name,
@@ -74,7 +88,8 @@ public sealed record UpdateCheckRequest(
     double? CriticalThreshold = null,
     ThresholdComparison Comparison = ThresholdComparison.GreaterThan,
     IReadOnlyDictionary<string, string>? Parameters = null,
-    bool IsEnabled = true);
+    bool IsEnabled = true,
+    AlertTuningRequest? AlertTuning = null);
 
 public sealed record CheckResponse(
     Guid Id,
@@ -87,6 +102,7 @@ public sealed record CheckResponse(
     double? CriticalThreshold,
     ThresholdComparison Comparison,
     IReadOnlyDictionary<string, string> Parameters,
+    AlertTuningRequest AlertTuning,
     bool IsEnabled,
     string CreatedBy,
     DateTimeOffset CreatedAt,

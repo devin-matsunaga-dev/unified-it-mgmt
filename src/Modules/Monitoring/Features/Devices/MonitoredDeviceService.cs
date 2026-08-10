@@ -248,7 +248,8 @@ public sealed class MonitoredDeviceService(
         var parameters = Normalise(request.Parameters);
         var errors = CheckRules.Validate(
             request.Type, request.IntervalSeconds, request.TimeoutSeconds,
-            request.WarningThreshold, request.CriticalThreshold, request.Comparison, parameters);
+            request.WarningThreshold, request.CriticalThreshold, request.Comparison, parameters,
+            request.AlertTuning);
         if (errors.Count > 0)
         {
             return new(MonitoringOutcome.Invalid, Errors: errors);
@@ -275,6 +276,11 @@ public sealed class MonitoredDeviceService(
             CriticalThreshold = request.CriticalThreshold,
             Comparison = request.Comparison,
             ParametersJson = JsonSerializer.Serialize(parameters),
+            SustainedCycles = request.AlertTuning?.SustainedCycles,
+            RecoveryCycles = request.AlertTuning?.RecoveryCycles,
+            HysteresisPercent = request.AlertTuning?.HysteresisPercent,
+            FlapThreshold = request.AlertTuning?.FlapThreshold,
+            FlapWindowSeconds = request.AlertTuning?.FlapWindowSeconds,
             IsEnabled = request.IsEnabled,
             CreatedBy = actorId,
             CreatedAt = now,
@@ -313,7 +319,8 @@ public sealed class MonitoredDeviceService(
         var parameters = Normalise(request.Parameters);
         var errors = CheckRules.Validate(
             check.Type, request.IntervalSeconds, request.TimeoutSeconds,
-            request.WarningThreshold, request.CriticalThreshold, request.Comparison, parameters);
+            request.WarningThreshold, request.CriticalThreshold, request.Comparison, parameters,
+            request.AlertTuning);
         if (errors.Count > 0)
         {
             return new(MonitoringOutcome.Invalid, Errors: errors);
@@ -335,6 +342,13 @@ public sealed class MonitoredDeviceService(
         check.CriticalThreshold = request.CriticalThreshold;
         check.Comparison = request.Comparison;
         check.ParametersJson = JsonSerializer.Serialize(parameters);
+        // A complete statement, like the WP-2.2 assignment endpoint: omitting the tuning block
+        // restores the platform defaults rather than silently keeping the previous overrides.
+        check.SustainedCycles = request.AlertTuning?.SustainedCycles;
+        check.RecoveryCycles = request.AlertTuning?.RecoveryCycles;
+        check.HysteresisPercent = request.AlertTuning?.HysteresisPercent;
+        check.FlapThreshold = request.AlertTuning?.FlapThreshold;
+        check.FlapWindowSeconds = request.AlertTuning?.FlapWindowSeconds;
         check.IsEnabled = request.IsEnabled;
         check.UpdatedBy = GetActorId(actor);
         check.UpdatedAt = DateTimeOffset.UtcNow;
@@ -441,6 +455,12 @@ public sealed class MonitoredDeviceService(
         check.CriticalThreshold,
         check.Comparison,
         Deserialize(check.ParametersJson),
+        new AlertTuningRequest(
+            check.SustainedCycles,
+            check.RecoveryCycles,
+            check.HysteresisPercent,
+            check.FlapThreshold,
+            check.FlapWindowSeconds),
         check.IsEnabled,
         check.CreatedBy,
         check.CreatedAt,

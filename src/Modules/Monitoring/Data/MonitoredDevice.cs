@@ -70,6 +70,25 @@ public sealed class CheckDefinition
     /// </summary>
     public required string ParametersJson { get; set; }
 
+    /// <summary>
+    /// How many consecutive bad readings this check needs before its rules get worse. Null means the
+    /// platform default in <c>Monitoring:Alerting</c> — the same rule for all five of these columns,
+    /// so a check that nobody has tuned carries no copy of the defaults to drift from them. WP-3.5.
+    /// </summary>
+    public int? SustainedCycles { get; set; }
+
+    /// <summary>Consecutive good readings before an alert on this check clears. Null: platform default.</summary>
+    public int? RecoveryCycles { get; set; }
+
+    /// <summary>How far back past a threshold a value must come, as a percentage of it. Null: platform default.</summary>
+    public double? HysteresisPercent { get; set; }
+
+    /// <summary>State changes inside the flap window that mean this check is flapping. Null: platform default.</summary>
+    public int? FlapThreshold { get; set; }
+
+    /// <summary>The period flap changes are counted over. Null: platform default.</summary>
+    public int? FlapWindowSeconds { get; set; }
+
     public bool IsEnabled { get; set; } = true;
 
     public required string CreatedBy { get; set; }

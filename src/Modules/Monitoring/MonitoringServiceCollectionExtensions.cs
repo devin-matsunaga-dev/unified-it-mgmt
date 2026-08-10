@@ -4,6 +4,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Modules.Monitoring.Data;
+using Modules.Monitoring.Features.Alerting;
 using Modules.Monitoring.Features.Devices;
 using Modules.Monitoring.Features.Heartbeats;
 using Modules.Monitoring.Features.MaintenanceWindows;
@@ -32,6 +33,26 @@ public static class MonitoringServiceCollectionExtensions
         services.AddScoped<IPollerHeartbeatService, PollerHeartbeatService>();
         services.AddScoped<IMetricIngestionService, MetricIngestionService>();
         services.AddScoped<IMetricQueryService, MetricQueryService>();
+        services.AddScoped<IAlertStateStore, RedisAlertStateStore>();
+        services.AddScoped<IAlertEngine, AlertEngine>();
+
+        services.AddOptions<AlertOptions>()
+            .Bind(configuration.GetSection(AlertOptions.SectionName))
+            .Validate(options => options.SustainedCycles >= 1,
+                $"{AlertOptions.SectionName}:SustainedCycles must be at least 1.")
+            .Validate(options => options.RecoveryCycles >= 1,
+                $"{AlertOptions.SectionName}:RecoveryCycles must be at least 1.")
+            .Validate(options => options.HysteresisPercent is >= 0 and < 100,
+                $"{AlertOptions.SectionName}:HysteresisPercent must be at least 0 and below 100.")
+            .Validate(options => options.FlapThreshold >= 2,
+                $"{AlertOptions.SectionName}:FlapThreshold must be at least 2 — one state change is not a flap.")
+            .Validate(options => options.FlapWindowSeconds >= 1,
+                $"{AlertOptions.SectionName}:FlapWindowSeconds must be at least 1.")
+            .Validate(options => options.FlapCooldownSeconds >= 1,
+                $"{AlertOptions.SectionName}:FlapCooldownSeconds must be at least 1.")
+            .Validate(options => options.StateTtlDays >= 1,
+                $"{AlertOptions.SectionName}:StateTtlDays must be at least 1.")
+            .ValidateOnStart();
 
         services.AddOptions<PollerHeartbeatOptions>()
             .Bind(configuration.GetSection(PollerHeartbeatOptions.SectionName))
@@ -70,5 +91,6 @@ public static class MonitoringServiceCollectionExtensions
         ArgumentNullException.ThrowIfNull(bus);
         bus.AddConsumer<PollerHeartbeatConsumer>();
         bus.AddConsumer<DeviceTelemetryConsumer>();
+        bus.AddConsumer<AlertTelemetryConsumer>();
     }
 }

@@ -46,6 +46,38 @@ public sealed class CheckDefinitionConfiguration : IEntityTypeConfiguration<Chec
     }
 }
 
+public sealed class AlertConfiguration : IEntityTypeConfiguration<Alert>
+{
+    public void Configure(EntityTypeBuilder<Alert> builder)
+    {
+        builder.ToTable("alerts", "monitoring");
+        builder.HasKey(alert => alert.Id);
+        builder.Property(alert => alert.RuleId).HasMaxLength(200).IsRequired();
+        builder.Property(alert => alert.MetricName).HasMaxLength(200).IsRequired();
+        builder.Property(alert => alert.Summary).HasMaxLength(1_000).IsRequired();
+        builder.Property(alert => alert.PollerName).HasMaxLength(100).IsRequired();
+        builder.Property(alert => alert.Severity).HasConversion<string>().HasMaxLength(20).IsRequired();
+        builder.Property(alert => alert.Status).HasConversion<string>().HasMaxLength(20).IsRequired();
+        builder.Property(alert => alert.Suppression).HasConversion<string>().HasMaxLength(20).IsRequired();
+
+        // "Raised exactly once" as a database constraint rather than only as a state machine
+        // invariant. Two consumers racing on one rule cannot both open an alert; the loser's
+        // transaction fails and its message is retried against the state the winner left.
+        builder.HasIndex(alert => new { alert.DeviceId, alert.RuleId })
+            .IsUnique()
+            .HasFilter("status = 'Open'");
+
+        // The alert board's query: what is wrong now, worst first.
+        builder.HasIndex(alert => new { alert.Status, alert.Severity, alert.RaisedAt });
+
+        // An alert is about one device's rule, so it goes when the device goes — the same reasoning
+        // as a check definition, and unlike a metric, which is a fact about a moment.
+        builder.HasOne(alert => alert.Device).WithMany()
+            .HasForeignKey(alert => alert.DeviceId)
+            .OnDelete(DeleteBehavior.Cascade);
+    }
+}
+
 public sealed class MaintenanceWindowConfiguration : IEntityTypeConfiguration<MaintenanceWindow>
 {
     public void Configure(EntityTypeBuilder<MaintenanceWindow> builder)

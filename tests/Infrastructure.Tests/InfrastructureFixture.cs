@@ -3,6 +3,7 @@ using DotNet.Testcontainers.Builders;
 using DotNet.Testcontainers.Containers;
 using Testcontainers.PostgreSql;
 using Testcontainers.RabbitMq;
+using Testcontainers.Redis;
 
 namespace Infrastructure.Tests;
 
@@ -17,6 +18,10 @@ public sealed class InfrastructureFixture : IAsyncLifetime
         .WithUsername(RabbitMqUsername)
         .WithPassword(RabbitMqPassword)
         .Build();
+    // WP-3.5: alert state machines live in Redis (ARCHITECTURE §5). Shared like the rest of the
+    // fixture — unlike RabbitMQ, nothing here can reconfigure it broker-wide, so the WP-3.2 rule
+    // about definitions imports has no equivalent. Tests still key on their own device ids.
+    private readonly RedisContainer _redis = new RedisBuilder("redis:8-alpine").Build();
     private readonly IContainer _minio = new ContainerBuilder("quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z")
         .WithCommand("server", "/data")
         .WithEnvironment("MINIO_ROOT_USER", "minioadmin")
@@ -32,6 +37,8 @@ public sealed class InfrastructureFixture : IAsyncLifetime
     public const string RabbitMqPassword = "itplatform-test-password";
 
     public string RabbitMqConnectionString => _rabbitMq.GetConnectionString();
+
+    public string RedisConnectionString => _redis.GetConnectionString();
 
     /// <summary>
     /// Queue names and depths, for a test that timed out waiting for a message. "It never arrived"
@@ -49,11 +56,13 @@ public sealed class InfrastructureFixture : IAsyncLifetime
     // bus; PollerBusCredentialIntegrationTests starts a broker of its own instead.
     public string MinioConnectionString => $"http://{_minio.Hostname}:{_minio.GetMappedPublicPort(9000)}";
 
-    public Task InitializeAsync() => Task.WhenAll(_postgres.StartAsync(), _rabbitMq.StartAsync(), _minio.StartAsync());
+    public Task InitializeAsync() => Task.WhenAll(
+        _postgres.StartAsync(), _rabbitMq.StartAsync(), _redis.StartAsync(), _minio.StartAsync());
 
     public Task DisposeAsync() => Task.WhenAll(
         _postgres.DisposeAsync().AsTask(),
         _rabbitMq.DisposeAsync().AsTask(),
+        _redis.DisposeAsync().AsTask(),
         _minio.DisposeAsync().AsTask());
 }
 
