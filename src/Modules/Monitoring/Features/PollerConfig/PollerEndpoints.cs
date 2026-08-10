@@ -12,15 +12,16 @@ public static class PollerEndpoints
 {
     public static IEndpointRouteBuilder MapPollerEndpoints(this IEndpointRouteBuilder endpoints)
     {
-        // The poller has no identity of its own until WP-3.2 issues it credentials, so both the
-        // registration and the config fetch sit behind the operator policy for now. That is an
-        // interim: a poller must not need an agent's rights to read its own configuration.
+        // Two audiences, two policies. The list is an operator's view of the fleet; registration and
+        // the config fetch are the poller talking about itself, and WP-3.2 gave it a credential of
+        // its own so it no longer borrows an agent's.
         var group = endpoints.MapGroup("/api/pollers").RequireAuthorization("CanManageMonitoring");
+        var pollerGroup = endpoints.MapGroup("/api/pollers").RequireAuthorization("CanPoll");
 
         group.MapGet("/", async (IPollerService service, CancellationToken cancellationToken) =>
             Results.Ok(await service.ListAsync(cancellationToken)));
 
-        group.MapPost("/registrations", async (RegisterPollerRequest request, ClaimsPrincipal user,
+        pollerGroup.MapPost("/registrations", async (RegisterPollerRequest request, ClaimsPrincipal user,
             IPollerService service, CancellationToken cancellationToken) =>
         {
             var validation = await new RegisterPollerValidator().ValidateAsync(request, cancellationToken);
@@ -35,7 +36,7 @@ public static class PollerEndpoints
 
         // Omitting sinceVersion asks for a full snapshot; passing the version the poller holds asks
         // for what has changed since, which is what keeps a steady-state cycle nearly empty.
-        group.MapGet("/{name}/config", async (string name, long? sinceVersion, IPollerService service,
+        pollerGroup.MapGet("/{name}/config", async (string name, long? sinceVersion, IPollerService service,
             CancellationToken cancellationToken) =>
         {
             var result = await service.GetConfigAsync(name, sinceVersion, cancellationToken);

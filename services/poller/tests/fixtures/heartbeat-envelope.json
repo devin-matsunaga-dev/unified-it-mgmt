@@ -1,0 +1,22 @@
+{
+  "messageId": "0199c0de-0000-7000-8000-00000000beef",
+  "conversationId": "0199c0de-0000-7000-8000-0000000c0ffe",
+  "messageType": [
+    "urn:message:Contracts.Events:PollerHeartbeat"
+  ],
+  "message": {
+    "eventId": "0199c0de-0000-7000-8000-00000000beef",
+    "occurredAt": "2026-08-10T12:00:00+00:00",
+    "pollerName": "POLLER_NAME_PLACEHOLDER",
+    "pollerGroup": "default",
+    "agentVersion": "0.1.0",
+    "configVersion": 12,
+    "intervalSeconds": 15,
+    "deviceCount": 4,
+    "cycleNumber": 3
+  },
+  "sentTime": "2026-08-10T12:00:00+00:00",
+  "headers": {
+    "poller-source": "POLLER_NAME_PLACEHOLDER"
+  }
+}

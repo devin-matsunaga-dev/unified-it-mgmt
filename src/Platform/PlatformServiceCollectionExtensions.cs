@@ -17,9 +17,15 @@ namespace Platform;
 
 public static class PlatformServiceCollectionExtensions
 {
+    /// <param name="configureBus">
+    /// Consumers owned by the modules. MassTransit is configured exactly once for the host, but a
+    /// consumer belongs to the module that reacts — so each module hands its own registrations in
+    /// here rather than Platform naming them, which it could not do without referencing them.
+    /// </param>
     public static IServiceCollection AddPlatformServices(
         this IServiceCollection services,
-        IConfiguration configuration)
+        IConfiguration configuration,
+        Action<IBusRegistrationConfigurator>? configureBus = null)
     {
         services.AddHttpContextAccessor();
         services.AddDbContext<PlatformDbContext>((provider, options) =>
@@ -35,6 +41,7 @@ public static class PlatformServiceCollectionExtensions
         services.AddMassTransit(bus =>
         {
             bus.AddConsumer<SystemPingConsumer>();
+            configureBus?.Invoke(bus);
             bus.AddConfigureEndpointsCallback((context, _, endpoint) =>
                 endpoint.UseEntityFrameworkOutbox<PlatformDbContext>(context));
             bus.AddEntityFrameworkOutbox<PlatformDbContext>(outbox =>

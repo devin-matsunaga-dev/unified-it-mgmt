@@ -9,7 +9,8 @@
       { "name": "Admin" },
       { "name": "Technician" },
       { "name": "Manager" },
-      { "name": "EndUser" }
+      { "name": "EndUser" },
+      { "name": "Poller", "description": "A polling agent reading its own configuration. Machines only — never granted to a person." }
     ]
   },
   "clients": [
@@ -46,9 +47,40 @@
           }
         }
       ]
+    },
+    {
+      "clientId": "it-platform-poller",
+      "name": "IT Platform Poller",
+      "description": "The polling agents' own identity. Client credentials only: no browser flow, no password grant, and no human ever signs in as this.",
+      "enabled": true,
+      "publicClient": false,
+      "serviceAccountsEnabled": true,
+      "standardFlowEnabled": false,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "protocol": "openid-connect",
+      "secret": "${POLLER_CLIENT_SECRET}",
+      "protocolMappers": [
+        {
+          "name": "API audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.client.audience": "it-platform-api",
+            "access.token.claim": "true"
+          }
+        }
+      ]
     }
   ],
   "users": [
+    {
+      "username": "service-account-it-platform-poller",
+      "enabled": true,
+      "serviceAccountClientId": "it-platform-poller",
+      "realmRoles": ["Poller"]
+    },
     { "username": "admin1", "enabled": true, "emailVerified": true, "email": "admin1@example.test", "firstName": "Admin", "lastName": "One", "credentials": [{ "type": "password", "value": "ChangeMe-Admin1!", "temporary": false }], "realmRoles": ["Admin"] },
     { "username": "admin2", "enabled": true, "emailVerified": true, "email": "admin2@example.test", "firstName": "Admin", "lastName": "Two", "credentials": [{ "type": "password", "value": "ChangeMe-Admin2!", "temporary": false }], "realmRoles": ["Admin"] },
     { "username": "technician1", "enabled": true, "emailVerified": true, "email": "technician1@example.test", "firstName": "Technician", "lastName": "One", "credentials": [{ "type": "password", "value": "ChangeMe-Technician1!", "temporary": false }], "realmRoles": ["Technician"] },

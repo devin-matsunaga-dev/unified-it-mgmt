@@ -92,6 +92,9 @@ public sealed class PollerConfiguration : IEntityTypeConfiguration<Poller>
 
         // The registration key: a restarted poller re-registers as itself.
         builder.HasIndex(poller => poller.Name).IsUnique();
+
+        // The heartbeat evaluator's only query: enabled pollers that have spoken at least once.
+        builder.HasIndex(poller => new { poller.IsEnabled, poller.LastHeartbeatAt });
     }
 }
 

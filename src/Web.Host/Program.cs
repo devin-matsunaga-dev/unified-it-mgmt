@@ -44,7 +44,9 @@ builder.Services.AddCors(options => options.AddPolicy("WebClient", policy => pol
     .AllowAnyHeader()
     .AllowAnyMethod()));
 builder.Services.AddPlatformAuthentication(builder.Configuration);
-builder.Services.AddPlatformServices(builder.Configuration);
+builder.Services.AddPlatformServices(
+    builder.Configuration,
+    MonitoringServiceCollectionExtensions.AddMonitoringConsumers);
 builder.Services.AddHelpdeskServices(builder.Configuration);
 builder.Services.AddAssetsServices(builder.Configuration);
 builder.Services.AddMonitoringServices(builder.Configuration);

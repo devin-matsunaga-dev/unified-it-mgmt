@@ -60,7 +60,7 @@ public sealed class MonitoringConfigApiIntegrationTests : IAsyncLifetime
             parameters: new() { ["oid"] = "1.3.6.1.4.1.9.9.109.1.1.1.1.7.1" });
 
         var poller = await RegisterPollerAsync(NewPollerName(), pollerGroup);
-        var config = await GetAsync<PollerConfigDto>($"/api/pollers/{poller.Name}/config");
+        var config = await GetAsync<PollerConfigDto>($"/api/pollers/{poller.Name}/config", PollerRole);
 
         Assert.True(config.IsFullSnapshot);
         Assert.Equal(pollerGroup, config.PollerGroup);
@@ -87,7 +87,7 @@ public sealed class MonitoringConfigApiIntegrationTests : IAsyncLifetime
             parameters: new() { ["oid"] = "1.3.6.1.2.1.1.3.0" });
 
         var poller = await RegisterPollerAsync(NewPollerName(), pollerGroup);
-        var before = await GetAsync<PollerConfigDto>($"/api/pollers/{poller.Name}/config");
+        var before = await GetAsync<PollerConfigDto>($"/api/pollers/{poller.Name}/config", PollerRole);
 
         using var edit = Authenticated(HttpMethod.Put, $"/api/checks/{check.Id}");
         edit.Content = JsonContent.Create(new
@@ -105,7 +105,7 @@ public sealed class MonitoringConfigApiIntegrationTests : IAsyncLifetime
         Assert.Equal(HttpStatusCode.OK, edited.StatusCode);
 
         var after = await GetAsync<PollerConfigDto>(
-            $"/api/pollers/{poller.Name}/config?sinceVersion={before.ConfigVersion}");
+            $"/api/pollers/{poller.Name}/config?sinceVersion={before.ConfigVersion}", PollerRole);
 
         Assert.True(after.ConfigVersion > before.ConfigVersion);
         Assert.False(after.IsFullSnapshot);
@@ -126,11 +126,11 @@ public sealed class MonitoringConfigApiIntegrationTests : IAsyncLifetime
         var quiet = await CreateDeviceAsync(pollerGroup, "10.20.0.4");
 
         var poller = await RegisterPollerAsync(NewPollerName(), pollerGroup);
-        var snapshot = await GetAsync<PollerConfigDto>($"/api/pollers/{poller.Name}/config");
+        var snapshot = await GetAsync<PollerConfigDto>($"/api/pollers/{poller.Name}/config", PollerRole);
         Assert.Equal(2, snapshot.Devices.Count);
 
         var unchanged = await GetAsync<PollerConfigDto>(
-            $"/api/pollers/{poller.Name}/config?sinceVersion={snapshot.ConfigVersion}");
+            $"/api/pollers/{poller.Name}/config?sinceVersion={snapshot.ConfigVersion}", PollerRole);
 
         Assert.Empty(unchanged.Devices);
         Assert.Empty(unchanged.RemovedDeviceIds);
@@ -142,7 +142,7 @@ public sealed class MonitoringConfigApiIntegrationTests : IAsyncLifetime
         Assert.Equal(HttpStatusCode.OK, edited.StatusCode);
 
         var delta = await GetAsync<PollerConfigDto>(
-            $"/api/pollers/{poller.Name}/config?sinceVersion={snapshot.ConfigVersion}");
+            $"/api/pollers/{poller.Name}/config?sinceVersion={snapshot.ConfigVersion}", PollerRole);
 
         var only = Assert.Single(delta.Devices);
         Assert.Equal(quiet.Id, only.DeviceId);
@@ -155,14 +155,14 @@ public sealed class MonitoringConfigApiIntegrationTests : IAsyncLifetime
         var pollerGroup = NewGroup();
         var device = await CreateDeviceAsync(pollerGroup, "10.20.0.5");
         var poller = await RegisterPollerAsync(NewPollerName(), pollerGroup);
-        var snapshot = await GetAsync<PollerConfigDto>($"/api/pollers/{poller.Name}/config");
+        var snapshot = await GetAsync<PollerConfigDto>($"/api/pollers/{poller.Name}/config", PollerRole);
 
         using var delete = Authenticated(HttpMethod.Delete, $"/api/monitored-devices/{device.Id}");
         using var deleted = await _client!.SendAsync(delete);
         Assert.Equal(HttpStatusCode.NoContent, deleted.StatusCode);
 
         var delta = await GetAsync<PollerConfigDto>(
-            $"/api/pollers/{poller.Name}/config?sinceVersion={snapshot.ConfigVersion}");
+            $"/api/pollers/{poller.Name}/config?sinceVersion={snapshot.ConfigVersion}", PollerRole);
 
         Assert.Empty(delta.Devices);
         Assert.Equal([device.Id], delta.RemovedDeviceIds);
@@ -205,7 +205,7 @@ public sealed class MonitoringConfigApiIntegrationTests : IAsyncLifetime
         Assert.Equal("Scheduled", window.Status);
 
         var poller = await RegisterPollerAsync(NewPollerName(), pollerGroup);
-        var config = await GetAsync<PollerConfigDto>($"/api/pollers/{poller.Name}/config");
+        var config = await GetAsync<PollerConfigDto>($"/api/pollers/{poller.Name}/config", PollerRole);
 
         var configured = Assert.Single(config.MaintenanceWindows, item => item.Id == window.Id);
         Assert.False(configured.AppliesToAllDevices);
@@ -312,10 +312,12 @@ public sealed class MonitoringConfigApiIntegrationTests : IAsyncLifetime
     public async Task PollerConfig_WithASinceVersionAheadOfTheServer_ReturnsValidationProblem()
     {
         var poller = await RegisterPollerAsync(NewPollerName(), NewGroup());
-        var config = await GetAsync<PollerConfigDto>($"/api/pollers/{poller.Name}/config");
+        var config = await GetAsync<PollerConfigDto>($"/api/pollers/{poller.Name}/config", PollerRole);
 
         using var request = Authenticated(
-            HttpMethod.Get, $"/api/pollers/{poller.Name}/config?sinceVersion={config.ConfigVersion + 1_000}");
+            HttpMethod.Get,
+            $"/api/pollers/{poller.Name}/config?sinceVersion={config.ConfigVersion + 1_000}",
+            PollerRole);
         using var response = await _client!.SendAsync(request);
         var problem = await response.Content.ReadAsStringAsync();
 
@@ -326,7 +328,7 @@ public sealed class MonitoringConfigApiIntegrationTests : IAsyncLifetime
     [Fact]
     public async Task PollerConfig_ForAnUnregisteredPoller_ReturnsNotFound()
     {
-        using var request = Authenticated(HttpMethod.Get, $"/api/pollers/{NewPollerName()}/config");
+        using var request = Authenticated(HttpMethod.Get, $"/api/pollers/{NewPollerName()}/config", PollerRole);
         using var response = await _client!.SendAsync(request);
 
         Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
@@ -400,6 +402,13 @@ public sealed class MonitoringConfigApiIntegrationTests : IAsyncLifetime
 
     // ---- fixtures ----
 
+    /// <summary>
+    /// The poller's own credential. WP-3.2 moved registration and the config fetch off the operator
+    /// policy onto it, so these two calls no longer work with a Technician token — which is the
+    /// point, and is asserted in PollerHeartbeatApiIntegrationTests.
+    /// </summary>
+    private const string PollerRole = "Poller";
+
     private static string NewGroup() => $"group-{Guid.NewGuid():N}"[..20];
 
     private static string NewPollerName() => $"poller-{Guid.NewGuid():N}"[..20];
@@ -445,7 +454,7 @@ public sealed class MonitoringConfigApiIntegrationTests : IAsyncLifetime
         string pollerGroup,
         string? agentVersion = null)
     {
-        using var request = Authenticated(HttpMethod.Post, "/api/pollers/registrations");
+        using var request = Authenticated(HttpMethod.Post, "/api/pollers/registrations", PollerRole);
         request.Content = JsonContent.Create(new { name, pollerGroup, agentVersion });
         using var response = await _client!.SendAsync(request);
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
@@ -471,9 +480,9 @@ public sealed class MonitoringConfigApiIntegrationTests : IAsyncLifetime
         return Assert.IsType<CiDto>(await response.Content.ReadFromJsonAsync<CiDto>());
     }
 
-    private async Task<T> GetAsync<T>(string uri)
+    private async Task<T> GetAsync<T>(string uri, string role = "Technician")
     {
-        using var request = Authenticated(HttpMethod.Get, uri);
+        using var request = Authenticated(HttpMethod.Get, uri, role);
         using var response = await _client!.SendAsync(request);
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         return Assert.IsType<T>(await response.Content.ReadFromJsonAsync<T>());

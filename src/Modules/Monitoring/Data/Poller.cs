@@ -29,6 +29,32 @@ public sealed class Poller
     public DateTimeOffset LastRegisteredAt { get; set; }
 
     public bool IsEnabled { get; set; } = true;
+
+    /// <summary>
+    /// When the poller last said it had finished a cycle. Null means it has never spoken, which is
+    /// not the same as having gone quiet — a poller that never started has no interval to be late by.
+    /// </summary>
+    public DateTimeOffset? LastHeartbeatAt { get; set; }
+
+    /// <summary>
+    /// How often the poller says it intends to speak, taken from the heartbeat itself. The server
+    /// does not decide this: the poller is the only thing that knows its own cycle, and "missed N
+    /// heartbeats" is meaningless without it.
+    /// </summary>
+    public int? HeartbeatIntervalSeconds { get; set; }
+
+    /// <summary>The cycle number of the last heartbeat applied; it only ever moves forward.</summary>
+    public long LastCycleNumber { get; set; }
+
+    /// <summary>How many devices the poller reported holding at that heartbeat.</summary>
+    public int LastReportedDeviceCount { get; set; }
+
+    /// <summary>
+    /// Set when a missed-heartbeat event was published for the current silence, and cleared by the
+    /// next heartbeat. That is what makes the event fire once per outage rather than once per
+    /// evaluation pass.
+    /// </summary>
+    public DateTimeOffset? HeartbeatMissedAt { get; set; }
 }
 
 /// <summary>

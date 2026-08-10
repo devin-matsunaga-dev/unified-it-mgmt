@@ -18,7 +18,12 @@ public sealed record PollerResponse(
     DateTimeOffset RegisteredAt,
     DateTimeOffset LastRegisteredAt,
     bool IsEnabled,
-    long CurrentConfigVersion);
+    long CurrentConfigVersion,
+    DateTimeOffset? LastHeartbeatAt,
+    int? HeartbeatIntervalSeconds,
+    long LastCycleNumber,
+    int LastReportedDeviceCount,
+    DateTimeOffset? HeartbeatMissedAt);
 
 public sealed record PollerListResponse(IReadOnlyList<PollerResponse> Items, long CurrentConfigVersion);
 

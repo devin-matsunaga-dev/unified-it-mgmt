@@ -19,6 +19,9 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- Referenced for its code, not as a resource to orchestrate: AppHost renders the RabbitMQ
+         definitions with the same renderer the tests import into a throwaway broker. -->
+    <ProjectReference Include="..\Platform\Platform.csproj" IsAspireProjectResource="false" />
     <ProjectReference Include="..\Seeder\Seeder.csproj" />
     <ProjectReference Include="..\Web.Host\Web.Host.csproj" />
   </ItemGroup>

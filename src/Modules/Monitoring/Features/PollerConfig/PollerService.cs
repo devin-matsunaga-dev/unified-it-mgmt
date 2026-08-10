@@ -245,7 +245,12 @@ public sealed class PollerService(
         poller.RegisteredAt,
         poller.LastRegisteredAt,
         poller.IsEnabled,
-        currentVersion);
+        currentVersion,
+        poller.LastHeartbeatAt,
+        poller.HeartbeatIntervalSeconds,
+        poller.LastCycleNumber,
+        poller.LastReportedDeviceCount,
+        poller.HeartbeatMissedAt);
 
     private static IReadOnlyDictionary<string, string[]> Field(string name, string message) =>
         new Dictionary<string, string[]>(StringComparer.Ordinal) { [name] = [message] };

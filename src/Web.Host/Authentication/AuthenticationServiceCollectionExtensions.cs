@@ -52,7 +52,12 @@ public static class AuthenticationServiceCollectionExtensions
             .AddPolicy(AuthorizationPolicies.CanManageMonitoring, policy => policy.RequireRole(
                 PlatformRoles.Admin,
                 PlatformRoles.Technician,
-                PlatformRoles.Manager));
+                PlatformRoles.Manager))
+            // The poller's own credential, and nothing else — not even Admin. A poller reads its
+            // configuration with the identity it polls under, and the endpoints behind this policy
+            // are the only ones it can reach; an operator inspecting pollers uses GET /api/pollers,
+            // which stays on CanManageMonitoring.
+            .AddPolicy(AuthorizationPolicies.CanPoll, policy => policy.RequireRole(PlatformRoles.Poller));
 
         return services;
     }

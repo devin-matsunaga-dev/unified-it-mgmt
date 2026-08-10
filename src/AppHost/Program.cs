@@ -2,6 +2,8 @@ using System.IO;
 
 using Aspire.Hosting.ApplicationModel;
 
+using Platform.Messaging;
+
 var builder = DistributedApplication.CreateBuilder(args);
 
 // The host name every *client* uses to reach this stack. It defaults to localhost, which is right
@@ -45,26 +47,69 @@ var redis = builder.AddRedis("redis")
 
 var rabbitMqUsername = builder.AddParameter("rabbitmq-username", "itplatform");
 var rabbitMqPassword = AddGeneratedPassword(builder, "rabbitmq-password");
+
+// The poller is the first thing on this bus that is not the platform itself, so it gets an account
+// of its own rather than the API's. Its rights are write-only, on one exchange: RabbitMQ has no
+// "publish-only" flag, so it is expressed as an empty configure pattern, an empty read pattern, and
+// a write pattern that matches exactly the heartbeat exchange. Because it cannot declare that
+// exchange either, the definitions file below declares it.
+var pollerBusUsername = builder.AddParameter("poller-bus-username", "poller");
+var pollerBusPassword = AddGeneratedPassword(builder, "poller-bus-password");
+
+// Rendered here for the same reason the Keycloak realm is: the values are only known at this point,
+// and a file on disk can be read back and checked. The renderer lives in Platform so the tests
+// import this exact document into a throwaway broker — a permission model proved against a
+// hand-written copy proves nothing about the one that ships.
+var rabbitMqDefinitionsPath = Path.Combine(builder.Environment.ContentRootPath, "obj", "rabbitmq", "definitions.json");
+var rabbitMqDefinitionsConfPath = Path.Combine(builder.Environment.ContentRootPath, "obj", "rabbitmq", "20-definitions.conf");
+Directory.CreateDirectory(Path.GetDirectoryName(rabbitMqDefinitionsPath)!);
+File.WriteAllText(
+    rabbitMqDefinitionsPath,
+    RabbitMqDefinitions.Render(
+    [
+        RabbitMqDefinitions.Administrator(
+            await ValueOf(rabbitMqUsername), await ValueOf(rabbitMqPassword)),
+        RabbitMqDefinitions.PublishOnlyPoller(
+            await ValueOf(pollerBusUsername), await ValueOf(pollerBusPassword)),
+    ]));
+// conf.d rather than rabbitmq.conf: the image's entrypoint writes the default-user file into the
+// same directory from RABBITMQ_DEFAULT_USER, and replacing the main file would throw that away.
+File.WriteAllText(rabbitMqDefinitionsConfPath, "load_definitions = /etc/rabbitmq/definitions.json\n");
+
 var rabbitMq = builder.AddRabbitMQ("rabbitmq", rabbitMqUsername, rabbitMqPassword)
     .WithDataVolume("it-platform-rabbitmq-data-v2")
-    .WithManagementPlugin();
+    .WithManagementPlugin()
+    .WithBindMount(rabbitMqDefinitionsPath, "/etc/rabbitmq/definitions.json", isReadOnly: true)
+    .WithBindMount(rabbitMqDefinitionsConfPath, "/etc/rabbitmq/conf.d/20-definitions.conf", isReadOnly: true);
 
 // Keycloak's realm import performs its own ${...} substitution, but it resolves against neither the
 // container environment nor -D system properties: a placeholder silently collapses to its default,
 // which is how the LAN redirect URI went missing while looking configured. Render the realm here
 // instead, where the host is already known, and mount the rendered copy — the result is a plain file
 // on disk that can be read back and checked.
+// The poller's client secret is rendered into the realm the same way, and for the same reason it is
+// a generated persisted parameter rather than a literal in the template: a credential checked into
+// the repository is a credential everyone has.
+var pollerClientSecret = AddGeneratedPassword(builder, "poller-client-secret");
+
 var realmTemplatePath = Path.Combine(builder.Environment.ContentRootPath, "Keycloak", "it-platform-realm.json");
 var renderedRealmPath = Path.Combine(builder.Environment.ContentRootPath, "obj", "keycloak", "it-platform-realm.json");
 Directory.CreateDirectory(Path.GetDirectoryName(renderedRealmPath)!);
 File.WriteAllText(
     renderedRealmPath,
-    File.ReadAllText(realmTemplatePath).Replace("${PUBLIC_HOST}", publicHostValue, StringComparison.Ordinal));
+    File.ReadAllText(realmTemplatePath)
+        .Replace("${PUBLIC_HOST}", publicHostValue, StringComparison.Ordinal)
+        .Replace("${POLLER_CLIENT_SECRET}", await ValueOf(pollerClientSecret), StringComparison.Ordinal));
 
 var keycloakAdmin = builder.AddParameter("keycloak-admin", "admin");
 var keycloakPassword = AddGeneratedPassword(builder, "keycloak-password");
 var keycloak = builder.AddContainer("keycloak", "quay.io/keycloak/keycloak", "26.3")
     .WithArgs("start-dev", "--health-enabled=true", "--import-realm")
+    // Pin the issuer instead of letting Keycloak infer it from whoever asked. Until WP-3.2 every
+    // client was a browser or the API, and both call Keycloak by the same name; the poller is the
+    // first client inside a container, which must dial host.docker.internal and would otherwise be
+    // handed a token stamped with an issuer the API rejects. One name, whatever the route.
+    .WithEnvironment("KC_HOSTNAME", ReferenceExpression.Create($"http://{publicHost}:8080"))
     .WithEnvironment("KC_BOOTSTRAP_ADMIN_USERNAME", keycloakAdmin)
     .WithEnvironment("KC_BOOTSTRAP_ADMIN_PASSWORD", keycloakPassword)
     .WithHttpEndpoint(port: 8080, targetPort: 8080, name: "http")
@@ -138,6 +183,28 @@ var webHost = builder.AddProject<Projects.Web_Host>("web-host")
     })
     .WithHttpHealthCheck("/health");
 
+// A container rather than a Python executable resource, because "stop the poller and watch the
+// platform notice" is a verification step, and `docker stop` is how that is done.
+builder.AddDockerfile("poller", "../../services/poller")
+    .WithEnvironment("POLLER_NAME", "poller-1")
+    .WithEnvironment("POLLER_GROUP", "default")
+    .WithEnvironment("POLLER_AGENT_VERSION", "0.1.0")
+    .WithEnvironment("POLLER_INTERVAL_SECONDS", "15")
+    .WithEnvironment("POLLER_API_BASE_URL", webHost.GetEndpoint("http"))
+    // The public authority, not the container's route to it: the token's issuer is stamped from
+    // KC_HOSTNAME above, and this is the address the poller dials to ask for one.
+    .WithEnvironment("POLLER_OIDC_TOKEN_URL", ReferenceExpression.Create(
+        $"{keycloak.GetEndpoint("http")}/realms/it-platform/protocol/openid-connect/token"))
+    .WithEnvironment("POLLER_OIDC_CLIENT_ID", "it-platform-poller")
+    .WithEnvironment("POLLER_OIDC_CLIENT_SECRET", pollerClientSecret)
+    .WithEnvironment("POLLER_AMQP_URL", ReferenceExpression.Create(
+        $"amqp://{pollerBusUsername}:{pollerBusPassword}@" +
+        $"{rabbitMq.GetEndpoint("tcp").Property(EndpointProperty.Host)}:" +
+        $"{rabbitMq.GetEndpoint("tcp").Property(EndpointProperty.Port)}/"))
+    .WaitFor(webHost)
+    .WaitFor(rabbitMq)
+    .WaitFor(keycloak);
+
 builder.AddProject<Projects.Seeder>("seeder")
     .WithReference(database)
     .WaitFor(webHost);
@@ -158,6 +225,13 @@ builder.AddViteApp("web", "../../web")
     .WaitFor(keycloak);
 
 builder.Build().Run();
+
+// Most parameters are passed to resources by reference and resolved by Aspire. These few have to be
+// read here as plain strings, because they are rendered into files — the realm import and the broker
+// definitions — before any resource starts.
+static async Task<string> ValueOf(IResourceBuilder<ParameterResource> parameter) =>
+    await parameter.Resource.GetValueAsync(CancellationToken.None)
+    ?? throw new InvalidOperationException($"Parameter '{parameter.Resource.Name}' has no value.");
 
 static IResourceBuilder<ParameterResource> AddGeneratedPassword(
     IDistributedApplicationBuilder builder,
