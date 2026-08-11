@@ -24,6 +24,9 @@ public sealed class AlertRulesTests
     [InlineData(CheckType.Snmp, "memory", "memory.used_percent")]
     [InlineData(CheckType.Tcp, null, "check.latency_ms")]
     [InlineData(CheckType.Http, null, "check.latency_ms")]
+    // A TLS check is about the certificate rather than the handshake, so unlike its two neighbours
+    // it does not take the latency every check reports.
+    [InlineData(CheckType.Tls, null, "tls.days_to_expiry")]
     public void PrimaryMetric_ForAKnownFamily_IsTheOneTheCheckIsAbout(
         CheckType type,
         string? family,
@@ -164,6 +167,40 @@ public sealed class AlertRulesTests
     }
 
     /// <summary>
+    /// The poller writes whole sentences, so the summary must not add a second full stop to one. Every
+    /// failing check in the live estate read "…after 3 packets.." before this.
+    /// </summary>
+    [Theory]
+    [InlineData("No reply from 192.0.2.1 after 3 packets.", "packets.")]
+    [InlineData("TCP connect to mailhog:1026 failed: [Errno 111] Connect call failed.", "failed.")]
+    [InlineData("The agent stopped answering!", "answering!")]
+    [InlineData("Is the listener up?", "up?")]
+    public void Observe_AFailureReasonThatIsAlreadyASentence_IsNotGivenASecondFullStop(
+        string error,
+        string expectedEnding)
+    {
+        var check = Check(70, 90);
+
+        var availability = Assert.Single(Observe(check, Result(check, error)));
+
+        Assert.EndsWith(expectedEnding, availability.Summary, StringComparison.Ordinal);
+        Assert.DoesNotContain("..", availability.Summary, StringComparison.Ordinal);
+    }
+
+    /// <summary>A reason that stops mid-air still gets terminated, or it runs into whatever follows.</summary>
+    [Theory]
+    [InlineData("Timed out after 5s", "Timed out after 5s.")]
+    [InlineData("Timed out after 5s   ", "Timed out after 5s.")]
+    public void Observe_AFailureReasonWithNoPunctuation_IsTerminated(string error, string expected)
+    {
+        var check = Check(70, 90);
+
+        var availability = Assert.Single(Observe(check, Result(check, error)));
+
+        Assert.EndsWith(expected, availability.Summary, StringComparison.Ordinal);
+    }
+
+    /// <summary>
     /// Nobody measured the CPU of a switch that did not answer. Treating the absence as a good reading
     /// would clear a threshold alert at exactly the moment the device disappeared.
     /// </summary>
@@ -277,6 +314,20 @@ public sealed class AlertRulesTests
         AlertRules.Observe(
             result, check, AlertRules.RuleIds(check), Policy,
             new Dictionary<string, AlertState>(StringComparer.Ordinal));
+
+    /// <summary>A failed check carrying a particular reason, for the summary's wording.</summary>
+    private static DeviceCheckResult Result(CheckDefinition check, string error) => new(
+        Guid.CreateVersion7(),
+        Guid.CreateVersion7(),
+        check.Id,
+        "Snmp",
+        check.Name,
+        "10.0.0.1",
+        Now,
+        Succeeded: false,
+        LatencyMs: null,
+        Error: error,
+        Metrics: []);
 
     private static DeviceCheckResult Result(CheckDefinition check, bool succeeded, double? cpu) => new(
         Guid.CreateVersion7(),

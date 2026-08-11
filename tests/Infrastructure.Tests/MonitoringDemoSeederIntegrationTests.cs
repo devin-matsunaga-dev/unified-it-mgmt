@@ -21,21 +21,40 @@ public sealed class MonitoringDemoSeederIntegrationTests(InfrastructureFixture i
         Guid.Parse("0199c0de-3301-7000-8000-0000000000a1"),
         Guid.Parse("0199c0de-3301-7000-8000-0000000000a2"),
         Guid.Parse("0199c0de-3301-7000-8000-0000000000a3"),
+        Guid.Parse("0199c0de-3301-7000-8000-0000000000a4"),
     ];
 
     [Fact]
-    public async Task Seed_WritesThreeDevicesWithTheirChecks()
+    public async Task Seed_WritesADeviceForEveryCiWithItsChecks()
     {
         await using var dbContext = await NewDatabaseAsync();
 
         var result = await new MonitoringDemoSeeder(dbContext).SeedAsync(Plan());
 
-        Assert.Equal(3, result.DevicesAdded);
+        Assert.Equal(4, result.DevicesAdded);
         var devices = await dbContext.MonitoredDevices.Include(device => device.Checks)
             .OrderBy(device => device.Id).ToListAsync();
-        Assert.Equal(3, devices.Count);
+        Assert.Equal(4, devices.Count);
         Assert.All(devices, device => Assert.NotEmpty(device.Checks));
         Assert.Equal(result.ChecksAdded, devices.Sum(device => device.Checks.Count));
+    }
+
+    /// <summary>
+    /// The estate degrades rather than fails when there are fewer CIs than devices to hang off them:
+    /// a database seeded before WP-3.8 has three network CIs and no service one.
+    /// </summary>
+    [Fact]
+    public async Task Seed_WithFewerCisThanDevices_SeedsTheOnesItCan()
+    {
+        await using var dbContext = await NewDatabaseAsync();
+
+        var result = await new MonitoringDemoSeeder(dbContext)
+            .SeedAsync(Plan() with { CiIds = CiIds[..3] });
+
+        Assert.Equal(3, result.DevicesAdded);
+        Assert.Empty(await dbContext.CheckDefinitions
+            .Where(check => check.Type == CheckType.Tcp || check.Type == CheckType.Http)
+            .ToListAsync());
     }
 
     /// <summary>
@@ -74,8 +93,8 @@ public sealed class MonitoringDemoSeederIntegrationTests(InfrastructureFixture i
         var second = await seeder.SeedAsync(Plan());
 
         Assert.Equal(0, second.DevicesAdded);
-        Assert.Equal(3, await dbContext.MonitoredDevices.CountAsync());
-        Assert.Equal(3, await dbContext.ConfigChanges.CountAsync());
+        Assert.Equal(4, await dbContext.MonitoredDevices.CountAsync());
+        Assert.Equal(4, await dbContext.ConfigChanges.CountAsync());
     }
 
     /// <summary>
@@ -126,6 +145,59 @@ public sealed class MonitoringDemoSeederIntegrationTests(InfrastructureFixture i
         Assert.Contains(parsed, values => values["metric"] == "memory");
         Assert.Contains(parsed, values => values["metric"] == "sysinfo");
     }
+
+    /// <summary>
+    /// WP-3.8's two new check types, seeded so that "point a service check at MailHog → OK" is
+    /// something a fresh <c>aspire run</c> already does rather than something to configure first.
+    /// The address is the poller's route to the container, exactly as the SNMP simulator's is.
+    /// </summary>
+    [Fact]
+    public async Task Seed_ServiceChecks_PointAtTheServiceAddressWithAPortAndAUrl()
+    {
+        await using var dbContext = await NewDatabaseAsync();
+        await new MonitoringDemoSeeder(dbContext).SeedAsync(Plan());
+
+        var device = await dbContext.MonitoredDevices.Include(device => device.Checks)
+            .SingleAsync(device => device.Address == "mailhog");
+
+        Assert.Equal("1025", Parameters(device, CheckType.Tcp)["port"]);
+        Assert.Equal("http://mailhog:8025/", Parameters(device, CheckType.Http)["url"]);
+        Assert.Equal("GET", Parameters(device, CheckType.Http)["method"]);
+        // No ICMP check on this one, so a device whose reachability is decided entirely by service
+        // checks is part of the seeded estate rather than a shape nobody has run.
+        Assert.DoesNotContain(device.Checks, check => check.Type == CheckType.Icmp);
+    }
+
+    /// <summary>
+    /// Every seeded check has to survive the validator its own API applies, or the estate contains
+    /// checks nobody can edit — which is exactly the WP-3.1 defect the seeded SNMP checks carry.
+    /// </summary>
+    [Fact]
+    public async Task Seed_EveryCheck_PassesTheRulesItsOwnApiWouldApply()
+    {
+        await using var dbContext = await NewDatabaseAsync();
+        await new MonitoringDemoSeeder(dbContext).SeedAsync(Plan());
+
+        var checks = await dbContext.CheckDefinitions
+            .Where(check => check.Type != CheckType.Snmp)
+            .ToListAsync();
+
+        Assert.NotEmpty(checks);
+        Assert.All(checks, check => Assert.Empty(Modules.Monitoring.Features.Devices.CheckRules.Validate(
+            check.Type,
+            check.IntervalSeconds,
+            check.TimeoutSeconds,
+            check.WarningThreshold,
+            check.CriticalThreshold,
+            check.Comparison,
+            JsonSerializer.Deserialize<Dictionary<string, string>>(check.ParametersJson)!)));
+    }
+
+    private static IReadOnlyDictionary<string, string> Parameters(
+        MonitoredDevice device,
+        CheckType type) =>
+        JsonSerializer.Deserialize<Dictionary<string, string>>(
+            device.Checks.Single(check => check.Type == type).ParametersJson)!;
 
     /// <summary>
     /// A device is a CI plus an address. Without CIs there is nothing to monitor, and inventing ids

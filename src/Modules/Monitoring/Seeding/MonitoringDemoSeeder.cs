@@ -15,14 +15,24 @@ namespace Modules.Monitoring.Seeding;
 /// <param name="SnmpPort">Port it answers on; not 161, because binding that needs privileges.</param>
 /// <param name="CiIds">
 /// Which CIs to monitor, taken as an argument because Monitoring may not reference Assets — the same
-/// route WP-2.8's ticket↔CI links took. Three are used; fewer seeds fewer devices.
+/// route WP-2.8's ticket↔CI links took. Four are used; fewer seeds fewer devices.
 /// </param>
 /// <param name="PollerGroup">Which poller owns these devices. Must match the running poller's group.</param>
+/// <param name="ServiceAddress">
+/// Host the seeded service checks point at, again as the poller's container reaches it. MailHog under
+/// <c>aspire run</c>: it is the one resource in the stack that answers both a TCP port and an HTTP
+/// request, which is exactly what WP-3.8's two new check types need to demonstrate.
+/// </param>
+/// <param name="ServiceTcpPort">A port the service accepts a connection on (MailHog's SMTP listener).</param>
+/// <param name="ServiceHttpUrl">A URL the service answers 200 on (MailHog's UI).</param>
 public sealed record MonitoringSeedPlan(
     string SnmpAddress,
     int SnmpPort,
     IReadOnlyList<Guid> CiIds,
-    string PollerGroup = "default");
+    string PollerGroup = "default",
+    string ServiceAddress = "mailhog",
+    int ServiceTcpPort = 1025,
+    string ServiceHttpUrl = "http://mailhog:8025/");
 
 public sealed record MonitoringSeedResult(int DevicesAdded, int ChecksAdded);
 
@@ -156,6 +166,29 @@ public sealed class MonitoringDemoSeeder(MonitoringDbContext dbContext)
             "Unreachable by design (RFC 5737 documentation address)",
             UnreachableAddress,
             [Ping(now, "Reachability", intervalSeconds: 30, timeoutSeconds: 3)]);
+
+        // A service rather than a box: WP-3.8's checks answer "is this listener accepting" and "is
+        // this site serving the page it should", neither of which an SNMP agent is asked. It carries
+        // no ICMP check on purpose, so that a device whose reachability is decided by service checks
+        // alone is part of the seeded estate rather than a shape nobody has run.
+        // No TLS check is seeded: nothing in the dev stack serves HTTPS, and a seeded check pointing
+        // at a public host would raise a permanent alert on a machine with no internet.
+        if (plan.CiIds.Count < 4)
+        {
+            yield break;
+        }
+
+        yield return Device(
+            Guid.Parse("0199c0de-3300-7000-8000-000000000004"),
+            plan.CiIds[3],
+            plan,
+            now,
+            "Mail service — TCP and HTTP service checks",
+            plan.ServiceAddress,
+            [
+                Tcp(now, "SMTP port", plan.ServiceTcpPort, intervalSeconds: 30),
+                Http(now, "Web UI", plan.ServiceHttpUrl, intervalSeconds: 30),
+            ]);
     }
 
     private static MonitoredDevice Device(
@@ -186,6 +219,40 @@ public sealed class MonitoringDemoSeeder(MonitoringDbContext dbContext)
         int intervalSeconds,
         int timeoutSeconds = 5) => Check(now, CheckType.Icmp, name, intervalSeconds, timeoutSeconds,
             new Dictionary<string, string> { ["count"] = "3" });
+
+    private static CheckDefinition Tcp(
+        DateTimeOffset now,
+        string name,
+        int port,
+        int intervalSeconds) => Check(
+            now,
+            CheckType.Tcp,
+            $"TCP: {name}",
+            intervalSeconds,
+            timeoutSeconds: 5,
+            new Dictionary<string, string>
+            {
+                ["port"] = port.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            });
+
+    private static CheckDefinition Http(
+        DateTimeOffset now,
+        string name,
+        string url,
+        int intervalSeconds) => Check(
+            now,
+            CheckType.Http,
+            $"HTTP: {name}",
+            intervalSeconds,
+            timeoutSeconds: 5,
+            new Dictionary<string, string>
+            {
+                ["url"] = url,
+                // Left at "any 2xx" and no content expectation: the seeded check has to keep passing
+                // across a MailHog version bump, and the checklist's failure path is an operator
+                // editing it rather than a fixture that rots.
+                ["method"] = "GET",
+            });
 
     private static CheckDefinition Snmp(
         DateTimeOffset now,

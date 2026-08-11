@@ -67,7 +67,27 @@ var monitoringResult = await new MonitoringDemoSeeder(monitoringDbContext).SeedA
         int.TryParse(Environment.GetEnvironmentVariable("Monitoring__Seed__SnmpPort"), out var snmpPort)
             ? snmpPort
             : 161,
-        [.. assetsResult.NetworkCiIds.Take(3)],
-        Environment.GetEnvironmentVariable("Monitoring__Seed__PollerGroup") ?? "default"));
+        // Three network devices and then a service CI: WP-3.8's TCP and HTTP checks are about a
+        // listener rather than a box, and the fourth device is the one they hang off. The first three
+        // stay first — WP-3.7 gave exactly those an owner so an alert has context to show.
+        // The service CI is named rather than taken by position, because the device polls the dev
+        // mail container and "Corporate Email Service" is the CI that is actually true of it — the
+        // first entry in ServiceCiIds is the finance reporting service, which made every screen in
+        // the demo say a mail outage was a reporting outage. Falls back to the old positional pick so
+        // a rename in the estate costs the apt name rather than the whole device.
+        [
+            .. assetsResult.NetworkCiIds.Take(3),
+            .. (assetsResult.CiIds.TryGetValue("svc-mail", out var mailCiId)
+                ? [mailCiId]
+                : assetsResult.ServiceCiIds.Take(1)),
+        ],
+        Environment.GetEnvironmentVariable("Monitoring__Seed__PollerGroup") ?? "default",
+        Environment.GetEnvironmentVariable("Monitoring__Seed__ServiceAddress") ?? "mailhog",
+        int.TryParse(
+            Environment.GetEnvironmentVariable("Monitoring__Seed__ServiceTcpPort"), out var serviceTcpPort)
+            ? serviceTcpPort
+            : 1025,
+        Environment.GetEnvironmentVariable("Monitoring__Seed__ServiceHttpUrl")
+            ?? "http://mailhog:8025/"));
 Console.WriteLine($"Monitored devices ready. Added {monitoringResult.DevicesAdded} devices and {monitoringResult.ChecksAdded} checks.");
 return 0;

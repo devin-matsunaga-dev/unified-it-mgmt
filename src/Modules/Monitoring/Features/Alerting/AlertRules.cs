@@ -113,11 +113,17 @@ public static class AlertRules
                     _ => null,
                 };
 
-            // WP-3.8's checks measure how long they took and nothing else, so the latency WP-3.4
-            // derives from every check result is the number their thresholds are about.
+            // A TCP connect and an HTTP request measure how long they took and nothing else, so the
+            // latency WP-3.4 derives from every check result is the number their thresholds are about.
             case CheckType.Tcp:
             case CheckType.Http:
                 return "check.latency_ms";
+
+            // A TLS check is about the certificate, not the handshake: how long the connection took
+            // is not what anybody sets a threshold on. Falling, so its thresholds read 30 and 7 with
+            // a LessThan comparison.
+            case CheckType.Tls:
+                return "tls.days_to_expiry";
 
             default:
                 return null;
@@ -156,7 +162,9 @@ public static class AlertRules
                 Threshold: null,
                 Summary: result.Succeeded
                     ? $"{check.Name} on {result.Address} is completing."
-                    : $"{check.Name} on {result.Address} is failing: {result.Error ?? "no reason reported"}."),
+                    : EndSentence(
+                        $"{check.Name} on {result.Address} is failing: "
+                        + (result.Error ?? "no reason reported"))),
         };
 
         // A failed check carries no samples, so its threshold rule simply does not advance this
@@ -200,6 +208,24 @@ public static class AlertRules
             Summarise(check, metricName, value, severity, sample.Unit)));
 
         return observations;
+    }
+
+    /// <summary>
+    /// Terminates a sentence exactly once.
+    /// <para>
+    /// An availability summary ends with the reason the poller reported, and the poller writes whole
+    /// sentences — "No reply from 192.0.2.1 after 3 packets." — so appending a full stop
+    /// unconditionally produced "…after 3 packets.." on every failing check in the estate. Left
+    /// alone when the reason is already punctuated, added when it is not, because a reason that runs
+    /// into whatever follows it reads worse than either.
+    /// </para>
+    /// </summary>
+    private static string EndSentence(string text)
+    {
+        var trimmed = text.TrimEnd();
+        return trimmed.Length > 0 && trimmed[^1] is '.' or '!' or '?'
+            ? trimmed
+            : trimmed + ".";
     }
 
     private static string Summarise(

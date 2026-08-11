@@ -113,6 +113,16 @@ public enum CheckType
 
     /// <summary>An HTTP(S) request with status/content expectations. WP-3.8.</summary>
     Http,
+
+    /// <summary>
+    /// A TLS handshake that reports how many days the served certificate has left. WP-3.8.
+    /// <para>
+    /// Its own type rather than a flag on <see cref="Http"/>: a check carries one warning and one
+    /// critical threshold, and days-remaining falls while latency rises, so the two cannot share a
+    /// pair. Stored as a string (see <c>CheckDefinitionConfiguration</c>), so this needs no migration.
+    /// </para>
+    /// </summary>
+    Tls,
 }
 
 public enum ThresholdComparison

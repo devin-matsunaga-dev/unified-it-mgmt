@@ -143,9 +143,15 @@ var inboundMail = builder.AddContainer("inbound-mail", "greenmail/standalone", "
     .WithEndpoint(targetPort: 3143, name: "imap")
     .WithHttpEndpoint(targetPort: 8080, name: "api");
 
-var mailhog = builder.AddContainer("mailhog", "mailhog/mailhog", "v1.0.1")
-    .WithEndpoint(targetPort: 1025, name: "smtp")
-    .WithHttpEndpoint(targetPort: 8025, name: "http");
+// MailHog is also what WP-3.8's seeded service checks point at: it is the one resource in the stack
+// that answers both a plain TCP connect and an HTTP request. As with snmpsim, the poller reaches it
+// by container name on the session network, not through a published endpoint.
+const string MailHogHost = "mailhog";
+const int MailHogSmtpPort = 1025;
+const int MailHogHttpPort = 8025;
+var mailhog = builder.AddContainer(MailHogHost, "mailhog/mailhog", "v1.0.1")
+    .WithEndpoint(targetPort: MailHogSmtpPort, name: "smtp")
+    .WithHttpEndpoint(targetPort: MailHogHttpPort, name: "http");
 
 var webHost = builder.AddProject<Projects.Web_Host>("web-host")
     .WithReference(database)
@@ -229,7 +235,10 @@ builder.AddDockerfile("poller", "../../services/poller")
     .WaitFor(webHost)
     .WaitFor(rabbitMq)
     .WaitFor(keycloak)
-    .WaitFor(snmpSim);
+    .WaitFor(snmpSim)
+    // The seeded service checks poll it, so a poller that started first would report the mail
+    // service down for its first cycles and raise an alert about the stack starting up.
+    .WaitFor(mailhog);
 
 builder.AddProject<Projects.Seeder>("seeder")
     .WithReference(database)
@@ -241,8 +250,17 @@ builder.AddProject<Projects.Seeder>("seeder")
         "Monitoring__Seed__SnmpPort",
         SnmpSimPort.ToString(System.Globalization.CultureInfo.InvariantCulture))
     .WithEnvironment("Monitoring__Seed__PollerGroup", "default")
+    // The seeded TCP and HTTP checks, addressed the same way and for the same reason.
+    .WithEnvironment("Monitoring__Seed__ServiceAddress", MailHogHost)
+    .WithEnvironment(
+        "Monitoring__Seed__ServiceTcpPort",
+        MailHogSmtpPort.ToString(System.Globalization.CultureInfo.InvariantCulture))
+    .WithEnvironment(
+        "Monitoring__Seed__ServiceHttpUrl",
+        $"http://{MailHogHost}:{MailHogHttpPort.ToString(System.Globalization.CultureInfo.InvariantCulture)}/")
     .WaitFor(webHost)
-    .WaitFor(snmpSim);
+    .WaitFor(snmpSim)
+    .WaitFor(mailhog);
 
 builder.AddViteApp("web", "../../web")
     .WithReference(webHost)

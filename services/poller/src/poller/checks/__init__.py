@@ -51,8 +51,8 @@ class CheckError(Exception):
 
 class CheckRunner(Protocol):
     """
-    One kind of check. WP-3.8's TCP and HTTP checks implement this beside ICMP and SNMP rather than
-    inside them.
+    One kind of check. Five implement it — ICMP, SNMP, TCP, HTTP and TLS — each beside the others
+    rather than inside them, so a new kind is a new module and a line in `__main__`.
     """
 
     async def run(

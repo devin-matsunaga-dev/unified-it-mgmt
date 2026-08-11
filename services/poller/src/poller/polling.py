@@ -106,8 +106,8 @@ class PollingEngine:
         observed_at = datetime.now(UTC)
         runner = self._runners.get(due.check_type.casefold())
         if runner is None:
-            # A check type this poller does not implement — a TCP or HTTP check (WP-3.8) reaching a
-            # poller of this version. Reported rather than dropped, so the gap is visible.
+            # A check type this poller does not implement — a type added to the API reaching a
+            # poller of an older version. Reported rather than dropped, so the gap is visible.
             return CheckResult(
                 due,
                 CheckOutcome.failure(f"This poller cannot run a '{due.check_type}' check."),

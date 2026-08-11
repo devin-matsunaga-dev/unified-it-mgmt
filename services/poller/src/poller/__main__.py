@@ -12,8 +12,11 @@ import httpx
 from .agent import PollerAgent
 from .api import PlatformApiClient
 from .bus import ExchangePublisher
+from .checks.http import HttpCheck
 from .checks.icmp import IcmpCheck
 from .checks.snmp import SnmpCheck
+from .checks.tcp import TcpCheck
+from .checks.tls import TlsCheck
 from .logging import configure_logging
 from .polling import PollingEngine
 from .settings import Settings
@@ -52,11 +55,14 @@ async def main() -> None:
                 ExchangePublisher(connection, settings.heartbeat_exchange),
                 # Keyed by the check type as the API spells it, matched case-insensitively. A type
                 # with no runner here is reported as one this poller cannot run, rather than
-                # dropped: TCP and HTTP arrive in WP-3.8.
+                # dropped — which is how a check type added to the API ahead of the poller reads.
                 engine=PollingEngine(
                     {
                         "Icmp": IcmpCheck(privileged=settings.icmp_privileged),
                         "Snmp": SnmpCheck(),
+                        "Tcp": TcpCheck(),
+                        "Http": HttpCheck(),
+                        "Tls": TlsCheck(),
                     },
                     max_concurrency=settings.max_concurrent_checks,
                 ),

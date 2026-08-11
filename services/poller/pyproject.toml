@@ -1,10 +1,16 @@
 [project]
 name = "poller"
 version = "0.1.0"
-description = "IT Platform polling agent: ICMP and SNMP polling with batched telemetry."
+description = "IT Platform polling agent: ICMP, SNMP and service polling with batched telemetry."
 requires-python = ">=3.13"
 dependencies = [
     "aio-pika>=9.5.5",
+    # Reading a certificate's expiry date means parsing X.509 DER, and the standard library has no
+    # parser: `ssl.getpeercert()` returns the parsed dictionary only for a *verified* handshake, and
+    # the TLS check deliberately does not verify (an expired certificate is the case it exists for).
+    # Hand-rolling ASN.1 in the path that decides whether a certificate is about to expire is the
+    # same trade WP-2.7 refused for QR error correction.
+    "cryptography>=46.0.3",
     "httpx>=0.28.1",
     # ICMP has no standard-library implementation, and the alternatives are hand-rolling the
     # protocol or parsing `ping` output per locale. Needs CAP_NET_RAW for its raw socket.
