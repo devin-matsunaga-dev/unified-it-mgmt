@@ -10,9 +10,9 @@
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
     <PackageReference Include="FluentValidation" Version="12.0.0" />
     <PackageReference Include="MailKit" Version="4.17.0" />
-    <PackageReference Include="Microsoft.EntityFrameworkCore" Version="10.0.0" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore" Version="10.0.10" />
     <PackageReference Include="Minio" Version="7.0.0" />
-    <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="10.0.0" />
+    <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="10.0.3" />
     <!-- WP-3.6: the alert→ticket rate limit and circuit breaker are rate-limit state, which
          ARCHITECTURE §5 puts in Redis. Named here for the same reason WP-3.5 named it in Monitoring:
          the host already carries it transitively through Aspire, and naming it is what lets the module
