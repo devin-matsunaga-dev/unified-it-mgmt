@@ -165,6 +165,9 @@ var webHost = builder.AddProject<Projects.Web_Host>("web-host")
     // What a printed QR points at. A sticker outlives the process, so this is the one setting worth
     // getting right before printing anything.
     .WithEnvironment("Assets__Labels__PublicBaseUrl", webOrigin)
+    // Where a Teams or Slack deep link points. Same rule as the label URL above: the link is read in
+    // a chat client that has no idea which host wrote it, so it has to be absolute and public.
+    .WithEnvironment("Notifications__DeepLinkBaseUrl", webOrigin)
     .WithEnvironment("ConnectionStrings__minio", minio.GetEndpoint("api"))
     .WithEnvironment("ObjectStorage__AccessKey", minioAccessKey)
     .WithEnvironment("ObjectStorage__SecretKey", minioSecretKey)
@@ -258,6 +261,13 @@ builder.AddProject<Projects.Seeder>("seeder")
     .WithEnvironment(
         "Monitoring__Seed__ServiceHttpUrl",
         $"http://{MailHogHost}:{MailHogHttpPort.ToString(System.Globalization.CultureInfo.InvariantCulture)}/")
+    // WP-3.10. Left unset by default, which seeds the email channel and no chat channel — a
+    // placeholder webhook would fail every Critical alert and look like a broken feature. Set it
+    // (with Notifications__Seed__WebhookKind = Teams or Slack) to seed the chat half.
+    .WithEnvironment("Notifications__Seed__WebhookUrl",
+        builder.Configuration["Notifications:Seed:WebhookUrl"] ?? string.Empty)
+    .WithEnvironment("Notifications__Seed__WebhookKind",
+        builder.Configuration["Notifications:Seed:WebhookKind"] ?? "Teams")
     .WaitFor(webHost)
     .WaitFor(snmpSim)
     .WaitFor(mailhog);

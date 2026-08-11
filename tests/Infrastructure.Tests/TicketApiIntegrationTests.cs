@@ -857,8 +857,15 @@ public sealed class TicketApiIntegrationTests : IAsyncLifetime
         var escalated = await verifyScope.ServiceProvider.GetRequiredService<HelpdeskDbContext>().Tickets
             .SingleAsync(item => item.Id == ticket.Id);
         Assert.Equal("sla-tech-b", escalated.AssignedTechnicianId);
-        Assert.Contains(_application.Notifications.Messages, item => item.Template.Name == "SlaWarning");
-        Assert.Contains(_application.Notifications.Messages, item => item.Template.Name == "SlaEscalation");
+        // WP-3.10 moved these off the direct email path and onto the notification router, so what is
+        // guaranteed now is a delivery row per event rather than an SMTP message: this ticket's
+        // technicians are test identities the platform directory has never heard of, so there is
+        // nowhere to send to and the row records that instead of the mail silently going nowhere.
+        var deliveries = await verifyScope.ServiceProvider.GetRequiredService<PlatformDbContext>()
+            .NotificationDeliveries.Where(item => item.UserId == "sla-tech-a" || item.UserId == "sla-tech-b")
+            .Select(item => item.EventKind).ToListAsync();
+        Assert.Contains("SlaWarningRaised", deliveries);
+        Assert.Contains("SlaEscalated", deliveries);
         var audits = await verifyScope.ServiceProvider.GetRequiredService<PlatformDbContext>().AuditEntries
             .Where(item => item.EntityType == "TicketSla").Select(item => item.Action).ToListAsync();
         Assert.Contains("WarningRaised", audits);

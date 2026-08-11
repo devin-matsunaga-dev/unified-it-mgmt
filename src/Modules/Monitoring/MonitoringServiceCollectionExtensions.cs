@@ -41,6 +41,7 @@ public static class MonitoringServiceCollectionExtensions
         services.AddScoped<IAlertService, AlertService>();
         services.AddScoped<IStatusBoardService, StatusBoardService>();
         services.AddScoped<IMonitoringLiveUpdateService, MonitoringLiveUpdateService>();
+        services.AddScoped<IAlertNotificationService, AlertNotificationService>();
 
         // A host with no SignalR hub still has to be able to construct the alert engine — a seeder, a
         // test host, a future worker. Web.Host replaces this with the hub-backed one; TryAdd, so
@@ -103,5 +104,10 @@ public static class MonitoringServiceCollectionExtensions
         bus.AddConsumer<PollerHeartbeatConsumer>();
         bus.AddConsumer<DeviceTelemetryConsumer>();
         bus.AddConsumer<AlertTelemetryConsumer>();
+        // Their own endpoints, beside Helpdesk's ticket automation on the same two events: a Teams
+        // webhook that will not answer must not be able to stop a ticket being opened, which is the
+        // same separation WP-3.5 made between telemetry ingestion and alert evaluation.
+        bus.AddConsumer<AlertRaisedNotificationConsumer>();
+        bus.AddConsumer<AlertClearedNotificationConsumer>();
     }
 }

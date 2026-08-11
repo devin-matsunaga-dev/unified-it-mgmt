@@ -3,8 +3,10 @@ using System.Security.Claims;
 using Contracts.Events;
 using MassTransit;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 using Modules.Helpdesk.Data;
 using Platform.Auditing;
+using Platform.Data;
 using Platform.Notifications;
 
 namespace Modules.Helpdesk.Features.Sla;
@@ -12,7 +14,8 @@ namespace Modules.Helpdesk.Features.Sla;
 public sealed class SlaService(
     HelpdeskDbContext dbContext,
     IPublishEndpoint publishEndpoint,
-    INotificationService notificationService,
+    INotificationRouter notificationRouter,
+    IOptions<NotificationOptions> notificationOptions,
     IAuditService auditService) : ISlaService
 {
     private static readonly ClaimsPrincipal SchedulerActor = new(new ClaimsIdentity(
@@ -138,16 +141,22 @@ public sealed class SlaService(
         {
             if (response) sla.ResponseWarningRaised = true; else sla.ResolutionWarningRaised = true;
             await publishEndpoint.Publish(new SlaWarningRaised(Guid.CreateVersion7(), now, sla.TicketId, sla.Ticket.Number, targetName, dueAt), cancellationToken);
-            await notificationService.SendAsync(new NotificationMessage(
-                sla.Ticket.AssignedTechnicianId ?? sla.Ticket.RequesterId,
-                new NotificationTemplate("SlaWarning", $"SLA warning for {sla.Ticket.Number}", "{{Target}} target is approaching."),
-                new { sla.TicketId, Target = targetName, DueAt = dueAt }), cancellationToken);
+            await NotifySlaAsync(sla, "SlaWarningRaised", NotificationSeverity.Warning,
+                $"SLA warning for {sla.Ticket.Number}",
+                $"The {targetName.ToLowerInvariant()} target is approaching and is due at {dueAt:u}.",
+                targetName, dueAt, cancellationToken);
             await auditService.WriteAsync(SchedulerActor, "WarningRaised", "TicketSla", sla.Id.ToString(), null, new { Target = targetName, DueAt = dueAt }, cancellationToken);
         }
         if (!breached && elapsed >= target)
         {
             if (response) sla.ResponseBreached = true; else sla.ResolutionBreached = true;
             await publishEndpoint.Publish(new SlaBreached(Guid.CreateVersion7(), now, sla.TicketId, sla.Ticket.Number, targetName, dueAt), cancellationToken);
+            // A breach notified nobody before WP-3.10 — only the silent reassignment below said it had
+            // happened. It is Critical, so a rule set to "Critical only" carries it.
+            await NotifySlaAsync(sla, "SlaBreached", NotificationSeverity.Critical,
+                $"SLA breach on {sla.Ticket.Number}",
+                $"The {targetName.ToLowerInvariant()} target was due at {dueAt:u} and has been missed.",
+                targetName, dueAt, cancellationToken);
             if (!response) await EscalateAssignmentAsync(sla, now, cancellationToken);
             await auditService.WriteAsync(SchedulerActor, "Breached", "TicketSla", sla.Id.ToString(), null, new { Target = targetName, DueAt = dueAt }, cancellationToken);
         }
@@ -170,9 +179,67 @@ public sealed class SlaService(
         });
         sla.Ticket.AssignedTechnicianId = next;
         queue.LastAssignedTechnicianId = next;
-        await notificationService.SendAsync(new NotificationMessage(next,
-            new NotificationTemplate("SlaEscalation", $"SLA escalation for {sla.Ticket.Number}", "The ticket was reassigned after an SLA breach."),
-            new { sla.TicketId }), cancellationToken);
+        await notificationRouter.RouteAsync(
+            new NotificationEnvelope(
+                "SlaEscalated",
+                NotificationSeverity.Warning,
+                $"SLA escalation for {sla.Ticket.Number}",
+                "The ticket was reassigned after an SLA breach.",
+                DeepLink(sla.TicketId),
+                DedupeKey: $"ticket:{sla.TicketId}:sla-escalated",
+                Facts:
+                [
+                    new NotificationFact("Ticket", sla.Ticket.Number),
+                    new NotificationFact("Reassigned to", next),
+                ]),
+            // The person who has just been handed it — the one notification in this file addressed to
+            // an individual rather than announced to a team.
+            [next],
+            cancellationToken);
+    }
+
+    /// <summary>
+    /// One SLA notification, routed rather than emailed directly (WP-3.10). The technician who holds
+    /// the ticket (or, unassigned, the requester) is named so their own preference applies; every
+    /// routing rule that matches also fires, which is how an operations channel hears about a breach
+    /// nobody is assigned to.
+    /// </summary>
+    private async Task NotifySlaAsync(
+        TicketSla sla,
+        string eventKind,
+        NotificationSeverity severity,
+        string subject,
+        string body,
+        string targetName,
+        DateTimeOffset dueAt,
+        CancellationToken cancellationToken)
+    {
+        var recipient = sla.Ticket.AssignedTechnicianId ?? sla.Ticket.RequesterId;
+        await notificationRouter.RouteAsync(
+            new NotificationEnvelope(
+                eventKind,
+                severity,
+                subject,
+                body,
+                DeepLink(sla.TicketId),
+                // No device group: an SLA is not about a device, so a rule that names one is
+                // deliberately not matched.
+                DedupeKey: $"ticket:{sla.TicketId}:{eventKind}:{targetName}",
+                Facts:
+                [
+                    new NotificationFact("Ticket", sla.Ticket.Number),
+                    new NotificationFact("Target", targetName),
+                    new NotificationFact("Due at", $"{dueAt:u}"),
+                    new NotificationFact("Policy", sla.Policy.Name),
+                ]),
+            recipient is null ? null : [recipient],
+            cancellationToken);
+    }
+
+    private string? DeepLink(Guid ticketId)
+    {
+        var baseUrl = notificationOptions.Value.DeepLinkBaseUrl;
+        return string.IsNullOrWhiteSpace(baseUrl) ? null : $"{baseUrl.TrimEnd('/')}/tickets/{ticketId}";
     }
 
     private static double CurrentElapsedSeconds(TicketSla sla, DateTimeOffset now) =>

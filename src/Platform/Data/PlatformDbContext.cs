@@ -12,6 +12,10 @@ public sealed class PlatformDbContext(DbContextOptions<PlatformDbContext> option
     public DbSet<Site> Sites => Set<Site>();
     public DbSet<Department> Departments => Set<Department>();
     public DbSet<UserProfile> UserProfiles => Set<UserProfile>();
+    public DbSet<NotificationChannel> NotificationChannels => Set<NotificationChannel>();
+    public DbSet<NotificationRoutingRule> NotificationRoutingRules => Set<NotificationRoutingRule>();
+    public DbSet<UserNotificationPreference> UserNotificationPreferences => Set<UserNotificationPreference>();
+    public DbSet<NotificationDelivery> NotificationDeliveries => Set<NotificationDelivery>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

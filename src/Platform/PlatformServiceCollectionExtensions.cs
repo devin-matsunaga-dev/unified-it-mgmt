@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
 
 using Platform.Auditing;
 using Platform.Data;
@@ -66,6 +67,31 @@ public static class PlatformServiceCollectionExtensions
             }
         });
         services.AddScoped<INotificationService, SmtpNotificationService>();
+
+        // WP-3.10. The channels are registered as one enumerable and picked by Kind: the router asks
+        // for "the Teams channel", not for a specific implementation, so adding a fourth kind is a
+        // registration rather than an edit to the router.
+        services.AddHttpClient();
+        services.AddScoped<INotificationChannel, EmailNotificationChannel>();
+        services.AddScoped<INotificationChannel>(provider => new WebhookNotificationChannel(
+            NotificationChannelKind.Teams,
+            provider.GetRequiredService<IHttpClientFactory>(),
+            provider.GetRequiredService<ILogger<WebhookNotificationChannel>>()));
+        services.AddScoped<INotificationChannel>(provider => new WebhookNotificationChannel(
+            NotificationChannelKind.Slack,
+            provider.GetRequiredService<IHttpClientFactory>(),
+            provider.GetRequiredService<ILogger<WebhookNotificationChannel>>()));
+        services.AddScoped<INotificationRouter, NotificationRouter>();
+        services.AddScoped<INotificationRoutingService, NotificationRoutingService>();
+        services.AddScoped<INotificationDigestService, NotificationDigestService>();
+        services.AddOptions<NotificationOptions>()
+            .Bind(configuration.GetSection(NotificationOptions.SectionName))
+            .Validate(options => options.DigestIntervalSeconds >= 1,
+                $"{NotificationOptions.SectionName}:DigestIntervalSeconds must be at least 1.")
+            .ValidateOnStart();
+
+        var notifications = configuration.GetSection(NotificationOptions.SectionName).Get<NotificationOptions>()
+            ?? new NotificationOptions();
         services.AddQuartz(quartz =>
         {
             var jobKey = new JobKey("platform-heartbeat");
@@ -75,6 +101,17 @@ public static class PlatformServiceCollectionExtensions
                 .WithIdentity("platform-heartbeat-every-minute")
                 .StartNow()
                 .WithSimpleSchedule(schedule => schedule.WithIntervalInMinutes(1).RepeatForever()));
+
+            // Cheap: one indexed query that usually finds nothing. The interval is the granularity of
+            // "when quiet hours end", so a digest lands within one of these of the window closing.
+            var digestKey = new JobKey("notification-digest");
+            quartz.AddJob<NotificationDigestJob>(options => options.WithIdentity(digestKey));
+            quartz.AddTrigger(options => options
+                .ForJob(digestKey)
+                .WithIdentity("notification-digest-release")
+                .StartNow()
+                .WithSimpleSchedule(schedule => schedule
+                    .WithIntervalInSeconds(notifications.DigestIntervalSeconds).RepeatForever()));
         });
         services.AddSingleton<IHostedService, PlatformSchedulerHostedService>();
 

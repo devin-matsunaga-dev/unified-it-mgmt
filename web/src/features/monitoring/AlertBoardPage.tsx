@@ -1,11 +1,12 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { BellRing, Check, CircleAlert, ShieldCheck, TriangleAlert, Waves } from 'lucide-react'
 import { useCallback, useMemo, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 import { toast } from 'sonner'
 import { monitoringApi, type Alert, type AlertFilter, type AlertPage } from '../../api/monitoring'
 import { Button } from '../../components/ui/Button'
 import { cn } from '../../lib/utils'
+import { AlertDetailDrawer } from './AlertDetailDrawer'
 import { LiveIndicator } from './LiveIndicator'
 import { MonitoringTabs } from './MonitoringTabs'
 import { SeverityPill, formatAge, formatLocal, severityTone } from './severity'
@@ -25,6 +26,17 @@ const filters: { key: string; label: string; filter: AlertFilter }[] = [
 export function AlertBoardPage() {
   const queryClient = useQueryClient()
   const [selected, setSelected] = useState('open')
+  // The drawer's identity lives in the URL rather than in state, because a WP-3.10 notification links
+  // straight to `?alertId=…` — the deep link and a click on a row have to arrive at the same place.
+  const [search, setSearch] = useSearchParams()
+  const alertId = search.get('alertId')
+  const openAlert = useCallback((id: string | null) => {
+    setSearch((current) => {
+      const next = new URLSearchParams(current)
+      if (id) next.set('alertId', id); else next.delete('alertId')
+      return next
+    }, { replace: true })
+  }, [setSearch])
   const filter = filters.find((entry) => entry.key === selected)?.filter ?? filters[0].filter
   const queryKey = useMemo(() => ['monitoring', 'alerts', filter], [filter])
 
@@ -63,6 +75,7 @@ export function AlertBoardPage() {
       // The server pushes this to every other board; patching here too means the operator who
       // pressed the button does not wait for their own round trip.
       onAlertChanged(alert)
+      void queryClient.invalidateQueries({ queryKey: ['monitoring', 'alert', alert.id] })
       toast.success('Acknowledged', { description: alert.summary })
     },
     onError: (error: Error) => toast.error('Could not acknowledge', { description: error.message }),
@@ -118,24 +131,33 @@ export function AlertBoardPage() {
               </thead>
               <tbody>
                 {items.map((alert) => <AlertRow key={alert.id} alert={alert}
+                  onOpen={() => openAlert(alert.id)}
                   onAcknowledge={() => acknowledge.mutate(alert.id)}
                   acknowledging={acknowledge.isPending && acknowledge.variables === alert.id} />)}
               </tbody>
             </table>
           </div>}
     </div>
+
+    <AlertDetailDrawer alertId={alertId} onClose={() => openAlert(null)}
+      onAcknowledge={(id) => acknowledge.mutate(id)}
+      acknowledging={acknowledge.isPending && acknowledge.variables === alertId} />
   </div>
 }
 
-function AlertRow({ alert, onAcknowledge, acknowledging }: {
+function AlertRow({ alert, onOpen, onAcknowledge, acknowledging }: {
   alert: Alert
+  onOpen: () => void
   onAcknowledge: () => void
   acknowledging: boolean
 }) {
   return <tr className="border-b border-slate-100 last:border-0 hover:bg-slate-50 dark:border-slate-800 dark:hover:bg-slate-800/40">
     <td className="px-5 py-3 align-top"><SeverityPill severity={alert.severity} /></td>
     <td className="px-5 py-3 align-top">
-      <p className="font-medium">{alert.summary}</p>
+      <button type="button" onClick={onOpen}
+        className="text-left font-medium hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600">
+        {alert.summary}
+      </button>
       <p className="mt-0.5 text-[13px] text-slate-500">
         {alert.checkName ?? alert.ruleId}
         {alert.lastValue !== null && ` · ${alert.lastValue}`}

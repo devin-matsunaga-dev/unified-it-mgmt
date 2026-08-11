@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -12,7 +12,9 @@ vi.mock('../../api/monitoring', async (original) => {
   const actual = await original<typeof import('../../api/monitoring')>()
   return {
     ...actual,
-    monitoringApi: { ...actual.monitoringApi, listAlerts: vi.fn(), acknowledgeAlert: vi.fn() },
+    monitoringApi: {
+      ...actual.monitoringApi, listAlerts: vi.fn(), acknowledgeAlert: vi.fn(), getAlert: vi.fn(),
+    },
   }
 })
 
@@ -63,10 +65,10 @@ function page(items: Alert[]): AlertPage {
   }
 }
 
-function renderBoard() {
+function renderBoard(entry = '/monitoring/alerts') {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   return render(<QueryClientProvider client={client}>
-    <MemoryRouter><AlertBoardPage /></MemoryRouter>
+    <MemoryRouter initialEntries={[entry]}><AlertBoardPage /></MemoryRouter>
   </QueryClientProvider>)
 }
 
@@ -152,5 +154,61 @@ describe('board patching', () => {
     expect(matches(alert({ severity: 'Warning' }), { status: 'Open', severity: 'Critical' })).toBe(false)
     expect(matches(alert({ acknowledgedAt: '2026-08-11T11:10:00Z' }), { acknowledged: false })).toBe(false)
     expect(matches(alert(), { status: 'Open' })).toBe(true)
+  })
+})
+
+/**
+ * Where a WP-3.10 Teams or Slack message lands. The link an operator is paged with carries the alert
+ * id, so the board has to open on that alert rather than on a list they then have to search.
+ */
+describe('AlertBoardPage deep link', () => {
+  it('opens the detail drawer for the alert named in the query string', async () => {
+    vi.mocked(monitoringApi.listAlerts).mockResolvedValue(page([alert()]))
+    vi.mocked(monitoringApi.getAlert).mockResolvedValue({
+      alert: alert(),
+      openTickets: [{
+        ticketId: 'ticket-1', number: 'INC-000042', title: 'Switch unreachable',
+        status: 'InProgress', priority: 'High', createdAt: '2026-08-11T10:00:00Z',
+      }],
+    })
+
+    renderBoard('/monitoring/alerts?alertId=alert-1')
+
+    const drawer = await screen.findByRole('dialog', { name: 'Alert details' })
+    expect(monitoringApi.getAlert).toHaveBeenCalledWith('alert-1')
+    // The open tickets are the half of the WP-3.7 context only this endpoint carries.
+    expect(within(drawer).getByText('INC-000042')).toBeInTheDocument()
+    expect(within(drawer).getByText('Open tickets for this asset (1)')).toBeInTheDocument()
+  })
+
+  it('does not open a drawer when no alert is named', async () => {
+    vi.mocked(monitoringApi.listAlerts).mockResolvedValue(page([alert()]))
+
+    renderBoard()
+
+    expect(await screen.findByText('Host is unreachable')).toBeInTheDocument()
+    expect(screen.queryByRole('dialog', { name: 'Alert details' })).not.toBeInTheDocument()
+    expect(monitoringApi.getAlert).not.toHaveBeenCalled()
+  })
+
+  /** A failed read is a fact about the request; "no details" would be a claim about the alert. */
+  it('distinguishes an alert that could not be loaded from one with nothing to show', async () => {
+    vi.mocked(monitoringApi.listAlerts).mockResolvedValue(page([alert()]))
+    vi.mocked(monitoringApi.getAlert).mockRejectedValue(new Error('Alert not found.'))
+
+    renderBoard('/monitoring/alerts?alertId=alert-1')
+
+    expect(await screen.findByText(/could not be loaded/)).toBeInTheDocument()
+  })
+
+  it('opens the drawer when an alert summary is clicked', async () => {
+    const user = userEvent.setup()
+    vi.mocked(monitoringApi.listAlerts).mockResolvedValue(page([alert()]))
+    vi.mocked(monitoringApi.getAlert).mockResolvedValue({ alert: alert(), openTickets: [] })
+
+    renderBoard()
+    await user.click(await screen.findByRole('button', { name: 'Host is unreachable' }))
+
+    expect(await screen.findByRole('dialog', { name: 'Alert details' })).toBeInTheDocument()
   })
 })

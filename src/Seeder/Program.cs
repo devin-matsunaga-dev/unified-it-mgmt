@@ -25,6 +25,21 @@ await dbContext.Database.MigrateAsync();
 
 var result = await new DemoDataSeeder(dbContext).SeedAsync();
 Console.WriteLine($"Demo data ready. Added {result.SitesAdded} sites, {result.DepartmentsAdded} departments, and {result.UsersAdded} users.");
+
+// Notification routing (WP-3.10). The chat channel is seeded only when a webhook URL is supplied:
+// a placeholder would fail every Critical alert and read as a broken feature.
+var webhookUrl = Environment.GetEnvironmentVariable("Notifications__Seed__WebhookUrl");
+var webhookKind = Enum.TryParse<NotificationChannelKind>(
+    Environment.GetEnvironmentVariable("Notifications__Seed__WebhookKind"), ignoreCase: true, out var parsedKind)
+    ? parsedKind
+    : NotificationChannelKind.Teams;
+var notificationResult = await new NotificationRoutingSeeder(dbContext).SeedAsync(
+    Environment.GetEnvironmentVariable("Notifications__Seed__OperationsEmail")
+        ?? "it-operations@it-platform.local",
+    webhookUrl,
+    webhookKind);
+Console.WriteLine($"Notification routing ready. Added {notificationResult.ChannelsAdded} channels and {notificationResult.RulesAdded} routing rules"
+    + (notificationResult.WebhookSeeded ? $" (chat channel seeded as {webhookKind})." : "; no webhook URL was supplied, so no chat channel was seeded."));
 var helpdeskOptions = new DbContextOptionsBuilder<HelpdeskDbContext>()
     .UseNpgsql(connectionString)
     .Options;
