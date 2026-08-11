@@ -34,6 +34,7 @@ public static class MonitoringServiceCollectionExtensions
         services.AddScoped<IMetricIngestionService, MetricIngestionService>();
         services.AddScoped<IMetricQueryService, MetricQueryService>();
         services.AddScoped<IAlertStateStore, RedisAlertStateStore>();
+        services.AddScoped<IAlertEnrichmentService, AlertEnrichmentService>();
         services.AddScoped<IAlertEngine, AlertEngine>();
 
         services.AddOptions<AlertOptions>()

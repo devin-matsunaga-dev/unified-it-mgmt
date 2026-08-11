@@ -14,8 +14,11 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
+using Modules.Assets.Data;
 using Modules.Helpdesk.Data;
 using Modules.Helpdesk.Features.AlertTickets;
+using Modules.Helpdesk.Features.TicketCis;
+using Modules.Helpdesk.Features.Tickets;
 
 using Platform.Data;
 using Platform.Notifications;
@@ -59,6 +62,9 @@ public sealed class AlertTicketAutomationIntegrationTests : IAsyncLifetime
         await using var scope = _application.Services.CreateAsyncScope();
         await scope.ServiceProvider.GetRequiredService<PlatformDbContext>().Database.MigrateAsync();
         await scope.ServiceProvider.GetRequiredService<HelpdeskDbContext>().Database.MigrateAsync();
+        // WP-3.7 reads the CMDB through the Assets port on every raise, so the assets schema has to
+        // exist here — not only in whichever other test in this collection happened to run first.
+        await scope.ServiceProvider.GetRequiredService<AssetsDbContext>().Database.MigrateAsync();
 
         // The breaker and its window are global keys by design — a storm is global. They are reset
         // between tests by name, never with a FLUSHALL, which would take the alert-engine tests'
@@ -260,7 +266,107 @@ public sealed class AlertTicketAutomationIntegrationTests : IAsyncLifetime
             comment.Body.Contains(firstNumber, StringComparison.Ordinal));
     }
 
+    // ---- WP-3.7: CMDB context and the CI link ----
+
+    /// <summary>
+    /// The WP's own verification, end to end through the real ports: the automated ticket names the
+    /// asset's owner, location and warranty, and it is <em>linked</em> to the CI — which is what makes
+    /// the asset visible from the ticket and the ticket visible from the asset.
+    /// </summary>
+    [Fact]
+    public async Task Raise_ForAnAlertOnAKnownCi_LinksTheCiAndCarriesItsOwnerLocationAndWarranty()
+    {
+        var ciId = await SeedCiAsync("core-sw-01", warrantyInDays: 12);
+        var rule = NewRule(ciId);
+
+        await RaiseAsync(rule);
+
+        var ticketId = (await EntryAsync(rule)).TicketId!.Value;
+        var ticket = await TicketAsync(ticketId);
+        Assert.Contains("Owner: Dana Whitfield", ticket.Description, StringComparison.Ordinal);
+        Assert.Contains("Location: Primary Data Centre", ticket.Description, StringComparison.Ordinal);
+        Assert.Contains("Warranty: ExpiringSoon", ticket.Description, StringComparison.Ordinal);
+        Assert.Contains("core-sw-01", ticket.Description, StringComparison.Ordinal);
+
+        await using var scope = _application.Services.CreateAsyncScope();
+        var link = Assert.Single(await scope.ServiceProvider.GetRequiredService<HelpdeskDbContext>()
+            .TicketCiLinks.Where(item => item.TicketId == ticketId).ToListAsync());
+        Assert.Equal(ciId, link.CiId);
+        Assert.Equal("system:monitoring", link.LinkedById);
+    }
+
+    /// <summary>
+    /// The link is a real one, made through the same service an agent's "Link asset" button calls — so
+    /// the ticket's own card resolves the CI live, with the enrichment on it, rather than the
+    /// automation writing a row nothing renders.
+    /// </summary>
+    [Fact]
+    public async Task Raise_ForAnAlertOnAKnownCi_MakesTheAssetCardResolveWithWarrantyAndRelatedTickets()
+    {
+        var ciId = await SeedCiAsync("edge-rtr-02", warrantyInDays: -40);
+        var existing = await OpenATicketLinkedToAsync(ciId, "Port flapping on the uplink");
+        var rule = NewRule(ciId);
+
+        await RaiseAsync(rule);
+
+        var ticketId = (await EntryAsync(rule)).TicketId!.Value;
+        await using var scope = _application.Services.CreateAsyncScope();
+        var result = await scope.ServiceProvider.GetRequiredService<ITicketCiLinkService>()
+            .ListAsync(ticketId, Agent, CancellationToken.None);
+        var card = Assert.Single(result.Links!);
+
+        Assert.Equal("Dana Whitfield", card.OwnerName);
+        Assert.Equal("Primary Data Centre", card.SiteName);
+        Assert.Equal("Infrastructure", card.DepartmentName);
+        Assert.Equal("Expired", card.WarrantyStatus);
+        Assert.Equal(-40, card.WarrantyDaysRemaining);
+        // The ticket that was already open about this CI, and never this ticket itself.
+        var related = Assert.Single(card.OpenRelatedTickets);
+        Assert.Equal(existing, related.TicketId);
+        Assert.DoesNotContain(card.OpenRelatedTickets, item => item.TicketId == ticketId);
+    }
+
+    /// <summary>
+    /// The description is a dated record, so the tickets it names are the ones that were open when the
+    /// alert fired — including the one an agent had already raised by hand.
+    /// </summary>
+    [Fact]
+    public async Task Raise_WhenTheCiAlreadyHasAnOpenTicket_NamesItInTheDescription()
+    {
+        var ciId = await SeedCiAsync("dist-sw-07", warrantyInDays: 400);
+        var existing = await OpenATicketLinkedToAsync(ciId, "Fan noise reported on site");
+        var existingNumber = (await TicketAsync(existing)).Number;
+        var rule = NewRule(ciId);
+
+        await RaiseAsync(rule);
+
+        var ticket = await TicketAsync((await EntryAsync(rule)).TicketId!.Value);
+        Assert.Contains($"Open related tickets: {existingNumber}", ticket.Description, StringComparison.Ordinal);
+    }
+
     // ---- failure paths ----
+
+    /// <summary>
+    /// Nothing stops a monitored device's CI being deleted (the WP-3.1 note about the missing
+    /// <c>IMonitoredDeviceDirectory</c> port). The alert still has to become a ticket: a degraded
+    /// ticket is recoverable, a dropped alert is not.
+    /// </summary>
+    [Fact]
+    public async Task Raise_ForAnAlertWhoseCiIsNotInTheCmdb_StillOpensTheTicketAndLinksNothing()
+    {
+        var rule = NewRule();
+
+        await RaiseAsync(rule);
+
+        var ticketId = (await EntryAsync(rule)).TicketId!.Value;
+        var ticket = await TicketAsync(ticketId);
+        Assert.Contains("not found in the CMDB", ticket.Description, StringComparison.Ordinal);
+
+        await using var scope = _application.Services.CreateAsyncScope();
+        Assert.Empty(await scope.ServiceProvider.GetRequiredService<HelpdeskDbContext>()
+            .TicketCiLinks.Where(item => item.TicketId == ticketId).ToListAsync());
+    }
+
 
     /// <summary>
     /// A clear for a rule this platform never ticketed — the automation was off, or the raise was
@@ -317,11 +423,67 @@ public sealed class AlertTicketAutomationIntegrationTests : IAsyncLifetime
 
     private sealed record RuleFixture(Guid DeviceId, Guid CiId, Guid CheckId, string RuleId);
 
-    private static RuleFixture NewRule()
+    /// <summary>
+    /// A rule on a device nobody has a CI for, unless one is named. The default is deliberate: most of
+    /// this class is about the ticket rather than the CMDB, and a random CI id is exactly the
+    /// "CI not found" case the enrichment has to survive.
+    /// </summary>
+    private static RuleFixture NewRule(Guid? ciId = null)
     {
         var checkId = Guid.CreateVersion7();
         return new RuleFixture(
-            Guid.CreateVersion7(), Guid.CreateVersion7(), checkId, $"check:{checkId}:cpu.utilisation_percent");
+            Guid.CreateVersion7(),
+            ciId ?? Guid.CreateVersion7(),
+            checkId,
+            $"check:{checkId}:cpu.utilisation_percent");
+    }
+
+    /// <summary>
+    /// A CI written straight through the Assets context, following WP-2.8's seeder: this is a fixture,
+    /// not an operator's edit, and routing it through <c>ICiService</c> would audit and publish it.
+    /// </summary>
+    private async Task<Guid> SeedCiAsync(string name, int warrantyInDays)
+    {
+        await using var scope = _application.Services.CreateAsyncScope();
+        var context = scope.ServiceProvider.GetRequiredService<AssetsDbContext>();
+        var now = DateTimeOffset.UtcNow;
+        var ci = new NetworkDeviceCi
+        {
+            Id = Guid.CreateVersion7(),
+            Name = $"{name}-{Guid.CreateVersion7():N}"[..24],
+            AssetTag = $"AST-{Random.Shared.Next(100_000, 999_999)}",
+            LifecycleState = CiLifecycleState.Deployed,
+            OwnerName = "Dana Whitfield",
+            SiteName = "Primary Data Centre",
+            DepartmentName = "Infrastructure",
+            WarrantyExpiresAt = DateOnly.FromDateTime(DateTime.UtcNow).AddDays(warrantyInDays),
+            ManagementIp = "10.20.30.40",
+            Vendor = "Cisco",
+            PortCount = 48,
+            CreatedAt = now,
+            UpdatedAt = now,
+        };
+        context.Cis.Add(ci);
+        await context.SaveChangesAsync();
+        return ci.Id;
+    }
+
+    /// <summary>A ticket an agent raised by hand and linked to the CI, so "already being worked on" is real.</summary>
+    private async Task<Guid> OpenATicketLinkedToAsync(Guid ciId, string title)
+    {
+        await using var scope = _application.Services.CreateAsyncScope();
+        var created = await scope.ServiceProvider.GetRequiredService<ITicketService>().CreateAsync(
+            new CreateTicketRequest(
+                title, "Raised by an agent before monitoring noticed.", TicketType.Incident,
+                TicketLevel.Medium, TicketLevel.Medium, RequesterId: null, QueueId: null),
+            Agent,
+            CancellationToken.None);
+        Assert.Equal(TicketWriteOutcome.Success, created.Outcome);
+
+        var link = await scope.ServiceProvider.GetRequiredService<ITicketCiLinkService>().LinkAsync(
+            created.Ticket!.Id, new LinkTicketCiRequest(ciId), Agent, CancellationToken.None);
+        Assert.Equal(TicketCiLinkOutcome.Success, link.Outcome);
+        return created.Ticket.Id;
     }
 
     private async Task RaiseAsync(RuleFixture rule, string severity = "Critical")

@@ -4,6 +4,8 @@ using Modules.Helpdesk.Data;
 using Modules.Helpdesk.Features.AlertTickets;
 using Modules.Helpdesk.Features.Tickets;
 
+using Platform.Integration;
+
 namespace Infrastructure.Tests;
 
 /// <summary>
@@ -61,7 +63,8 @@ public sealed class AlertTicketPolicyTests
     public void Compose_ForACriticalAlert_CarriesTheFactsAndFitsTheColumn()
     {
         var draft = AlertTicketPolicy.Compose(
-            Raised(severity: "Critical", summary: "Utilisation is above the critical threshold."));
+            Raised(severity: "Critical", summary: "Utilisation is above the critical threshold."),
+            AlertCiContext.Unknown);
 
         Assert.StartsWith("[Critical] SNMP: CPU: Utilisation", draft.Title, StringComparison.Ordinal);
         Assert.True(draft.Title.Length <= 200);
@@ -86,7 +89,7 @@ public sealed class AlertTicketPolicyTests
         string summary,
         string expectedPrefix)
     {
-        var draft = AlertTicketPolicy.Compose(Raised(checkName: checkName, summary: summary));
+        var draft = AlertTicketPolicy.Compose(Raised(checkName: checkName, summary: summary), AlertCiContext.Unknown);
 
         Assert.StartsWith(expectedPrefix, draft.Title, StringComparison.Ordinal);
         Assert.DoesNotContain($"{checkName}: {checkName}", draft.Title, StringComparison.Ordinal);
@@ -99,7 +102,7 @@ public sealed class AlertTicketPolicyTests
     [Fact]
     public void Compose_WithAVeryLongSummary_TruncatesTheTitleRatherThanFailingTheInsert()
     {
-        var draft = AlertTicketPolicy.Compose(Raised(summary: new string('x', 500)));
+        var draft = AlertTicketPolicy.Compose(Raised(summary: new string('x', 500)), AlertCiContext.Unknown);
 
         Assert.Equal(200, draft.Title.Length);
         Assert.EndsWith("…", draft.Title, StringComparison.Ordinal);
@@ -110,11 +113,85 @@ public sealed class AlertTicketPolicyTests
     public void Compose_ForAnAvailabilityAlert_OmitsTheThreshold()
     {
         var draft = AlertTicketPolicy.Compose(
-            Raised(summary: "The check has not completed for 3 cycles.", value: null, threshold: null));
+            Raised(summary: "The check has not completed for 3 cycles.", value: null, threshold: null),
+            AlertCiContext.Unknown);
 
         Assert.DoesNotContain("threshold", draft.Description, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("Metric: cpu.utilisation_percent" + Environment.NewLine, draft.Description, StringComparison.Ordinal);
     }
+
+    // ---- WP-3.7: the CMDB context the ticket carries ----
+
+    /// <summary>
+    /// The WP's first requirement, in the one place that decides what a ticket says: owner, location,
+    /// warranty status and the open tickets already about this CI, all in the description.
+    /// </summary>
+    [Fact]
+    public void Compose_WithCmdbContext_CarriesOwnerLocationWarrantyAndOpenRelatedTickets()
+    {
+        var draft = AlertTicketPolicy.Compose(Raised(), Context());
+
+        Assert.Contains("Owner: Dana Whitfield", draft.Description, StringComparison.Ordinal);
+        Assert.Contains("Location: Primary Data Centre", draft.Description, StringComparison.Ordinal);
+        Assert.Contains("Department: Infrastructure", draft.Description, StringComparison.Ordinal);
+        Assert.Contains("Asset tag: AST-0042", draft.Description, StringComparison.Ordinal);
+        Assert.Contains("Warranty: ExpiringSoon — 12 day(s) left, expires 2026-08-23", draft.Description, StringComparison.Ordinal);
+        Assert.Contains("Support contract: Dell ProSupport", draft.Description, StringComparison.Ordinal);
+        Assert.Contains("Open related tickets: INC-000031 (InProgress, High)", draft.Description, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// An expired warranty is the fact somebody actually acts on, so it says how long ago rather than
+    /// printing a negative number of days left.
+    /// </summary>
+    [Fact]
+    public void CmdbBlock_WithAnExpiredWarranty_SaysHowLongAgoItExpired()
+    {
+        var block = AlertTicketPolicy.CmdbBlock(
+            CiId, Context(warrantyStatus: "Expired", expiresAt: new DateOnly(2026, 6, 1), daysRemaining: -71));
+
+        Assert.Contains("Warranty: expired 71 day(s) ago on 2026-06-01", block, StringComparison.Ordinal);
+        Assert.DoesNotContain("-71", block, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// An unheld asset with no site is not the same as an asset whose CMDB record is missing. Both
+    /// have to read as the fact they are — "Owner: —" on a CI nobody could find is a lie.
+    /// </summary>
+    [Fact]
+    public void CmdbBlock_ForACiThatIsPresentButBare_NamesWhatIsMissingRatherThanLeavingItBlank()
+    {
+        var block = AlertTicketPolicy.CmdbBlock(
+            CiId,
+            new AlertCiContext(
+                new CiSummary(CiId, "NetworkDevice", "core-sw-01", null, null, "Deployed", true, null, null),
+                []));
+
+        Assert.Contains("Owner: nobody holds this asset", block, StringComparison.Ordinal);
+        Assert.Contains("Location: no site recorded", block, StringComparison.Ordinal);
+        Assert.Contains("Warranty: no warranty date recorded", block, StringComparison.Ordinal);
+        Assert.Contains("Open related tickets: none", block, StringComparison.Ordinal);
+        Assert.DoesNotContain("Asset tag", block, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// The failure path. Nothing stops a monitored device's CI being deleted (the WP-3.1 note about the
+    /// missing port), and the alert is still worth a ticket — one that says the context could not be
+    /// read rather than one that quietly implies the asset is unowned.
+    /// </summary>
+    [Fact]
+    public void Compose_WhenTheCiIsNotInTheCmdb_StillProducesATicketAndSaysTheContextIsMissing()
+    {
+        var draft = AlertTicketPolicy.Compose(Raised(), AlertCiContext.Unknown);
+
+        Assert.False(string.IsNullOrWhiteSpace(draft.Title));
+        Assert.Contains("not found in the CMDB", draft.Description, StringComparison.Ordinal);
+        Assert.DoesNotContain("Owner:", draft.Description, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Compose_WithNoContext_Throws() =>
+        Assert.Throws<ArgumentNullException>(() => AlertTicketPolicy.Compose(Raised(), null!));
 
     [Fact]
     public void RecurrenceNote_WhenTheSeverityRose_SaysSoRatherThanRepeatingItself()
@@ -144,7 +221,34 @@ public sealed class AlertTicketPolicyTests
 
     [Fact]
     public void Compose_WithNoAlert_Throws() =>
-        Assert.Throws<ArgumentNullException>(() => AlertTicketPolicy.Compose(null!));
+        Assert.Throws<ArgumentNullException>(() => AlertTicketPolicy.Compose(null!, AlertCiContext.Unknown));
+
+    private static readonly Guid CiId = Guid.Parse("6f9619ff-8b86-d011-b42d-00cf4fc964ff");
+
+    private static AlertCiContext Context(
+        string warrantyStatus = "ExpiringSoon",
+        DateOnly? expiresAt = null,
+        int? daysRemaining = 12) => new(
+        new CiSummary(
+            CiId,
+            "NetworkDevice",
+            "core-sw-01",
+            "AST-0042",
+            "SN-99",
+            "Deployed",
+            true,
+            "Dana Whitfield",
+            "Primary Data Centre",
+            "Infrastructure",
+            expiresAt ?? new DateOnly(2026, 8, 23),
+            warrantyStatus,
+            daysRemaining,
+            "Dell ProSupport"),
+        [
+            new LinkedTicketSummary(
+                Guid.CreateVersion7(), "INC-000031", "Switch keeps dropping ports", "InProgress", "High",
+                DateTimeOffset.UtcNow.AddDays(-2)),
+        ]);
 
     private static AlertRaised Raised(
         string severity = "Critical",

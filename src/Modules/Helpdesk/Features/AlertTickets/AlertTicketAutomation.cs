@@ -8,9 +8,11 @@ using Microsoft.Extensions.Options;
 
 using Modules.Helpdesk.Data;
 using Modules.Helpdesk.Features.Interactions;
+using Modules.Helpdesk.Features.TicketCis;
 using Modules.Helpdesk.Features.Tickets;
 
 using Platform.Auditing;
+using Platform.Integration;
 using Platform.Notifications;
 
 namespace Modules.Helpdesk.Features.AlertTickets;
@@ -38,6 +40,9 @@ public sealed class AlertTicketAutomation(
     HelpdeskDbContext dbContext,
     ITicketService ticketService,
     IInteractionService interactionService,
+    ITicketCiLinkService ciLinkService,
+    ICiDirectory ciDirectory,
+    ITicketLinkDirectory ticketLinkDirectory,
     IAlertAutomationGuard guard,
     IAuditService auditService,
     INotificationService notificationService,
@@ -55,6 +60,12 @@ public sealed class AlertTicketAutomation(
             new Claim(ClaimTypes.Name, "Monitoring"),
         ],
         "Monitoring"));
+
+    /// <summary>
+    /// How many already-open tickets about the same CI the description names. A ticket that listed
+    /// twenty would be reporting the estate rather than the alert.
+    /// </summary>
+    private const int OpenRelatedTicketLimit = 5;
 
     public async Task RaiseAsync(AlertRaised alert, CancellationToken cancellationToken)
     {
@@ -110,7 +121,9 @@ public sealed class AlertTicketAutomation(
             return;
         }
 
-        var draft = AlertTicketPolicy.Compose(alert);
+        // Read before the ticket exists, so "open related tickets" cannot list the one being opened.
+        var context = await DescribeCiAsync(alert.CiId, cancellationToken);
+        var draft = AlertTicketPolicy.Compose(alert, context);
         var created = await ticketService.CreateAsync(
             new CreateTicketRequest(
                 draft.Title,
@@ -132,6 +145,8 @@ public sealed class AlertTicketAutomation(
             await SaveAsync(entry, before, "TicketFailed", cancellationToken);
             return;
         }
+
+        await LinkCiAsync(created.Ticket.Id, alert, context, cancellationToken);
 
         if (existing is not null)
         {
@@ -203,6 +218,58 @@ public sealed class AlertTicketAutomation(
         }
 
         await SaveAsync(entry, before, "Cleared", cancellationToken);
+    }
+
+    /// <summary>
+    /// What the CMDB knows about the CI this alert names (WP-3.7). Both reads go through ports, so
+    /// Helpdesk still never queries the assets schema, and a CI that is not there is a context that
+    /// says so rather than a failure — a device can be monitored and its CI deleted, and the alert is
+    /// still worth a ticket.
+    /// </summary>
+    private async Task<AlertCiContext> DescribeCiAsync(Guid ciId, CancellationToken cancellationToken)
+    {
+        if (ciId == Guid.Empty)
+        {
+            return AlertCiContext.Unknown;
+        }
+
+        var ci = (await ciDirectory.GetSummariesAsync([ciId], cancellationToken)).SingleOrDefault();
+        var open = await ticketLinkDirectory.GetOpenTicketsForCiAsync(
+            ciId, OpenRelatedTicketLimit, cancellationToken);
+        return new AlertCiContext(ci, open);
+    }
+
+    /// <summary>
+    /// The other half of "carries CMDB context": the ticket is linked to its CI through the same
+    /// service an agent's "Link asset" button calls, so the link is audited, published and visible
+    /// from both sides — the ticket's asset card and the CI's ticket list.
+    /// <para>
+    /// A failure here never fails the raise. The ticket is the thing somebody has to act on; a missing
+    /// link is a degraded ticket rather than a lost alert, and the description still names the CI.
+    /// </para>
+    /// </summary>
+    private async Task LinkCiAsync(
+        Guid ticketId,
+        AlertRaised alert,
+        AlertCiContext context,
+        CancellationToken cancellationToken)
+    {
+        if (alert.CiId == Guid.Empty || context.Ci is null)
+        {
+            logger.LogInformation(
+                "Alert {RuleId} names CI {CiId}, which is not in the CMDB; its ticket was not linked.",
+                alert.RuleId, alert.CiId);
+            return;
+        }
+
+        var result = await ciLinkService.LinkAsync(
+            ticketId, new LinkTicketCiRequest(alert.CiId), SystemActor, cancellationToken);
+        if (result.Outcome is not TicketCiLinkOutcome.Success)
+        {
+            logger.LogWarning(
+                "Alert {RuleId} could not link CI {CiId} to its ticket: {Outcome}.",
+                alert.RuleId, alert.CiId, result.Outcome);
+        }
     }
 
     /// <summary>

@@ -7,6 +7,8 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 
+using Modules.Assets;
+using Modules.Assets.Data;
 using Modules.Helpdesk;
 using Modules.Helpdesk.Data;
 using Modules.Helpdesk.Features.AlertTickets;
@@ -64,6 +66,10 @@ public sealed class AlertTicketBusIntegrationTests(InfrastructureFixture infrast
             })
             .AddHelpdeskServices(configuration)
             .AddMonitoringServices(configuration)
+            // Assets too, although nothing here is about assets: WP-3.7's automation reads the CMDB
+            // through `ICiDirectory`, which only Assets registers, and a consumer that cannot be
+            // constructed faults its message into the error queue with nothing to explain it.
+            .AddAssetsServices(configuration)
             // After AddPlatformServices, never before: options configure actions run in registration
             // order, so anything set first is simply overwritten by MassTransit's own defaults.
             //
@@ -92,6 +98,7 @@ public sealed class AlertTicketBusIntegrationTests(InfrastructureFixture infrast
         {
             await scope.ServiceProvider.GetRequiredService<PlatformDbContext>().Database.MigrateAsync();
             await scope.ServiceProvider.GetRequiredService<HelpdeskDbContext>().Database.MigrateAsync();
+            await scope.ServiceProvider.GetRequiredService<AssetsDbContext>().Database.MigrateAsync();
         }
 
         await _services.GetRequiredService<IConnectionMultiplexer>().GetDatabase()

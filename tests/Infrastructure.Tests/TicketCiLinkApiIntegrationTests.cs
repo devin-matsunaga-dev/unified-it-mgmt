@@ -257,6 +257,62 @@ public sealed class TicketCiLinkApiIntegrationTests : IAsyncLifetime
         return _client!.SendAsync(request);
     }
 
+    // ---- WP-3.7: the CMDB context the card carries ----
+
+    /// <summary>
+    /// The enrichment as it reaches the browser: warranty status computed by the Assets module, and
+    /// the other open tickets about the same CI — never this ticket itself, which would read as the
+    /// ticket citing itself as prior art.
+    /// </summary>
+    [Fact]
+    public async Task GetCis_ForALinkedCiWithAWarrantyAndAnotherOpenTicket_CarriesBothOnTheCard()
+    {
+        var ci = await CreateCiAsync("NetworkDevice", "Branch switch");
+        await SetWarrantyAsync(ci.Id, DateOnly.FromDateTime(DateTime.UtcNow).AddDays(14));
+        var earlier = await CreateTicketAsync("Uplink drops every few minutes");
+        using var _ = await LinkAsync(earlier.Id, ci.Id);
+        var ticket = await CreateTicketAsync("Switch is unreachable");
+        using var linked = await LinkAsync(ticket.Id, ci.Id);
+        Assert.Equal(HttpStatusCode.Created, linked.StatusCode);
+
+        var card = Assert.Single(await GetAsync<List<LinkDto>>($"/api/tickets/{ticket.Id}/cis"));
+
+        Assert.Equal("ExpiringSoon", card.WarrantyStatus);
+        Assert.Equal(14, card.WarrantyDaysRemaining);
+        var related = Assert.Single(card.OpenRelatedTickets);
+        Assert.Equal(earlier.Id, related.TicketId);
+        Assert.Equal(earlier.Number, related.Number);
+        Assert.DoesNotContain(card.OpenRelatedTickets, item => item.TicketId == ticket.Id);
+    }
+
+    /// <summary>
+    /// A CI nobody has recorded a warranty for says nothing about one, rather than reporting a status
+    /// it has no date to compute.
+    /// </summary>
+    [Fact]
+    public async Task GetCis_ForALinkedCiWithNoWarranty_LeavesTheWarrantyFieldsEmpty()
+    {
+        var ticket = await CreateTicketAsync("Laptop fan is loud");
+        var ci = await CreateCiAsync("Hardware", "Support laptop");
+        using var linked = await LinkAsync(ticket.Id, ci.Id);
+        Assert.Equal(HttpStatusCode.Created, linked.StatusCode);
+
+        var card = Assert.Single(await GetAsync<List<LinkDto>>($"/api/tickets/{ticket.Id}/cis"));
+
+        Assert.Null(card.WarrantyStatus);
+        Assert.Null(card.WarrantyExpiresAt);
+        Assert.Null(card.WarrantyDaysRemaining);
+        Assert.Empty(card.OpenRelatedTickets);
+    }
+
+    private async Task SetWarrantyAsync(Guid ciId, DateOnly expiresAt)
+    {
+        using var request = Authenticated(HttpMethod.Put, $"/api/cis/{ciId}/coverage");
+        request.Content = JsonContent.Create(new { warrantyExpiresAt = expiresAt });
+        using var response = await _client!.SendAsync(request);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+    }
+
     private async Task<TicketDto> CreateTicketAsync(string title)
     {
         using var request = Authenticated(HttpMethod.Post, "/api/tickets");
@@ -334,9 +390,23 @@ public sealed class TicketCiLinkApiIntegrationTests : IAsyncLifetime
         bool IsActive,
         string? OwnerName,
         string? SiteName,
+        string? DepartmentName,
+        DateOnly? WarrantyExpiresAt,
+        string? WarrantyStatus,
+        int? WarrantyDaysRemaining,
+        string? ContractName,
+        List<RelatedTicketDto> OpenRelatedTickets,
         string LinkedById,
         string LinkedByName,
         DateTimeOffset LinkedAt);
+
+    private sealed record RelatedTicketDto(
+        Guid TicketId,
+        string Number,
+        string Title,
+        string Status,
+        string Priority,
+        DateTimeOffset CreatedAt);
 
     private sealed class TicketCiLinkApplication : WebApplicationFactory<Program>
     {

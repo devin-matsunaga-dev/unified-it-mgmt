@@ -4,7 +4,21 @@ using Contracts.Events;
 
 using Modules.Helpdesk.Data;
 
+using Platform.Integration;
+
 namespace Modules.Helpdesk.Features.AlertTickets;
+
+/// <summary>
+/// What the CMDB says about the CI an alert names, at the moment the ticket is written (WP-3.7). It is
+/// read live through the Assets and Helpdesk ports rather than carried on the event, because a CI is
+/// not a person who can leave the directory — but the ticket <em>description</em> is a fixed record of
+/// what monitoring saw, so the same facts are also written into it once and never rewritten. The live
+/// view an agent reads is the linked-asset card, which re-reads on every request.
+/// </summary>
+public sealed record AlertCiContext(CiSummary? Ci, IReadOnlyList<LinkedTicketSummary> OpenTickets)
+{
+    public static readonly AlertCiContext Unknown = new(null, []);
+}
 
 /// <summary>What an alert becomes when it is written down as a ticket.</summary>
 public sealed record AlertTicketDraft(
@@ -40,9 +54,10 @@ public static class AlertTicketPolicy
             ? (TicketLevel.High, TicketLevel.High)
             : (TicketLevel.Medium, TicketLevel.Medium);
 
-    public static AlertTicketDraft Compose(AlertRaised alert)
+    public static AlertTicketDraft Compose(AlertRaised alert, AlertCiContext context)
     {
         ArgumentNullException.ThrowIfNull(alert);
+        ArgumentNullException.ThrowIfNull(context);
         var (urgency, impact) = Levels(alert.Severity);
         var title = Truncate($"[{alert.Severity}] {Headline(alert)}", 200);
         var description = string.Join(Environment.NewLine,
@@ -54,13 +69,71 @@ public static class AlertTicketPolicy
             $"Metric: {alert.MetricName}{Reading(alert.Value, alert.Threshold)}",
             $"Sustained for: {alert.ConsecutiveBreaches} consecutive cycles",
             $"Device: {alert.DeviceId}",
-            $"CI: {alert.CiId}",
             $"Alert: {alert.AlertId}",
             $"Rule: {alert.RuleId}",
+            string.Empty,
+            CmdbBlock(alert.CiId, context),
             string.Empty,
             "Opened automatically by monitoring. It resolves itself when the alert clears.");
         return new AlertTicketDraft(title, Truncate(description, 10_000), urgency, impact);
     }
+
+    /// <summary>
+    /// The CMDB context WP-3.7 asks the ticket to carry, written into the description so the ticket
+    /// still says what the estate looked like when the alert fired. The linked-asset card beside it is
+    /// the live view; this is the dated one.
+    /// </summary>
+    public static string CmdbBlock(Guid ciId, AlertCiContext context)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+        if (context.Ci is not { } ci)
+        {
+            // The CI is gone, or was never in the CMDB. Said plainly rather than left blank: an
+            // "Owner: —" reads as an unassigned asset, which is a different fact.
+            return string.Join(Environment.NewLine,
+                "Asset context",
+                $"CI: {ciId} — not found in the CMDB, so no owner, location or warranty could be read.");
+        }
+
+        var lines = new List<string>(9)
+        {
+            "Asset context",
+            $"CI: {ci.Name} ({ci.Type}, {ciId})",
+            $"Owner: {Or(ci.OwnerName, "nobody holds this asset")}",
+            $"Location: {Or(ci.SiteName, "no site recorded")}",
+            $"Department: {Or(ci.DepartmentName, "none recorded")}",
+            $"Lifecycle: {ci.LifecycleState}",
+            $"Warranty: {Warranty(ci)}",
+        };
+        if (ci.AssetTag is { Length: > 0 } tag)
+        {
+            lines.Insert(2, $"Asset tag: {tag}");
+        }
+
+        if (ci.ContractName is { Length: > 0 } contract)
+        {
+            lines.Add($"Support contract: {contract}");
+        }
+
+        lines.Add(context.OpenTickets.Count == 0
+            ? "Open related tickets: none"
+            : $"Open related tickets: {string.Join(", ", context.OpenTickets.Select(ticket => $"{ticket.Number} ({ticket.Status}, {ticket.Priority})"))}");
+        return string.Join(Environment.NewLine, lines);
+    }
+
+    private static string Warranty(CiSummary ci) => (ci.WarrantyStatus, ci.WarrantyExpiresAt, ci.WarrantyDaysRemaining) switch
+    {
+        (null, _, _) or (_, null, _) => "no warranty date recorded",
+        (_, { } expiry, { } days) when days < 0 =>
+            $"expired {-days} day(s) ago on {Date(expiry)}",
+        (_, { } expiry, { } days) => $"{ci.WarrantyStatus} — {days} day(s) left, expires {Date(expiry)}",
+        (_, { } expiry, null) => $"{ci.WarrantyStatus} — expires {Date(expiry)}",
+    };
+
+    private static string Or(string? value, string fallback) =>
+        string.IsNullOrWhiteSpace(value) ? fallback : value;
+
+    private static string Date(DateOnly value) => value.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
 
     /// <summary>
     /// What gets added to a ticket that already exists. Internal, because it is a note between the

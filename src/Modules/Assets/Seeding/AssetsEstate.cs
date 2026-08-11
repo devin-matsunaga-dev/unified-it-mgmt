@@ -167,15 +167,18 @@ public static class AssetsEstate
         // ---- Network (10) -------------------------------------------------------------------
         Network("dc1-core-rtr-01", "DC1 core router", "Primary Data Centre edge router. Root of the data centre dependency tree.",
                 "10.10.0.1", "Cisco", 24) with
-            { SiteCode = "DC1", AssetTag = "NET-0001", SerialNumber = "FTX2401R001", ContractKey = "smartnet",
+            { SiteCode = "DC1", OwnerUsername = "technician2", AssetTag = "NET-0001",
+              SerialNumber = "FTX2401R001", ContractKey = "smartnet",
               PurchasedDaysAgo = 1_100, WarrantyInDays = 640, AgeDays = 1_100 },
         Network("dc1-core-sw-01", "DC1 core switch A", "First of the redundant core switch pair.",
                 "10.10.0.2", "Cisco", 48) with
-            { SiteCode = "DC1", AssetTag = "NET-0002", SerialNumber = "FTX2401S001", ContractKey = "smartnet",
+            { SiteCode = "DC1", OwnerUsername = "technician2", AssetTag = "NET-0002",
+              SerialNumber = "FTX2401S001", ContractKey = "smartnet",
               PurchasedDaysAgo = 1_100, WarrantyInDays = 640, AgeDays = 1_100 },
         Network("dc1-core-sw-02", "DC1 core switch B", "Second of the redundant core switch pair.",
                 "10.10.0.3", "Cisco", 48) with
-            { SiteCode = "DC1", AssetTag = "NET-0003", SerialNumber = "FTX2401S002", ContractKey = "smartnet",
+            { SiteCode = "DC1", OwnerUsername = "technician2", AssetTag = "NET-0003",
+              SerialNumber = "FTX2401S002", ContractKey = "smartnet",
               PurchasedDaysAgo = 1_100, WarrantyInDays = 640, AgeDays = 1_100 },
         Network("dc1-acc-sw-01", "DC1 access switch", "Out-of-band and backup network access switch.",
                 "10.10.0.4", "Cisco", 24) with

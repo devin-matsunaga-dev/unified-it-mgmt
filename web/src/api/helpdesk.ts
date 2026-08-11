@@ -86,9 +86,26 @@ export type TicketCiLink = {
   isActive: boolean
   ownerName: string | null
   siteName: string | null
+  departmentName: string | null
+  /** `Active` | `ExpiringSoon` | `Expired`, or null where no warranty date is recorded. */
+  warrantyStatus: string | null
+  warrantyExpiresAt: string | null
+  /** Negative once the warranty has expired. */
+  warrantyDaysRemaining: number | null
+  contractName: string | null
+  /** Other unfinished tickets about this CI — never the ticket being viewed. */
+  openRelatedTickets: RelatedTicket[]
   linkedById: string
   linkedByName: string
   linkedAt: string
+}
+export type RelatedTicket = {
+  ticketId: string
+  number: string
+  title: string
+  status: string
+  priority: string
+  createdAt: string
 }
 export type TicketView = {
   id: string

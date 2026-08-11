@@ -20,6 +20,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
 using Modules.Assets.Data;
+using Modules.Helpdesk.Data;
 using Modules.Monitoring.Data;
 using Modules.Monitoring.Features.Alerting;
 
@@ -65,6 +66,9 @@ public sealed class AlertEngineIntegrationTests : IAsyncLifetime
         await scope.ServiceProvider.GetRequiredService<PlatformDbContext>().Database.MigrateAsync();
         await scope.ServiceProvider.GetRequiredService<AssetsDbContext>().Database.MigrateAsync();
         await scope.ServiceProvider.GetRequiredService<MonitoringDbContext>().Database.MigrateAsync();
+        // WP-3.7's enrichment asks Helpdesk what is already open for the CI, so the helpdesk schema
+        // has to exist here too — the engine reads it on every publication.
+        await scope.ServiceProvider.GetRequiredService<HelpdeskDbContext>().Database.MigrateAsync();
     }
 
     public Task DisposeAsync() => Task.CompletedTask;
@@ -416,6 +420,70 @@ public sealed class AlertEngineIntegrationTests : IAsyncLifetime
         Assert.Equal(0, changed);
     }
 
+    // ---- WP-3.7: the CMDB context an alert carries ----
+
+    /// <summary>
+    /// The WP's own verification, on the alert side: an alert on a switch says who holds it and where
+    /// it is. The audit entry is where it lands durably — the alert row reads its CI live, and would
+    /// answer differently once the asset is reassigned, so the dated record is the one that carries it.
+    /// </summary>
+    [Fact]
+    public async Task Evaluate_RaisingAnAlertOnAnOwnedCi_RecordsItsOwnerLocationAndWarrantyInTheAudit()
+    {
+        var fixture = await CreateDeviceWithCpuCheckAsync();
+        await GiveTheCiAnOwnerAsync(fixture.CiId, warrantyInDays: 9);
+
+        await DriveAsync(fixture, [95, 95, 95]);
+
+        var alert = Assert.Single(await AlertsAsync(fixture.DeviceId, thresholdRuleOnly: true));
+        var audit = await AuditForAlertAsync(alert.Id, "AlertRaised");
+        Assert.Contains("Rosalind Frey", audit, StringComparison.Ordinal);
+        Assert.Contains("Head Office", audit, StringComparison.Ordinal);
+        Assert.Contains("ExpiringSoon", audit, StringComparison.Ordinal);
+        Assert.Contains("\"ciFound\":true", audit.Replace(" ", string.Empty), StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// The service on its own: what an alert board will ask for. Owner, location, warranty and what is
+    /// already being worked on for the same CI.
+    /// </summary>
+    [Fact]
+    public async Task Describe_ForACiWithAnOwner_ReadsTheCmdbLive()
+    {
+        var ci = await CreateCiAsync();
+        await GiveTheCiAnOwnerAsync(ci.Id, warrantyInDays: -3);
+
+        await using var scope = _application.Services.CreateAsyncScope();
+        var context = await scope.ServiceProvider.GetRequiredService<IAlertEnrichmentService>()
+            .DescribeAsync(ci.Id, CancellationToken.None);
+
+        Assert.True(context.CiFound);
+        Assert.Equal("Rosalind Frey", context.OwnerName);
+        Assert.Equal("Head Office", context.SiteName);
+        Assert.Equal("Expired", context.WarrantyStatus);
+        Assert.Equal(-3, context.WarrantyDaysRemaining);
+        Assert.Empty(context.OpenTickets);
+        Assert.Contains("Rosalind Frey", context.Headline, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// The failure path. Deleting a monitored CI is not blocked by anything (the WP-3.1 note), so the
+    /// enrichment has to answer "not found" rather than throw and take the whole publication with it.
+    /// </summary>
+    [Fact]
+    public async Task Describe_ForACiThatIsNotInTheCmdb_SaysSoRatherThanFailing()
+    {
+        await using var scope = _application.Services.CreateAsyncScope();
+
+        var context = await scope.ServiceProvider.GetRequiredService<IAlertEnrichmentService>()
+            .DescribeAsync(Guid.CreateVersion7(), CancellationToken.None);
+
+        Assert.False(context.CiFound);
+        Assert.Null(context.OwnerName);
+        Assert.Empty(context.OpenTickets);
+        Assert.Equal("CI not found in the CMDB", context.Headline);
+    }
+
     [Fact]
     public async Task Evaluate_WithNoTelemetry_Throws()
     {
@@ -625,6 +693,35 @@ public sealed class AlertEngineIntegrationTests : IAsyncLifetime
         using var response = await _client!.SendAsync(request);
         Assert.Equal(HttpStatusCode.Created, response.StatusCode);
         return Assert.IsType<DeviceDto>(await response.Content.ReadFromJsonAsync<DeviceDto>());
+    }
+
+    /// <summary>
+    /// Ownership, location and a warranty written straight onto the CI. The assignment and coverage
+    /// endpoints exist (WP-2.2, WP-2.6) but this is a fixture, not an operator's edit — the WP-2.8
+    /// seeder rule — and what is under test is the read port, not those endpoints.
+    /// </summary>
+    private async Task GiveTheCiAnOwnerAsync(Guid ciId, int warrantyInDays)
+    {
+        await using var scope = _application.Services.CreateAsyncScope();
+        var context = scope.ServiceProvider.GetRequiredService<AssetsDbContext>();
+        var ci = await context.Cis.SingleAsync(item => item.Id == ciId);
+        ci.OwnerName = "Rosalind Frey";
+        ci.SiteName = "Head Office";
+        ci.DepartmentName = "Network Operations";
+        ci.WarrantyExpiresAt = DateOnly.FromDateTime(DateTime.UtcNow).AddDays(warrantyInDays);
+        await context.SaveChangesAsync();
+    }
+
+    /// <summary>The audit entry this alert wrote, as JSON. Scoped to the alert so test order cannot reach it.</summary>
+    private async Task<string> AuditForAlertAsync(Guid alertId, string action)
+    {
+        await using var scope = _application.Services.CreateAsyncScope();
+        var entry = await scope.ServiceProvider.GetRequiredService<PlatformDbContext>()
+            .AuditEntries
+            .Where(item => item.EntityType == "Alert" && item.EntityId == alertId.ToString() && item.Action == action)
+            .OrderByDescending(item => item.OccurredAt)
+            .FirstAsync();
+        return entry.AfterJson ?? string.Empty;
     }
 
     private async Task<CiDto> CreateCiAsync()

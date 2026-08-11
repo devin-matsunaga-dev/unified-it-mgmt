@@ -32,6 +32,7 @@ public interface IAlertEngine
 public sealed class AlertEngine(
     MonitoringDbContext dbContext,
     IAlertStateStore stateStore,
+    IAlertEnrichmentService enrichmentService,
     IPublishEndpoint publishEndpoint,
     IAuditService auditService,
     IOptions<AlertOptions> options,
@@ -232,11 +233,17 @@ public sealed class AlertEngine(
         var (observation, transition, record) = pending;
         var alertId = record.AlertId;
 
+        // WP-3.7: the CMDB context, read live for this publication only. It costs two port reads per
+        // *published* alert — publications are rare by construction (a severity change, never a cycle),
+        // so this is not on the evaluation hot path.
+        var context = await enrichmentService.DescribeAsync(observation.CiId, cancellationToken);
+
         if (transition.Action is AlertAction.Raise)
         {
             logger.LogWarning(
-                "Alert {Severity} raised on device {DeviceId} rule {RuleId}: {Summary}",
-                transition.Severity, observation.DeviceId, observation.RuleId, observation.Summary);
+                "Alert {Severity} raised on device {DeviceId} rule {RuleId}: {Summary} [{CmdbContext}]",
+                transition.Severity, observation.DeviceId, observation.RuleId, observation.Summary,
+                context.Headline);
 
             await publishEndpoint.Publish(
                 new AlertRaised(
@@ -261,7 +268,8 @@ public sealed class AlertEngine(
         {
             var raisedAt = record.RaisedAt;
             logger.LogInformation(
-                "Alert cleared on device {DeviceId} rule {RuleId}.", observation.DeviceId, observation.RuleId);
+                "Alert cleared on device {DeviceId} rule {RuleId}. [{CmdbContext}]",
+                observation.DeviceId, observation.RuleId, context.Headline);
 
             await publishEndpoint.Publish(
                 new AlertCleared(
@@ -300,6 +308,10 @@ public sealed class AlertEngine(
                 observation.Value,
                 observation.Threshold,
                 observation.Summary,
+                // The CMDB context travels into the audit entry because that is the durable, dated
+                // record of what the estate looked like when this fired — the alert row itself reads
+                // its CI live and will answer differently once somebody reassigns the asset.
+                Cmdb = context,
             },
             cancellationToken);
     }

@@ -29,7 +29,9 @@ const laptop: Ci = {
 const link: TicketCiLink = {
   id: 'link-1', ticketId: 'ticket-1', ciId: 'ci-1', ciName: 'LT-4417', ciType: 'Hardware', assetTag: 'AT-4417',
   serialNumber: 'SN-4417', lifecycleState: 'Deployed', isActive: true, ownerName: 'Requester One',
-  siteName: 'Head Office', linkedById: 'tech-1', linkedByName: 'Technician One', linkedAt: '2026-08-07T02:00:00Z',
+  siteName: 'Head Office', departmentName: 'Finance', warrantyStatus: 'ExpiringSoon',
+  warrantyExpiresAt: '2026-08-23', warrantyDaysRemaining: 12, contractName: 'Dell ProSupport',
+  openRelatedTickets: [], linkedById: 'tech-1', linkedByName: 'Technician One', linkedAt: '2026-08-07T02:00:00Z',
 }
 
 const ticket: Ticket = { id: 'ticket-1', number: 'INC-000001', title: 'VPN unavailable', description: 'Cannot connect', type: 'Incident', urgency: 'High', impact: 'Medium', priority: 'High', status: 'New', requesterId: 'requester-1', requesterName: 'Requester One', queueId: 'queue-1', queueName: 'Service desk', assignedTechnicianId: null, createdAt: '2026-08-07T00:00:00Z', updatedAt: '2026-08-07T01:00:00Z', categoryId: 'category-laptop', categoryName: 'Laptop issue', customFields: [{ fieldId: 'field-asset-tag', key: 'asset_tag', label: 'Asset tag', type: 'Text', value: 'LT-4417' }] }
@@ -114,6 +116,40 @@ describe('TicketDetailPage', () => {
     const card = (await screen.findByRole('heading', { name: 'Linked assets' })).closest('section')!
     await waitFor(() => expect(within(card).getByRole('link', { name: 'LT-4417' })).toHaveAttribute('href', '/assets/ci-1'))
     expect(within(card).getByText(/Linked by Technician One/)).toBeInTheDocument()
+  })
+
+  // WP-3.7: the CMDB context an agent reads without leaving the ticket.
+  it('shows the linked asset owner, location, warranty and the other tickets open on it', async () => {
+    vi.mocked(helpdeskApi.getTicketCis).mockResolvedValue([{
+      ...link,
+      openRelatedTickets: [{
+        ticketId: 'ticket-9', number: 'INC-000031', title: 'Docking station intermittent',
+        status: 'InProgress', priority: 'High', createdAt: '2026-08-05T09:00:00Z',
+      }],
+    }])
+    renderPage()
+
+    const card = (await screen.findByRole('heading', { name: 'Linked assets' })).closest('section')!
+    expect(await within(card).findByText(/Requester One/)).toBeInTheDocument()
+    expect(within(card).getByText(/Head Office/)).toBeInTheDocument()
+    expect(within(card).getByText('Warranty expiring soon')).toBeInTheDocument()
+    expect(within(card).getByText(/Warranty expires in 12 days/)).toBeInTheDocument()
+    expect(within(card).getByText(/Dell ProSupport/)).toBeInTheDocument()
+    expect(within(card).getByText('Also open on this asset (1)')).toBeInTheDocument()
+    expect(within(card).getByRole('link', { name: 'INC-000031' })).toHaveAttribute('href', '/tickets/ticket-9')
+  })
+
+  // An asset with no warranty date must not be reported as though it had one.
+  it('says nothing about a warranty the CMDB does not record', async () => {
+    vi.mocked(helpdeskApi.getTicketCis).mockResolvedValue([{
+      ...link, warrantyStatus: null, warrantyExpiresAt: null, warrantyDaysRemaining: null, contractName: null,
+    }])
+    renderPage()
+
+    const card = (await screen.findByRole('heading', { name: 'Linked assets' })).closest('section')!
+    await within(card).findByRole('link', { name: 'LT-4417' })
+    expect(within(card).queryByText(/Warranty/)).not.toBeInTheDocument()
+    expect(within(card).queryByText(/Also open on this asset/)).not.toBeInTheDocument()
   })
 
   it('confirms before unlinking an asset', async () => {

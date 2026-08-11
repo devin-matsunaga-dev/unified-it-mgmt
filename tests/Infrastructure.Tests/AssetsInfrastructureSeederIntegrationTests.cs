@@ -216,6 +216,34 @@ public sealed class AssetsInfrastructureSeederIntegrationTests : IAsyncLifetime
         Assert.Contains(estate, ci => ci.OwnerUserId is null && ci.SiteId is not null);
     }
 
+    /// <summary>
+    /// WP-3.7 asks an alert on a seeded switch to show an owner and a location. The three network CIs
+    /// the monitoring seeder takes (<c>NetworkCiIds.Take(3)</c>, which is estate order) are therefore
+    /// the ones that have to carry the whole context — a demo where every field reads "none recorded"
+    /// proves the enrichment is wired but says nothing about whether it is right.
+    /// </summary>
+    [Fact]
+    public async Task SeedAsync_TheMonitoredNetworkCis_CarryTheContextAnAlertIsSupposedToShow()
+    {
+        await using var scope = _application.Services.CreateAsyncScope();
+        var assets = scope.ServiceProvider.GetRequiredService<AssetsDbContext>();
+        var monitored = _seeded.CiIds
+            .Where(entry => entry.Key is "dc1-core-rtr-01" or "dc1-core-sw-01" or "dc1-core-sw-02")
+            .Select(entry => entry.Value)
+            .ToList();
+        Assert.Equal(3, monitored.Count);
+
+        var cis = await assets.Cis.Where(ci => monitored.Contains(ci.Id)).ToListAsync();
+
+        Assert.All(cis, ci =>
+        {
+            Assert.Equal("Technician Two", ci.OwnerName);
+            Assert.Equal("Primary Data Centre", ci.SiteName);
+            Assert.NotNull(ci.WarrantyExpiresAt);
+            Assert.NotNull(ci.ContractId);
+        });
+    }
+
     [Fact]
     public async Task SeedAsync_TicketLinks_AttachSeededTicketsToTheEstate()
     {

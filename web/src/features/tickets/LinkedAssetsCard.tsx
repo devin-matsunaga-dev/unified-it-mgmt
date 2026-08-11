@@ -4,10 +4,26 @@ import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { toast } from 'sonner'
 import { assetsApi, ciTypeLabel } from '../../api/assets'
+import { contractStatusLabel, contractStatusTone } from '../../api/contracts'
 import { helpdeskApi, type TicketCiLink } from '../../api/helpdesk'
 import { Button } from '../../components/ui/Button'
+import { formatDateOnly } from '../../lib/utils'
 import { ciLifecycleLabel, ciLifecycleTone } from '../assets/lifecycle'
 import { formatLocal } from './ticketUi'
+
+/**
+ * The warranty in a sentence. `formatDateOnly` rather than `new Date(...)`, because a `DateOnly`
+ * parsed as an instant is UTC midnight and renders as the previous day west of Greenwich.
+ */
+function warrantyLine(link: TicketCiLink) {
+  if (link.warrantyExpiresAt === null) return null
+  const on = formatDateOnly(link.warrantyExpiresAt)
+  const days = link.warrantyDaysRemaining
+  if (days === null) return `Warranty ends ${on}`
+  if (days < 0) return `Warranty expired ${Math.abs(days)} day${Math.abs(days) === 1 ? '' : 's'} ago, on ${on}`
+  if (days === 0) return `Warranty expires today, ${on}`
+  return `Warranty expires in ${days} day${days === 1 ? '' : 's'}, on ${on}`
+}
 
 /** The CIs a ticket is about, and the picker that links another one. */
 export function LinkedAssetsCard({ ticketId }: { ticketId: string }) {
@@ -49,13 +65,31 @@ export function LinkedAssetsCard({ ticketId }: { ticketId: string }) {
               <div className="flex flex-wrap items-center gap-2">
                 <Link to={`/assets/${link.ciId}`} className="font-medium text-slate-900 hover:text-blue-600 dark:text-slate-100">{link.ciName}</Link>
                 <span className={`rounded-md px-2 py-0.5 text-xs font-medium ${ciLifecycleTone(link.lifecycleState)}`}>{ciLifecycleLabel(link.lifecycleState)}</span>
+                {link.warrantyStatus && <span className={`rounded-md px-2 py-0.5 text-xs font-medium ${contractStatusTone(link.warrantyStatus)}`}>
+                  Warranty {contractStatusLabel(link.warrantyStatus).toLowerCase()}
+                </span>}
               </div>
               <p className="mt-1 text-[13px] text-slate-500">
                 {ciTypeLabel(link.ciType)}
                 {link.assetTag && <> · <span className="font-mono">{link.assetTag}</span></>}
                 {link.ownerName && <> · {link.ownerName}</>}
                 {link.siteName && <> · {link.siteName}</>}
+                {link.departmentName && <> · {link.departmentName}</>}
               </p>
+              {/* The warranty date in words, because "expiring soon" alone is a pill nobody can plan around. */}
+              {link.warrantyExpiresAt && <p className="mt-1 text-xs text-slate-500">{warrantyLine(link)}{link.contractName && <> · Covered by {link.contractName}</>}</p>}
+              {link.openRelatedTickets.length > 0 && <div className="mt-2 rounded-lg border border-slate-200 bg-slate-50 p-2 dark:border-slate-800 dark:bg-slate-800/40">
+                <p className="px-1 text-xs font-medium text-slate-500">
+                  Also open on this asset ({link.openRelatedTickets.length})
+                </p>
+                <ul className="mt-1">
+                  {link.openRelatedTickets.map((related) => <li key={related.ticketId} className="px-1 py-0.5 text-[13px]">
+                    <Link to={`/tickets/${related.ticketId}`} className="font-mono text-slate-500 hover:text-blue-600">{related.number}</Link>
+                    {' '}<span className="text-slate-600 dark:text-slate-300">{related.title}</span>
+                    <span className="text-slate-500"> · {related.status} · {related.priority}</span>
+                  </li>)}
+                </ul>
+              </div>}
               <p className="mt-1 text-xs text-slate-500">Linked by {link.linkedByName} · {formatLocal(link.linkedAt)}</p>
             </div>
             {confirmingId === link.ciId
