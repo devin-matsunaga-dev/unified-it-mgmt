@@ -31,7 +31,9 @@ export function AppShell() {
   const email = user?.profile.email
   const pageContext = pathname.startsWith('/tickets')
     ? { title: 'Tickets', subtitle: 'Manage requests across the service desk.' }
-    : { title: 'Overview', subtitle: 'Your unified IT environment at a glance.' }
+    : pathname.startsWith('/monitoring')
+      ? { title: 'Monitoring', subtitle: 'Live device status and alerts across the estate.' }
+      : { title: 'Overview', subtitle: 'Your unified IT environment at a glance.' }
 
   useEffect(() => {
     if (!accountOpen) return

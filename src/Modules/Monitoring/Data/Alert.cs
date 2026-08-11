@@ -57,6 +57,31 @@ public sealed class Alert
 
     public DateTimeOffset? ClearedAt { get; set; }
 
+    /// <summary>
+    /// When somebody said they were dealing with this, or null while nobody has. WP-3.9.
+    /// <para>
+    /// An acknowledgement is an annotation and nothing more: it does not suppress the alert, does not
+    /// reach the state machine, and does not travel to WP-3.6's ticket automation. That is deliberate
+    /// — the alert row's severity states what is true about the estate, and "a human has seen it"
+    /// must not be able to change that. The only thing it changes is what a board shows.
+    /// </para>
+    /// <para>
+    /// It also does not survive a clear: a recurrence opens a new row (see <see cref="AlertStatus"/>),
+    /// so the same problem coming back is unacknowledged again, which is the point of the button.
+    /// </para>
+    /// </summary>
+    public DateTimeOffset? AcknowledgedAt { get; set; }
+
+    /// <summary>The immutable identity id of whoever acknowledged, for the audit trail.</summary>
+    public string? AcknowledgedBy { get; set; }
+
+    /// <summary>
+    /// Their display name at the time, snapshotted beside the id following the WP-1.7 comment-author
+    /// precedent — a board has to print a name without asking an identity provider per row, and it has
+    /// to keep printing one after that person leaves the directory.
+    /// </summary>
+    public string? AcknowledgedByName { get; set; }
+
     public required string PollerName { get; set; }
 }
 

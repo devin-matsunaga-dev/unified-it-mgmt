@@ -59,6 +59,8 @@ public sealed class AlertConfiguration : IEntityTypeConfiguration<Alert>
         builder.Property(alert => alert.Severity).HasConversion<string>().HasMaxLength(20).IsRequired();
         builder.Property(alert => alert.Status).HasConversion<string>().HasMaxLength(20).IsRequired();
         builder.Property(alert => alert.Suppression).HasConversion<string>().HasMaxLength(20).IsRequired();
+        builder.Property(alert => alert.AcknowledgedBy).HasMaxLength(200);
+        builder.Property(alert => alert.AcknowledgedByName).HasMaxLength(200);
 
         // "Raised exactly once" as a database constraint rather than only as a state machine
         // invariant. Two consumers racing on one rule cannot both open an alert; the loser's

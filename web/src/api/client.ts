@@ -1,6 +1,7 @@
 import { userManager } from '../auth/auth'
 
-const apiBaseUrl = (import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:5000').replace(/\/$/, '')
+/** Exported so the SignalR hub connects to the same host these calls do, from one definition. */
+export const apiBaseUrl = (import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:5000').replace(/\/$/, '')
 
 export class ApiError extends Error {
   constructor(

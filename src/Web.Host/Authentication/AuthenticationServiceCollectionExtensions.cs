@@ -32,6 +32,25 @@ public static class AuthenticationServiceCollectionExtensions
                 options.Authority = authentication.Authority;
                 options.Audience = authentication.Audience;
                 options.RequireHttpsMetadata = authentication.RequireHttpsMetadata;
+
+                // WP-3.9. A browser cannot set an Authorization header on a WebSocket handshake, so
+                // the SignalR client puts the token in the query string instead. Accepted for the hub
+                // paths only — a token in a URL is a token in a log line and an access log full of
+                // them would be a credential leak on every other endpoint.
+                options.Events = new JwtBearerEvents
+                {
+                    OnMessageReceived = context =>
+                    {
+                        var token = context.Request.Query["access_token"];
+                        if (!string.IsNullOrEmpty(token)
+                            && context.HttpContext.Request.Path.StartsWithSegments("/hubs"))
+                        {
+                            context.Token = token;
+                        }
+
+                        return Task.CompletedTask;
+                    },
+                };
             });
         services.AddTransient<IClaimsTransformation, KeycloakRoleClaimsTransformation>();
         services.AddAuthorizationBuilder()

@@ -3,8 +3,10 @@ using MassTransit;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Modules.Monitoring.Data;
 using Modules.Monitoring.Features.Alerting;
+using Modules.Monitoring.Features.Dashboards;
 using Modules.Monitoring.Features.Devices;
 using Modules.Monitoring.Features.Heartbeats;
 using Modules.Monitoring.Features.MaintenanceWindows;
@@ -36,6 +38,14 @@ public static class MonitoringServiceCollectionExtensions
         services.AddScoped<IAlertStateStore, RedisAlertStateStore>();
         services.AddScoped<IAlertEnrichmentService, AlertEnrichmentService>();
         services.AddScoped<IAlertEngine, AlertEngine>();
+        services.AddScoped<IAlertService, AlertService>();
+        services.AddScoped<IStatusBoardService, StatusBoardService>();
+        services.AddScoped<IMonitoringLiveUpdateService, MonitoringLiveUpdateService>();
+
+        // A host with no SignalR hub still has to be able to construct the alert engine — a seeder, a
+        // test host, a future worker. Web.Host replaces this with the hub-backed one; TryAdd, so
+        // whichever registration runs second does not win by accident.
+        services.TryAddScoped<IMonitoringBroadcaster, NullMonitoringBroadcaster>();
 
         services.AddOptions<AlertOptions>()
             .Bind(configuration.GetSection(AlertOptions.SectionName))

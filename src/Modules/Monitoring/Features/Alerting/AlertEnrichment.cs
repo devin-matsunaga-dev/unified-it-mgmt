@@ -38,6 +38,30 @@ public sealed record AlertCmdbContext(
         : "CI not found in the CMDB";
 }
 
+/// <summary>
+/// The CI half of <see cref="AlertCmdbContext"/> — everything one batched port read answers, and
+/// nothing that costs a query per row. WP-3.9's alert board carries this on every row; the open
+/// tickets are only on the alert somebody has actually opened.
+/// </summary>
+public sealed record AlertCmdbSummary(
+    Guid CiId,
+    bool CiFound,
+    string? CiName,
+    string? CiType,
+    string? AssetTag,
+    string? LifecycleState,
+    string? OwnerName,
+    string? SiteName,
+    string? DepartmentName,
+    DateOnly? WarrantyExpiresAt,
+    string? WarrantyStatus,
+    int? WarrantyDaysRemaining,
+    string? ContractName)
+{
+    public static AlertCmdbSummary NotFound(Guid ciId) =>
+        new(ciId, false, null, null, null, null, null, null, null, null, null, null, null);
+}
+
 public interface IAlertEnrichmentService
 {
     /// <summary>
@@ -46,6 +70,17 @@ public interface IAlertEnrichmentService
     /// same rule WP-2.4 set for ticket links and WP-3.1 for a monitored device's CI name.
     /// </summary>
     Task<AlertCmdbContext> DescribeAsync(Guid ciId, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// The same context for a page of alerts, minus the open tickets. One <see cref="ICiDirectory"/>
+    /// call covers the whole page, because that port takes a list; <see cref="ITicketLinkDirectory"/>
+    /// answers one CI at a time, so including tickets here would be a query per row on every board
+    /// refresh. A caller that needs them asks <see cref="DescribeAsync"/> for the one alert it is
+    /// showing.
+    /// </summary>
+    Task<IReadOnlyDictionary<Guid, AlertCmdbSummary>> SummariseAsync(
+        IReadOnlyCollection<Guid> ciIds,
+        CancellationToken cancellationToken);
 }
 
 /// <summary>
@@ -91,5 +126,32 @@ public sealed class AlertEnrichmentService(
             ci.WarrantyDaysRemaining,
             ci.ContractName,
             open);
+    }
+
+    public async Task<IReadOnlyDictionary<Guid, AlertCmdbSummary>> SummariseAsync(
+        IReadOnlyCollection<Guid> ciIds,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(ciIds);
+        var wanted = ciIds.Where(id => id != Guid.Empty).Distinct().ToList();
+        if (wanted.Count == 0)
+        {
+            return new Dictionary<Guid, AlertCmdbSummary>();
+        }
+
+        var found = (await ciDirectory.GetSummariesAsync(wanted, cancellationToken))
+            .ToDictionary(ci => ci.Id);
+
+        // Every id asked for comes back, present or not. A missing key would make an absent CI
+        // indistinguishable from one the caller forgot to ask about, and "the CI is gone" is a fact
+        // the board has to be able to print rather than a blank row.
+        return wanted.ToDictionary(
+            id => id,
+            id => found.TryGetValue(id, out var ci)
+                ? new AlertCmdbSummary(
+                    id, CiFound: true, ci.Name, ci.Type, ci.AssetTag, ci.LifecycleState, ci.OwnerName,
+                    ci.SiteName, ci.DepartmentName, ci.WarrantyExpiresAt, ci.WarrantyStatus,
+                    ci.WarrantyDaysRemaining, ci.ContractName)
+                : AlertCmdbSummary.NotFound(id));
     }
 }

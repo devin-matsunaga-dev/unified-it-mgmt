@@ -9,6 +9,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
 using Modules.Monitoring.Data;
+using Modules.Monitoring.Features.Dashboards;
 
 using Platform.Auditing;
 
@@ -33,6 +34,7 @@ public sealed class AlertEngine(
     MonitoringDbContext dbContext,
     IAlertStateStore stateStore,
     IAlertEnrichmentService enrichmentService,
+    IMonitoringLiveUpdateService liveUpdates,
     IPublishEndpoint publishEndpoint,
     IAuditService auditService,
     IOptions<AlertOptions> options,
@@ -314,6 +316,14 @@ public sealed class AlertEngine(
                 Cmdb = context,
             },
             cancellationToken);
+
+        // WP-3.9. The boards are told from here rather than from a consumer of the events above,
+        // because the outbox delivers on its own sweep and a dashboard that lagged a durable queue
+        // would not be live. This is safe to do at this point and not before: the alert row was
+        // committed by the caller's SaveChangesAsync, so a browser can never be shown an alert the
+        // database does not hold. It is also the only push that matters for latency — a broadcast is
+        // a projection of committed state, and a browser that misses one re-reads on reconnect.
+        await liveUpdates.PublishAlertChangeAsync(alertId, cancellationToken);
     }
 
     /// <summary>

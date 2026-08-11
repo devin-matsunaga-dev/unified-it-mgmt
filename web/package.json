@@ -3,7 +3,9 @@
   "private": true,
   "version": "0.0.0",
   "type": "module",
-  "engines": { "node": ">=24" },
+  "engines": {
+    "node": ">=24"
+  },
   "scripts": {
     "dev": "vite --host 0.0.0.0",
     "build": "tsc -b && vite build",
@@ -12,6 +14,7 @@
   },
   "dependencies": {
     "@hookform/resolvers": "^5.7.1",
+    "@microsoft/signalr": "^10.0.11",
     "@tanstack/react-query": "^5.84.2",
     "@tanstack/react-table": "^8.21.3",
     "class-variance-authority": "^0.7.1",
@@ -22,6 +25,7 @@
     "react-dom": "^19.1.1",
     "react-hook-form": "^7.84.0",
     "react-router-dom": "7.18.2",
+    "recharts": "^3.10.1",
     "sonner": "^2.0.7",
     "tailwind-merge": "^3.3.1",
     "zod": "^4.4.3"

@@ -11,6 +11,9 @@ import { ScanPage } from './features/assets/ScanPage'
 import { ContractDetailPage } from './features/contracts/ContractDetailPage'
 import { ContractListPage } from './features/contracts/ContractListPage'
 import { VendorListPage } from './features/contracts/VendorListPage'
+import { AlertBoardPage } from './features/monitoring/AlertBoardPage'
+import { DeviceDetailPage } from './features/monitoring/DeviceDetailPage'
+import { StatusBoardPage } from './features/monitoring/StatusBoardPage'
 import { PeopleListPage } from './features/people/PeopleListPage'
 import { UserDetailPage } from './features/people/UserDetailPage'
 import { HomeRoute } from './pages/HomeRoute'
@@ -46,7 +49,9 @@ export function App() {
       <Route path="contracts/:id" element={<ProtectedRoute roles={['Admin', 'Technician', 'Manager']}><ContractDetailPage /></ProtectedRoute>} />
       <Route path="people" element={<ProtectedRoute roles={['Admin', 'Technician', 'Manager']}><PeopleListPage /></ProtectedRoute>} />
       <Route path="people/:userId" element={<ProtectedRoute roles={['Admin', 'Technician', 'Manager']}><UserDetailPage /></ProtectedRoute>} />
-      <Route path="monitoring" element={<ProtectedRoute roles={['Admin', 'Technician', 'Manager']}><PlaceholderPage title="Monitoring" /></ProtectedRoute>} />
+      <Route path="monitoring" element={<ProtectedRoute roles={['Admin', 'Technician', 'Manager']}><StatusBoardPage /></ProtectedRoute>} />
+      <Route path="monitoring/alerts" element={<ProtectedRoute roles={['Admin', 'Technician', 'Manager']}><AlertBoardPage /></ProtectedRoute>} />
+      <Route path="monitoring/devices/:id" element={<ProtectedRoute roles={['Admin', 'Technician', 'Manager']}><DeviceDetailPage /></ProtectedRoute>} />
       <Route path="admin/users" element={<ProtectedRoute roles={['Admin']}><PlaceholderPage title="Users" /></ProtectedRoute>} />
       <Route path="admin/settings" element={<ProtectedRoute roles={['Admin']}><PlaceholderPage title="Settings" /></ProtectedRoute>} />
     </Route>
