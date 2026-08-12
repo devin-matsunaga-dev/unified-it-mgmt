@@ -22,6 +22,8 @@ public sealed class MonitoringDemoSeederIntegrationTests(InfrastructureFixture i
         Guid.Parse("0199c0de-3301-7000-8000-0000000000a2"),
         Guid.Parse("0199c0de-3301-7000-8000-0000000000a3"),
         Guid.Parse("0199c0de-3301-7000-8000-0000000000a4"),
+        Guid.Parse("0199c0de-3301-7000-8000-0000000000a5"),
+        Guid.Parse("0199c0de-3301-7000-8000-0000000000a6"),
     ];
 
     [Fact]
@@ -31,10 +33,10 @@ public sealed class MonitoringDemoSeederIntegrationTests(InfrastructureFixture i
 
         var result = await new MonitoringDemoSeeder(dbContext).SeedAsync(Plan());
 
-        Assert.Equal(4, result.DevicesAdded);
+        Assert.Equal(6, result.DevicesAdded);
         var devices = await dbContext.MonitoredDevices.Include(device => device.Checks)
             .OrderBy(device => device.Id).ToListAsync();
-        Assert.Equal(4, devices.Count);
+        Assert.Equal(6, devices.Count);
         Assert.All(devices, device => Assert.NotEmpty(device.Checks));
         Assert.Equal(result.ChecksAdded, devices.Sum(device => device.Checks.Count));
     }
@@ -93,8 +95,8 @@ public sealed class MonitoringDemoSeederIntegrationTests(InfrastructureFixture i
         var second = await seeder.SeedAsync(Plan());
 
         Assert.Equal(0, second.DevicesAdded);
-        Assert.Equal(4, await dbContext.MonitoredDevices.CountAsync());
-        Assert.Equal(4, await dbContext.ConfigChanges.CountAsync());
+        Assert.Equal(6, await dbContext.MonitoredDevices.CountAsync());
+        Assert.Equal(6, await dbContext.ConfigChanges.CountAsync());
     }
 
     /// <summary>
@@ -207,6 +209,105 @@ public sealed class MonitoringDemoSeederIntegrationTests(InfrastructureFixture i
         // No ICMP check on this one, so a device whose reachability is decided entirely by service
         // checks is part of the seeded estate rather than a shape nobody has run.
         Assert.DoesNotContain(device.Checks, check => check.Type == CheckType.Icmp);
+    }
+
+    /// <summary>
+    /// WP-3.12's down-able device: the one device in the estate that can be taken away on its own.
+    /// It has to sit at the <em>second</em> simulator's address, because stopping the shared one
+    /// takes the healthy and degraded devices with it — which is what made the Phase 3 demo
+    /// impossible to perform without blacking out the rest of the board.
+    /// </summary>
+    [Fact]
+    public async Task Seed_TheDownableDevice_PollsASimulatorOfItsOwnAndNobodyElsePollsIt()
+    {
+        await using var dbContext = await NewDatabaseAsync();
+        await new MonitoringDemoSeeder(dbContext).SeedAsync(Plan());
+
+        var devices = await dbContext.MonitoredDevices.Include(device => device.Checks).ToListAsync();
+        var downable = Assert.Single(devices, device => device.Address == "snmpsim-downable");
+
+        // Nothing else shares the container, or stopping it would take a second device too.
+        Assert.Single(devices, device => device.Address == "snmpsim-downable");
+        // ICMP as well as SNMP: stopping the container has to be visible as unreachable rather than
+        // only as an SNMP timeout, which is what the demo points at.
+        Assert.Contains(downable.Checks, check => check.Type == CheckType.Icmp);
+        Assert.Contains(downable.Checks, check => check.Type == CheckType.Snmp);
+        // 30s against the platform's three sustained cycles is an alert inside two minutes. At the
+        // 60s the other SNMP devices use, the demo is a four-minute silence.
+        Assert.All(downable.Checks, check => Assert.Equal(30, check.IntervalSeconds));
+    }
+
+    /// <summary>
+    /// WP-3.12's mock HTTP target, and the only seeded check carrying a content expectation. The
+    /// expectation is the point: it is a phrase in a page this repository owns, so breaking it is an
+    /// edit rather than a wait for somebody else's site to change.
+    /// </summary>
+    [Fact]
+    public async Task Seed_TheHttpTargetDevice_CarriesAContentExpectationTheMailDeviceDoesNot()
+    {
+        await using var dbContext = await NewDatabaseAsync();
+        await new MonitoringDemoSeeder(dbContext).SeedAsync(Plan());
+
+        var portal = await dbContext.MonitoredDevices.Include(device => device.Checks)
+            .SingleAsync(device => device.Address == "http-target");
+        var mail = await dbContext.MonitoredDevices.Include(device => device.Checks)
+            .SingleAsync(device => device.Address == "mailhog");
+
+        Assert.Equal("80", Parameters(portal, CheckType.Tcp)["port"]);
+        Assert.Equal("http://http-target:80/", Parameters(portal, CheckType.Http)["url"]);
+        Assert.Equal(
+            "Customer portal is serving normally.",
+            Parameters(portal, CheckType.Http)["expectedContent"]);
+        // MailHog's page is MailHog's to change, so its check deliberately still expects nothing of
+        // the body. A "simplification" that gave both the same treatment would make the mail check
+        // fail on the next image bump.
+        Assert.DoesNotContain("expectedContent", Parameters(mail, CheckType.Http).Keys);
+    }
+
+    /// <summary>
+    /// The phrase the seeded check matches has to be in the page the mock target actually serves.
+    /// They are two files that must agree and nothing else would notice if they stopped.
+    /// </summary>
+    [Fact]
+    public void Seed_TheHttpTargetsExpectedContent_IsInThePageTheContainerServes()
+    {
+        var page = File.ReadAllText(RepositoryFile("src", "AppHost", "http-target", "index.html"));
+
+        Assert.Contains(
+            new MonitoringSeedPlan("snmpsim", 161, CiIds).HttpTargetExpectedContent,
+            page,
+            StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// The down-able simulator's data directory has to hold a profile filed under the community its
+    /// checks authenticate with — snmpsim takes the community from the file name, so a rename here is
+    /// a device that answers nothing and no test but this one would say why.
+    /// </summary>
+    [Fact]
+    public void Seed_TheDownableSimulator_ServesAProfileUnderTheCommunityItsChecksUse()
+    {
+        var profile = RepositoryFile(
+            "src", "AppHost", "snmpsim-downable", $"{MonitoringDemoSeeder.HealthyCommunity}.snmprec");
+
+        Assert.True(File.Exists(profile), $"No simulator profile at '{profile}'.");
+        // The CPU and memory OIDs its two SNMP checks read. A profile missing them answers the walk
+        // with nothing, which the poller reports as a failed check rather than as a zero.
+        var recording = File.ReadAllText(profile);
+        Assert.Contains("1.3.6.1.2.1.25.3.3.1.2.", recording, StringComparison.Ordinal);
+        Assert.Contains("1.3.6.1.2.1.25.2.3.1.6.", recording, StringComparison.Ordinal);
+    }
+
+    private static string RepositoryFile(params string[] segments)
+    {
+        var directory = new DirectoryInfo(AppContext.BaseDirectory);
+        while (directory is not null && !File.Exists(Path.Combine(directory.FullName, "ItPlatform.slnx")))
+        {
+            directory = directory.Parent;
+        }
+
+        var root = directory ?? throw new DirectoryNotFoundException("Could not locate the repository root.");
+        return Path.Combine([root.FullName, .. segments]);
     }
 
     /// <summary>

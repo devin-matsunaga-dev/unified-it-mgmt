@@ -33,6 +33,21 @@ namespace Modules.Monitoring.Seeding;
 /// was in until now.
 /// </param>
 /// <param name="DegradedCredentialId">The same for the degraded profile.</param>
+/// <param name="DownableSnmpAddress">
+/// Host the second SNMP simulator answers on (WP-3.12). It is a container of its own so that stopping
+/// it takes exactly one device away — stopping the shared simulator would take the healthy and
+/// degraded devices with it, which is what made the Phase 3 demo impossible to perform on its own.
+/// It serves its profile under the <c>healthy</c> community, so it needs no credential of its own.
+/// </param>
+/// <param name="HttpTargetAddress">
+/// Host the mock HTTP target answers on (WP-3.12): a page this repository owns, so a content
+/// expectation can be broken by editing a file rather than by hoping a third party's page changes.
+/// </param>
+/// <param name="HttpTargetPort">The port it serves on, used by both the TCP check and the URL.</param>
+/// <param name="HttpTargetExpectedContent">
+/// A phrase the mock target's page carries. The seeded HTTP check matches it, which is what makes
+/// "break the expectation and watch the check fail" a one-line edit.
+/// </param>
 public sealed record MonitoringSeedPlan(
     string SnmpAddress,
     int SnmpPort,
@@ -42,7 +57,11 @@ public sealed record MonitoringSeedPlan(
     int ServiceTcpPort = 1025,
     string ServiceHttpUrl = "http://mailhog:8025/",
     Guid? HealthyCredentialId = null,
-    Guid? DegradedCredentialId = null);
+    Guid? DegradedCredentialId = null,
+    string DownableSnmpAddress = "snmpsim-downable",
+    string HttpTargetAddress = "http-target",
+    int HttpTargetPort = 80,
+    string HttpTargetExpectedContent = "Customer portal is serving normally.");
 
 public sealed record MonitoringSeedResult(int DevicesAdded, int ChecksAdded);
 
@@ -204,6 +223,62 @@ public sealed class MonitoringDemoSeeder(MonitoringDbContext dbContext)
                 Tcp(now, "SMTP port", plan.ServiceTcpPort, intervalSeconds: 30),
                 Http(now, "Web UI", plan.ServiceHttpUrl, intervalSeconds: 30),
             ]);
+
+        // WP-3.12's down-able device, and the only one in the estate that can be taken away without
+        // taking anything else with it: it is the sole occupant of its own simulator container, so
+        // `docker stop snmpsim-downable` fails its checks and leaves every other device polling. That
+        // is the Phase 3 demo — one device down, one ticket, revive, the ticket resolves itself.
+        //
+        // Its checks are the ones that make the loop run quickly enough to watch: a 30-second interval
+        // against the platform's default of three sustained cycles is an alert about a minute and a
+        // half after the container stops. It reads its community from the same vaulted credential as
+        // the healthy device (see MonitoringSeedPlan.DownableSnmpAddress).
+        if (plan.CiIds.Count < 5)
+        {
+            yield break;
+        }
+
+        yield return Device(
+            Guid.Parse("0199c0de-3300-7000-8000-000000000005"),
+            plan.CiIds[4],
+            plan,
+            now,
+            "Simulated switch — down-able profile (stop `snmpsim-downable` to take it away)",
+            plan.DownableSnmpAddress,
+            [
+                Ping(now, "Reachability", intervalSeconds: 30),
+                Snmp(now, "CPU", "cpu", plan, HealthyCommunity, plan.HealthyCredentialId, 30,
+                    warning: 70, critical: 90),
+                Snmp(now, "Memory", "memory", plan, HealthyCommunity, plan.HealthyCredentialId, 30,
+                    warning: 80, critical: 95),
+            ]);
+
+        // WP-3.12's mock HTTP target. Unlike the mail device above, this one's page belongs to this
+        // repository, which is what lets the seeded check carry a content expectation at all: editing
+        // `src/AppHost/http-target/index.html` breaks it with no restart and nothing else in the stack
+        // notices. The mail device keeps its expectation-free check, because MailHog's UI is MailHog's
+        // to change.
+        if (plan.CiIds.Count < 6)
+        {
+            yield break;
+        }
+
+        yield return Device(
+            Guid.Parse("0199c0de-3300-7000-8000-000000000006"),
+            plan.CiIds[5],
+            plan,
+            now,
+            "Customer portal — mock HTTP target, with a content expectation to break",
+            plan.HttpTargetAddress,
+            [
+                Tcp(now, "Portal port", plan.HttpTargetPort, intervalSeconds: 30),
+                Http(
+                    now,
+                    "Portal page",
+                    $"http://{plan.HttpTargetAddress}:{plan.HttpTargetPort.ToString(System.Globalization.CultureInfo.InvariantCulture)}/",
+                    intervalSeconds: 30,
+                    expectedContent: plan.HttpTargetExpectedContent),
+            ]);
     }
 
     private static MonitoredDevice Device(
@@ -254,20 +329,27 @@ public sealed class MonitoringDemoSeeder(MonitoringDbContext dbContext)
         DateTimeOffset now,
         string name,
         string url,
-        int intervalSeconds) => Check(
-            now,
-            CheckType.Http,
-            $"HTTP: {name}",
-            intervalSeconds,
-            timeoutSeconds: 5,
-            new Dictionary<string, string>
-            {
-                ["url"] = url,
-                // Left at "any 2xx" and no content expectation: the seeded check has to keep passing
-                // across a MailHog version bump, and the checklist's failure path is an operator
-                // editing it rather than a fixture that rots.
-                ["method"] = "GET",
-            });
+        int intervalSeconds,
+        string? expectedContent = null)
+    {
+        var parameters = new Dictionary<string, string>
+        {
+            ["url"] = url,
+            // Left at "any 2xx": a status expectation is one status code (WP-3.8), and pinning it
+            // would make a redirect somebody adds to the page read as an outage.
+            ["method"] = "GET",
+        };
+
+        // Only where the page is this repository's. Against a third party's — MailHog's UI is the
+        // seeded example — a content expectation is a fixture that rots on their next version bump,
+        // which is why the mail device's check deliberately still carries none.
+        if (expectedContent is not null)
+        {
+            parameters["expectedContent"] = expectedContent;
+        }
+
+        return Check(now, CheckType.Http, $"HTTP: {name}", intervalSeconds, timeoutSeconds: 5, parameters);
+    }
 
     private static CheckDefinition Snmp(
         DateTimeOffset now,

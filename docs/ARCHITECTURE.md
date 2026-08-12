@@ -73,7 +73,7 @@ Dependency graph = `assets.ci_relationships` table + recursive CTEs. No graph da
 
 **Pinned platform versions (LTS/latest-supported only — see WORKFLOW.md table):** .NET 10 LTS · Aspire 13.x (latest; `aspire update` at phase gates) · Node 24 LTS · Python 3.13+ · React 19 + latest Vite · PostgreSQL newest-Timescale-supported major · Ubuntu LTS. Never scaffold or pull base images for EOL versions (net8.0/net9.0, Node ≤22, Python ≤3.12).
 
-- **Dev:** WSL2 (Ubuntu LTS), everything via Aspire AppHost (`aspire run`), MailHog for SMTP, snmpsim for devices.
+- **Dev:** WSL2 (Ubuntu LTS), everything via Aspire AppHost (`aspire run`), MailHog for SMTP, snmpsim for devices (two containers: `snmpsim` serves the healthy and degraded profiles, `snmpsim-downable` serves one device that can be stopped on its own), `http-target` (nginx) as a mock HTTP service whose page this repository owns.
 - **Prod:** Linux VM, Docker Compose from CI-built images, Caddy/Nginx TLS front, Entra ID, real SMTP. No building on the prod box; dev-only containers excluded from prod profile.
 
 ## 9. Deferred on purpose (do not add unprompted)

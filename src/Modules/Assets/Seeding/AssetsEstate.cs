@@ -182,7 +182,12 @@ public static class AssetsEstate
               PurchasedDaysAgo = 1_100, WarrantyInDays = 640, AgeDays = 1_100 },
         Network("dc1-acc-sw-01", "DC1 access switch", "Out-of-band and backup network access switch.",
                 "10.10.0.4", "Cisco", 24) with
-            { SiteCode = "DC1", AssetTag = "NET-0004", SerialNumber = "FTX2401S003", ContractKey = "smartnet",
+            // Held by technician2 for the same reason WP-3.7 gave the three core CIs above an owner:
+            // WP-3.12 makes this the down-able device, so its ticket is the one the Phase 3 demo puts
+            // on screen — and a demo whose asset card reads "nobody holds this asset" proves the
+            // wiring and nothing else. Found by this package's own hand-verification.
+            { SiteCode = "DC1", OwnerUsername = "technician2", AssetTag = "NET-0004",
+              SerialNumber = "FTX2401S003", ContractKey = "smartnet",
               PurchasedDaysAgo = 800, WarrantyInDays = 460, AgeDays = 800 },
         Network("hq-edge-rtr-01", "HQ edge router", "Head Office internet edge. Root of the Head Office dependency tree.",
                 "10.20.0.1", "Cisco", 16) with

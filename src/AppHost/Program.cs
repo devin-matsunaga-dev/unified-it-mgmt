@@ -207,6 +207,43 @@ var snmpSimDataPath = Path.Combine(builder.Environment.ContentRootPath, "snmpsim
 var snmpSim = builder.AddContainer(SnmpSimHost, "tandrup/snmpsim")
     .WithBindMount(snmpSimDataPath, "/usr/local/snmpsim/data", isReadOnly: true);
 
+// The down-able device (WP-3.12), and the reason it is a second container rather than a third
+// community on the one above: stopping `snmpsim` stops every simulated device at once, so the Phase 3
+// demo — take one device down, watch its ticket open, revive it, watch the ticket resolve — could not
+// be performed without also taking down the healthy and degraded devices the rest of the estate is
+// watching. `docker stop snmpsim-downable` takes exactly one device away.
+//
+// Its profile is a distinct simulated switch and is deliberately filed under the community `healthy`:
+// snmpsim takes the community from the file name, so reusing it means this device authenticates with
+// the vaulted credential WP-3.11 already seeds, rather than needing a third secret in the vault. The
+// container decides *which* device answers; the community decides which profile within it.
+//
+// Two mechanisms that look easier were probed against the image and rejected. The `delay` variation
+// module blocks the whole responder — a request delayed past a check's timeout stalls every other
+// community too, measured at 5s on a healthy read taken during one — and the `error` module answers
+// immediately, so it is a device returning an error rather than a device that is not there.
+const string DownableSnmpSimHost = "snmpsim-downable";
+var downableSnmpSim = builder.AddContainer(DownableSnmpSimHost, "tandrup/snmpsim")
+    .WithBindMount(
+        Path.Combine(builder.Environment.ContentRootPath, "snmpsim-downable"),
+        "/usr/local/snmpsim/data",
+        isReadOnly: true);
+
+// The mock HTTP target (WP-3.12). The seeded service checks pointed at MailHog, which was chosen in
+// WP-3.8 as the one resource in the stack answering both a TCP connect and an HTTP request — but its
+// page belongs to MailHog, so a content expectation set against it rots on a version bump and there
+// is no honest way to break one by hand. This serves a page this repository owns: editing
+// `http-target/index.html` breaks the seeded check's `expectedContent` with no restart, and stopping
+// the container takes the service down. MailHog keeps its own seeded device and goes back to being
+// mail.
+const string HttpTargetHost = "http-target";
+const int HttpTargetPort = 80;
+var httpTarget = builder.AddContainer(HttpTargetHost, "nginx", "1.29-alpine")
+    .WithBindMount(
+        Path.Combine(builder.Environment.ContentRootPath, "http-target"),
+        "/usr/share/nginx/html",
+        isReadOnly: true);
+
 // A container rather than a Python executable resource, because "stop the poller and watch the
 // platform notice" is a verification step, and `docker stop` is how that is done.
 builder.AddDockerfile("poller", "../../services/poller")
@@ -239,9 +276,11 @@ builder.AddDockerfile("poller", "../../services/poller")
     .WaitFor(rabbitMq)
     .WaitFor(keycloak)
     .WaitFor(snmpSim)
-    // The seeded service checks poll it, so a poller that started first would report the mail
-    // service down for its first cycles and raise an alert about the stack starting up.
-    .WaitFor(mailhog);
+    .WaitFor(downableSnmpSim)
+    // The seeded service checks poll these, so a poller that started first would report the mail
+    // service and the portal down for its first cycles and raise an alert about the stack starting up.
+    .WaitFor(mailhog)
+    .WaitFor(httpTarget);
 
 builder.AddProject<Projects.Seeder>("seeder")
     .WithReference(database)
@@ -261,6 +300,14 @@ builder.AddProject<Projects.Seeder>("seeder")
     .WithEnvironment(
         "Monitoring__Seed__ServiceHttpUrl",
         $"http://{MailHogHost}:{MailHogHttpPort.ToString(System.Globalization.CultureInfo.InvariantCulture)}/")
+    // WP-3.12's rig. The down-able simulator answers on the same port as the other one — it is the
+    // same image with a different data directory — so only the host differs.
+    .WithEnvironment("Monitoring__Seed__DownableSnmpAddress", DownableSnmpSimHost)
+    // And the mock HTTP target, which the seeded portal device both connects to and reads.
+    .WithEnvironment("Monitoring__Seed__HttpTargetAddress", HttpTargetHost)
+    .WithEnvironment(
+        "Monitoring__Seed__HttpTargetPort",
+        HttpTargetPort.ToString(System.Globalization.CultureInfo.InvariantCulture))
     // WP-3.10. Left unset by default, which seeds the email channel and no chat channel — a
     // placeholder webhook would fail every Critical alert and look like a broken feature. Set it
     // (with Notifications__Seed__WebhookKind = Teams or Slack) to seed the chat half.

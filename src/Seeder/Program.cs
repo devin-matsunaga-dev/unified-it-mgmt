@@ -120,11 +120,22 @@ var monitoringResult = await new MonitoringDemoSeeder(monitoringDbContext).SeedA
         // first entry in ServiceCiIds is the finance reporting service, which made every screen in
         // the demo say a mail outage was a reporting outage. Falls back to the old positional pick so
         // a rename in the estate costs the apt name rather than the whole device.
+        // WP-3.12 appends two more, both named rather than positional for the reason above: the
+        // down-able switch (its own simulator container, the one the Phase 3 demo stops) and the
+        // customer portal (the mock HTTP target). Appended after the existing four so that nothing
+        // already seeded changes device — the ids of the first four are fixed and their CIs are what
+        // WP-3.7 gave owners to.
         [
             .. assetsResult.NetworkCiIds.Take(3),
             .. (assetsResult.CiIds.TryGetValue("svc-mail", out var mailCiId)
                 ? [mailCiId]
                 : assetsResult.ServiceCiIds.Take(1)),
+            .. (assetsResult.CiIds.TryGetValue("dc1-acc-sw-01", out var downableCiId)
+                ? [downableCiId]
+                : assetsResult.NetworkCiIds.Skip(3).Take(1)),
+            .. (assetsResult.CiIds.TryGetValue("svc-portal", out var portalCiId)
+                ? [portalCiId]
+                : assetsResult.ServiceCiIds.Skip(1).Take(1)),
         ],
         Environment.GetEnvironmentVariable("Monitoring__Seed__PollerGroup") ?? "default",
         Environment.GetEnvironmentVariable("Monitoring__Seed__ServiceAddress") ?? "mailhog",
@@ -141,6 +152,12 @@ var monitoringResult = await new MonitoringDemoSeeder(monitoringDbContext).SeedA
             : null,
         credentialResult.CredentialIds.TryGetValue(CredentialSeeder.DegradedKey, out var degradedCredentialId)
             ? degradedCredentialId
-            : null));
+            : null,
+        Environment.GetEnvironmentVariable("Monitoring__Seed__DownableSnmpAddress") ?? "snmpsim-downable",
+        Environment.GetEnvironmentVariable("Monitoring__Seed__HttpTargetAddress") ?? "http-target",
+        int.TryParse(
+            Environment.GetEnvironmentVariable("Monitoring__Seed__HttpTargetPort"), out var httpTargetPort)
+            ? httpTargetPort
+            : 80));
 Console.WriteLine($"Monitored devices ready. Added {monitoringResult.DevicesAdded} devices and {monitoringResult.ChecksAdded} checks.");
 return 0;

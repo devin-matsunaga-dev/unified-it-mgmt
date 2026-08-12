@@ -227,11 +227,15 @@ public sealed class AssetsInfrastructureSeederIntegrationTests : IAsyncLifetime
     {
         await using var scope = _application.Services.CreateAsyncScope();
         var assets = scope.ServiceProvider.GetRequiredService<AssetsDbContext>();
+        // The fourth is WP-3.12's down-able device — the one the Phase 3 demo stops, so the one whose
+        // ticket somebody actually reads. It was unowned until this package's hand-verification put
+        // "Owner: nobody holds this asset" on the demo's own screen.
         var monitored = _seeded.CiIds
-            .Where(entry => entry.Key is "dc1-core-rtr-01" or "dc1-core-sw-01" or "dc1-core-sw-02")
+            .Where(entry => entry.Key is "dc1-core-rtr-01" or "dc1-core-sw-01" or "dc1-core-sw-02"
+                or "dc1-acc-sw-01")
             .Select(entry => entry.Value)
             .ToList();
-        Assert.Equal(3, monitored.Count);
+        Assert.Equal(4, monitored.Count);
 
         var cis = await assets.Cis.Where(ci => monitored.Contains(ci.Id)).ToListAsync();
 
