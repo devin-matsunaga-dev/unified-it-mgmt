@@ -63,6 +63,40 @@ public interface ITicketLinkDirectory
         CancellationToken cancellationToken);
 }
 
+/// <summary>
+/// The same arrangement pointing the other way, and the first port Platform itself is the caller of:
+/// the credential vault asks whether anything still authenticates with a credential before it lets
+/// anybody delete it. Platform may not query <c>monitoring.check_definitions</c>, and Monitoring must
+/// not be the place the vault's delete guard lives, so the read surface is here and Monitoring
+/// implements it.
+/// <para>
+/// Read-only and narrow, per ARCHITECTURE §3: a port is never a write path. Nothing here can change a
+/// check, and nothing here answers with a credential.
+/// </para>
+/// </summary>
+public interface ICredentialUsageDirectory
+{
+    /// <summary>How many check definitions name this credential, enabled or not.</summary>
+    Task<int> CountChecksUsingCredentialAsync(Guid credentialId, CancellationToken cancellationToken);
+}
+
+/// <summary>
+/// The answer a host with no Monitoring module gives: nothing uses any credential.
+/// <para>
+/// Registered by <c>AddPlatformServices</c> with <c>TryAdd</c> so that a seeder, a worker or a test
+/// host can construct the vault, and replaced by Monitoring's real implementation wherever that module
+/// is registered. The failure mode this avoids is a DI exception at start-up in every host that has a
+/// vault but no devices; the failure mode it accepts is that a host wired without Monitoring would let
+/// a credential in use be deleted, which is why the real one is registered beside the module rather
+/// than opted into.
+/// </para>
+/// </summary>
+public sealed class NoCredentialUsageDirectory : ICredentialUsageDirectory
+{
+    public Task<int> CountChecksUsingCredentialAsync(Guid credentialId, CancellationToken cancellationToken) =>
+        Task.FromResult(0);
+}
+
 /// <summary>Enough of a ticket to say "this is already being worked on" beside an alert or another ticket.</summary>
 public sealed record LinkedTicketSummary(
     Guid TicketId,

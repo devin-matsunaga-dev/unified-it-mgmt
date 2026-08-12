@@ -43,6 +43,12 @@ public sealed class CheckDefinitionConfiguration : IEntityTypeConfiguration<Chec
 
         // Two checks of one type with one name on one device would be indistinguishable in an alert.
         builder.HasIndex(check => new { check.DeviceId, check.Name }).IsUnique();
+
+        // Filtered, because most checks authenticate to nothing. It serves two reads: the vault's
+        // delete guard counting the checks that name one credential, and the poller's credential
+        // scope collecting the distinct ids a group needs.
+        builder.HasIndex(check => check.CredentialId)
+            .HasFilter("credential_id is not null");
     }
 }
 

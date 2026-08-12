@@ -29,6 +29,10 @@ class DueCheck:
     interval_seconds: int
     timeout_seconds: float
     parameters: Mapping[str, str]
+    #: The vault credential this check authenticates with, or "" for one that authenticates to
+    #: nothing. An id only — the material is fetched separately and merged in by `CredentialStore`
+    #: just before the check runs, so it never lives in the configuration this poller caches.
+    credential_id: str = ""
 
 
 @dataclass(slots=True)
@@ -88,6 +92,7 @@ class CheckScheduler:
                     timeout_seconds=float(
                         _positive(check.get("timeoutSeconds"), DEFAULT_TIMEOUT_SECONDS)),
                     parameters=dict(check.get("parameters") or {}),
+                    credential_id=str(check.get("credentialId") or ""),
                 ))
 
         # A check that has been deleted, disabled or moved to another poller keeps a due time

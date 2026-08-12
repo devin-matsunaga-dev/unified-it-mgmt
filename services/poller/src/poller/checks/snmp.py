@@ -121,8 +121,12 @@ def build_target(
     """
     Turns the check's free-text parameters into a target, refusing what SNMP cannot express.
 
-    Credentials come from the parameters because the credential vault is WP-3.11. When it lands,
-    this is the one function that changes: everything above it takes an `SnmpTarget` already built.
+    Since WP-3.11 the credential fields — `community` for v2c, `securityName`/`authKey`/`privKey`
+    for v3 — normally arrive here because `CredentialStore.apply` merged them over the check's
+    stored parameters a moment ago, not because anybody typed them into the check. This function is
+    deliberately unchanged by that: it reads a mapping either way, which is what lets a check with
+    no credential keep working exactly as it did. The defaults below are the fallback for that case,
+    and `DEFAULT_COMMUNITY` is what an unauthenticated SNMP check actually tries.
     """
     version = (parameters.get("version") or "2c").strip().casefold()
     if version not in ("2c", "3"):

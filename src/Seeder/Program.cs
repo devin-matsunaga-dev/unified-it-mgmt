@@ -1,8 +1,13 @@
+using Microsoft.AspNetCore.DataProtection;
+using Microsoft.AspNetCore.DataProtection.KeyManagement;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Options;
 
 using Platform.Data;
 using Platform.Directory;
 using Platform.Seeding;
+using Platform.Vault;
 using Modules.Assets.Data;
 using Modules.Assets.Seeding;
 using Modules.Helpdesk.Data;
@@ -25,6 +30,31 @@ await dbContext.Database.MigrateAsync();
 
 var result = await new DemoDataSeeder(dbContext).SeedAsync();
 Console.WriteLine($"Demo data ready. Added {result.SitesAdded} sites, {result.DepartmentsAdded} departments, and {result.UsersAdded} users.");
+
+// The credential vault (WP-3.11), before the monitored devices that name its rows.
+//
+// Data Protection has to be configured exactly as the API configures it or the ciphertext this writes
+// is one the API cannot read: the same application name and the same key ring, which lives in
+// `platform.data_protection_keys` rather than on either process's filesystem. That is the whole reason
+// this seeder builds a container instead of newing up a protector — a default provider here would mint
+// its own key, encrypt the communities with it, throw the key away when the process exits, and leave
+// every seeded SNMP check permanently unauthenticatable.
+var vaultServices = new ServiceCollection();
+vaultServices.AddDbContext<PlatformDbContext>(options => options.UseNpgsql(connectionString));
+vaultServices.AddSingleton<DataProtectionKeyRepository>();
+vaultServices.AddDataProtection()
+    .SetApplicationName("it-platform")
+    .Services
+    .AddSingleton<IConfigureOptions<KeyManagementOptions>>(provider =>
+        new ConfigureNamedOptions<KeyManagementOptions>(Options.DefaultName, keyManagement =>
+            keyManagement.XmlRepository = provider.GetRequiredService<DataProtectionKeyRepository>()));
+vaultServices.AddScoped<ICredentialProtector, CredentialProtector>();
+await using var vaultProvider = vaultServices.BuildServiceProvider();
+await using var vaultScope = vaultProvider.CreateAsyncScope();
+var credentialResult = await new CredentialSeeder(
+    dbContext, vaultScope.ServiceProvider.GetRequiredService<ICredentialProtector>()).SeedAsync(
+        MonitoringDemoSeeder.HealthyCommunity, MonitoringDemoSeeder.DegradedCommunity);
+Console.WriteLine($"Credential vault ready. Added {credentialResult.CredentialsAdded} credentials.");
 
 // Notification routing (WP-3.10). The chat channel is seeded only when a webhook URL is supplied:
 // a placeholder would fail every Critical alert and read as a broken feature.
@@ -103,6 +133,14 @@ var monitoringResult = await new MonitoringDemoSeeder(monitoringDbContext).SeedA
             ? serviceTcpPort
             : 1025,
         Environment.GetEnvironmentVariable("Monitoring__Seed__ServiceHttpUrl")
-            ?? "http://mailhog:8025/"));
+            ?? "http://mailhog:8025/",
+        // Null rather than Guid.Empty when a key is missing: a check pointed at the empty GUID would
+        // be refused by the vault every cycle instead of falling back to its plaintext parameter.
+        credentialResult.CredentialIds.TryGetValue(CredentialSeeder.HealthyKey, out var healthyCredentialId)
+            ? healthyCredentialId
+            : null,
+        credentialResult.CredentialIds.TryGetValue(CredentialSeeder.DegradedKey, out var degradedCredentialId)
+            ? degradedCredentialId
+            : null));
 Console.WriteLine($"Monitored devices ready. Added {monitoringResult.DevicesAdded} devices and {monitoringResult.ChecksAdded} checks.");
 return 0;

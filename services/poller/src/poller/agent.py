@@ -21,6 +21,7 @@ from .telemetry import (
     build_reachability,
     build_telemetry,
 )
+from .vault import CredentialStore, parse_released, parse_scope
 
 logger = logging.getLogger("poller.agent")
 
@@ -31,6 +32,12 @@ class ApiClient(Protocol):
     async def register(self) -> dict[str, Any]: ...
 
     async def fetch_config(self, since_version: int | None) -> dict[str, Any]: ...
+
+    async def fetch_credential_scope(self) -> dict[str, Any]: ...
+
+    async def request_credential_grant(self) -> dict[str, Any]: ...
+
+    async def redeem_credential_grant(self, grant_id: str, token: str) -> dict[str, Any]: ...
 
 
 class PollerAgent:
@@ -57,6 +64,7 @@ class PollerAgent:
         scheduler: CheckScheduler | None = None,
         telemetry_publisher: Publisher | None = None,
         reachability_publisher: Publisher | None = None,
+        credentials: CredentialStore | None = None,
     ) -> None:
         self._settings = settings
         self._api = api
@@ -69,12 +77,17 @@ class PollerAgent:
         self._scheduler = scheduler if scheduler is not None else CheckScheduler()
         self._telemetry = telemetry_publisher or NullPublisher()
         self._reachability = reachability_publisher or NullPublisher()
+        self._credentials = credentials if credentials is not None else CredentialStore()
         self._registered = False
         self._cycle_number = 0
 
     @property
     def state(self) -> ConfigState:
         return self._state
+
+    @property
+    def credentials(self) -> CredentialStore:
+        return self._credentials
 
     @property
     def cycle_number(self) -> int:
@@ -84,6 +97,7 @@ class PollerAgent:
         self._cycle_number += 1
         await self._ensure_registered()
         await self._refresh_config()
+        await self._refresh_credentials()
         await self._poll_devices()
         await self._publish_heartbeat()
 
@@ -124,6 +138,7 @@ class PollerAgent:
             # Everything the poller believed about these devices came from a history the server has
             # disowned, including which of them were up and when each check was last run.
             self._scheduler.forget()
+            self._credentials.forget()
             if self._engine is not None:
                 self._engine.forget()
             try:
@@ -156,13 +171,72 @@ class PollerAgent:
             },
         )
 
+    async def _refresh_credentials(self) -> None:
+        """
+        Fetches credential material, but only when there is a version this poller does not hold.
+
+        Two calls, and the split is the whole design. The scope is metadata — ids and version
+        numbers — so asking for it every cycle costs nothing and writes nothing; the grant is a row
+        on the server and an audited release of secrets, so it is asked for only when the scope says
+        something moved. Rotating a credential bumps its version, this notices on the next cycle,
+        and the check authenticates with the new secret on the one after at the latest.
+
+        Nothing here raises. A vault that cannot be reached leaves the previously held material in
+        force — the same rule as a config fetch that fails — because a poller that dropped its
+        credentials over one timed-out request would unauthenticate an estate that is still fine.
+        """
+        try:
+            scope = parse_scope(await self._api.fetch_credential_scope())
+        except PollerNotRegisteredError:
+            # Handled by the config refresh, which runs first and has already asked to re-register.
+            return
+        except Exception:
+            logger.exception(
+                "Credential scope fetch failed; keeping the material already held.",
+                extra=self._context(),
+            )
+            return
+
+        # Before the early return, so a credential that leaves this poller's scope is dropped even
+        # on a cycle where nothing needs fetching.
+        self._credentials.retain({need.credential_id for need in scope})
+
+        if not scope or not self._credentials.needs(scope):
+            return
+
+        try:
+            grant = await self._api.request_credential_grant()
+            grant_id = str(grant.get("grantId") or "")
+            token = str(grant.get("token") or "")
+            if not grant_id or not token:
+                # An empty grant is the platform saying there is nothing to release. Not an error:
+                # an estate where nothing authenticates is the normal state of a fresh install.
+                return
+            released = parse_released(await self._api.redeem_credential_grant(grant_id, token))
+        except Exception:
+            logger.exception(
+                "Credential fetch failed; keeping the material already held.",
+                extra=self._context())
+            return
+
+        stored = self._credentials.remember(released)
+        # Ids and a count. Never a name-to-value mapping, and never the material — the point of
+        # the vault is that the secret exists in this process and nowhere else it can be read from.
+        logger.info(
+            "Credentials refreshed.",
+            extra=self._context() | {"credentials": len(stored), "credential_ids": stored},
+        )
+
     async def _poll_devices(self) -> None:
         if self._engine is None:
             return
 
         try:
             self._engine.retain(set(self._state.devices))
-            due = self._scheduler.due(self._state.devices.values())
+            # Material is merged in here rather than held on the cached configuration, so a secret
+            # lives in one place and a rotation reaches every check on the cycle after it lands.
+            due = [self._credentials.apply(check)
+                   for check in self._scheduler.due(self._state.devices.values())]
             outcome = await self._engine.run(due)
         except Exception:
             # The engine contains its own failures per device, so reaching here means the cycle's

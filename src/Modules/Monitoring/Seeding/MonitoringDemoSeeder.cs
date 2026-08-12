@@ -25,6 +25,14 @@ namespace Modules.Monitoring.Seeding;
 /// </param>
 /// <param name="ServiceTcpPort">A port the service accepts a connection on (MailHog's SMTP listener).</param>
 /// <param name="ServiceHttpUrl">A URL the service answers 200 on (MailHog's UI).</param>
+/// <param name="HealthyCredentialId">
+/// The vault credential holding the healthy profile's community (WP-3.11), taken as an argument for the
+/// same reason the CI ids are: it belongs to Platform, and a seeder does not reach across to look one
+/// up. Null falls back to the plaintext <c>community</c> parameter, which is what a run against a
+/// database seeded before this package looks like — and is the state every SNMP check in the estate
+/// was in until now.
+/// </param>
+/// <param name="DegradedCredentialId">The same for the degraded profile.</param>
 public sealed record MonitoringSeedPlan(
     string SnmpAddress,
     int SnmpPort,
@@ -32,7 +40,9 @@ public sealed record MonitoringSeedPlan(
     string PollerGroup = "default",
     string ServiceAddress = "mailhog",
     int ServiceTcpPort = 1025,
-    string ServiceHttpUrl = "http://mailhog:8025/");
+    string ServiceHttpUrl = "http://mailhog:8025/",
+    Guid? HealthyCredentialId = null,
+    Guid? DegradedCredentialId = null);
 
 public sealed record MonitoringSeedResult(int DevicesAdded, int ChecksAdded);
 
@@ -126,9 +136,12 @@ public sealed class MonitoringDemoSeeder(MonitoringDbContext dbContext)
             plan.SnmpAddress,
             [
                 Ping(now, "Reachability", intervalSeconds: 30),
-                Snmp(now, "System information", "sysinfo", plan, HealthyCommunity, 300),
-                Snmp(now, "CPU", "cpu", plan, HealthyCommunity, 60, warning: 70, critical: 90),
-                Snmp(now, "Memory", "memory", plan, HealthyCommunity, 60, warning: 80, critical: 95),
+                Snmp(now, "System information", "sysinfo", plan, HealthyCommunity,
+                    plan.HealthyCredentialId, 300),
+                Snmp(now, "CPU", "cpu", plan, HealthyCommunity, plan.HealthyCredentialId, 60,
+                    warning: 70, critical: 90),
+                Snmp(now, "Memory", "memory", plan, HealthyCommunity, plan.HealthyCredentialId, 60,
+                    warning: 80, critical: 95),
             ]);
 
         // The same simulator, read through a community that reports a device under strain. Nothing
@@ -147,8 +160,10 @@ public sealed class MonitoringDemoSeeder(MonitoringDbContext dbContext)
             plan.SnmpAddress,
             [
                 Ping(now, "Reachability", intervalSeconds: 30),
-                Snmp(now, "CPU", "cpu", plan, DegradedCommunity, 60, warning: 70, critical: 90),
-                Snmp(now, "Memory", "memory", plan, DegradedCommunity, 60, warning: 80, critical: 95),
+                Snmp(now, "CPU", "cpu", plan, DegradedCommunity, plan.DegradedCredentialId, 60,
+                    warning: 70, critical: 90),
+                Snmp(now, "Memory", "memory", plan, DegradedCommunity, plan.DegradedCredentialId, 60,
+                    warning: 80, critical: 95),
             ]);
 
         // The dead one. It exists so that "the other devices keep polling" is something an operator
@@ -260,25 +275,40 @@ public sealed class MonitoringDemoSeeder(MonitoringDbContext dbContext)
         string metric,
         MonitoringSeedPlan plan,
         string community,
+        Guid? credentialId,
         int intervalSeconds,
         double? warning = null,
-        double? critical = null) => Check(
+        double? critical = null)
+    {
+        var parameters = new Dictionary<string, string>
+        {
+            ["metric"] = metric,
+            ["version"] = "2c",
+            ["port"] = plan.SnmpPort.ToString(System.Globalization.CultureInfo.InvariantCulture),
+        };
+
+        // The simulator serves a different device profile per community string, which is how one
+        // container stands in for a healthy device and a struggling one at once — so the community is
+        // what makes these two devices different, and it is exactly the kind of thing WP-3.11 exists
+        // to stop storing in the clear. With a credential the parameter is omitted entirely rather
+        // than left beside it: a stale copy in `parameters` would keep polling after a rotation and
+        // make the vault look like it was working when it was being bypassed.
+        if (credentialId is null)
+        {
+            parameters["community"] = community;
+        }
+
+        return Check(
             now,
             CheckType.Snmp,
             $"SNMP: {name}",
             intervalSeconds,
             timeoutSeconds: 5,
-            new Dictionary<string, string>
-            {
-                ["metric"] = metric,
-                ["version"] = "2c",
-                // The simulator serves a different device profile per community string, which is how
-                // one container stands in for a healthy device and a struggling one at once.
-                ["community"] = community,
-                ["port"] = plan.SnmpPort.ToString(System.Globalization.CultureInfo.InvariantCulture),
-            },
+            parameters,
             warning,
-            critical);
+            critical,
+            credentialId);
+    }
 
     private static CheckDefinition Check(
         DateTimeOffset now,
@@ -288,7 +318,8 @@ public sealed class MonitoringDemoSeeder(MonitoringDbContext dbContext)
         int timeoutSeconds,
         Dictionary<string, string> parameters,
         double? warning = null,
-        double? critical = null) => new()
+        double? critical = null,
+        Guid? credentialId = null) => new()
         {
             Id = Guid.CreateVersion7(),
             Type = type,
@@ -299,6 +330,7 @@ public sealed class MonitoringDemoSeeder(MonitoringDbContext dbContext)
             CriticalThreshold = critical,
             Comparison = ThresholdComparison.GreaterThan,
             ParametersJson = JsonSerializer.Serialize(parameters),
+            CredentialId = credentialId,
             IsEnabled = true,
             CreatedBy = Actor,
             CreatedAt = now,

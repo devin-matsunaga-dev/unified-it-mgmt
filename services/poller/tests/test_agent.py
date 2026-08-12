@@ -37,10 +37,22 @@ SETTINGS = Settings(
 class FakeApi:
     """Records what the cycle asked for and answers with whatever the test queued."""
 
-    def __init__(self, responses: list[dict[str, Any] | Exception]) -> None:
+    def __init__(
+        self,
+        responses: list[dict[str, Any] | Exception],
+        scope: list[dict[str, Any]] | None = None,
+        released: list[dict[str, Any]] | None = None,
+    ) -> None:
         self.responses = responses
         self.requested_versions: list[int | None] = []
         self.registrations = 0
+        # An empty scope is the default because most of these tests are about configuration and
+        # heartbeats. It is also the honest shape of an estate where nothing authenticates.
+        self.scope = scope if scope is not None else []
+        self.released = released if released is not None else []
+        self.scope_fetches = 0
+        self.grants_requested = 0
+        self.redemptions: list[tuple[str, str]] = []
 
     async def register(self) -> dict[str, Any]:
         self.registrations += 1
@@ -52,6 +64,27 @@ class FakeApi:
         if isinstance(answer, Exception):
             raise answer
         return answer
+
+    async def fetch_credential_scope(self) -> dict[str, Any]:
+        self.scope_fetches += 1
+        return {
+            "pollerName": SETTINGS.name,
+            "pollerGroup": SETTINGS.poller_group,
+            "credentials": self.scope,
+        }
+
+    async def request_credential_grant(self) -> dict[str, Any]:
+        self.grants_requested += 1
+        return {
+            "grantId": f"grant-{self.grants_requested}",
+            "token": f"token-{self.grants_requested}",
+            "expiresAt": "2026-08-12T00:02:00+00:00",
+            "credentials": self.scope,
+        }
+
+    async def redeem_credential_grant(self, grant_id: str, token: str) -> dict[str, Any]:
+        self.redemptions.append((grant_id, token))
+        return {"credentials": self.released}
 
 
 class FailingRegistrationApi(FakeApi):
@@ -403,3 +436,172 @@ async def test_run_cycle_a_rejected_config_version_makes_every_check_due_again()
     # Everything the poller believed came from a history the server has disowned, including which
     # devices were up and when each check last ran.
     assert len(telemetry.published) == 2
+
+
+# --- WP-3.11: credentials -----------------------------------------------------------------------
+
+
+def credentialled_device(credential_id: str = "cred-1") -> dict[str, Any]:
+    """A device with one SNMP check that authenticates, and no community in its parameters."""
+    return {
+        "deviceId": "d1",
+        "ciId": "ci-d1",
+        "address": "snmpsim",
+        "checks": [{
+            "checkId": "chk-d1",
+            "type": "Snmp",
+            "name": "SNMP: CPU",
+            "intervalSeconds": 1,
+            "timeoutSeconds": 5,
+            "parameters": {"metric": "cpu", "version": "2c"},
+            "credentialId": credential_id,
+        }],
+    }
+
+
+def scope(version: int = 1, credential_id: str = "cred-1") -> list[dict[str, Any]]:
+    return [{"id": credential_id, "name": "Simulator SNMP", "kind": "SnmpV2c", "version": version}]
+
+
+def released(
+    community: str, version: int = 1, credential_id: str = "cred-1",
+) -> list[dict[str, Any]]:
+    return [{
+        "id": credential_id,
+        "name": "Simulator SNMP",
+        "kind": "SnmpV2c",
+        "version": version,
+        "material": {"community": community},
+    }]
+
+
+class RecordingRunner:
+    """Keeps the parameters each run was handed, which is where the merged material shows up."""
+
+    def __init__(self) -> None:
+        self.seen: list[Mapping[str, str]] = []
+
+    async def run(
+        self, address: str, parameters: Mapping[str, str], timeout_seconds: float,
+    ) -> CheckOutcome:
+        self.seen.append(dict(parameters))
+        return REACHED
+
+
+def credentialled_agent(api: FakeApi, runner: RecordingRunner) -> PollerAgent:
+    return PollerAgent(
+        SETTINGS,
+        api,
+        FakePublisher(),
+        engine=PollingEngine({"Snmp": runner}),
+        scheduler=CheckScheduler(clock=AdvancingClock()),
+        telemetry_publisher=FakePublisher(),
+        reachability_publisher=FakePublisher(),
+    )
+
+
+async def test_run_cycle_fetches_credential_material_and_the_check_authenticates_with_it() -> None:
+    runner = RecordingRunner()
+    api = FakeApi(
+        [polled_snapshot(credentialled_device())],
+        scope=scope(version=1),
+        released=released("healthy", version=1),
+    )
+
+    await credentialled_agent(api, runner).run_cycle()
+
+    assert api.grants_requested == 1
+    assert api.redemptions == [("grant-1", "token-1")]
+    # The secret reached the check without ever having been in the configuration document.
+    assert runner.seen[0]["community"] == "healthy"
+    assert runner.seen[0]["metric"] == "cpu"
+
+
+async def test_run_cycle_does_not_ask_for_a_grant_again_while_the_version_is_unchanged() -> None:
+    """
+    The reason the scope and the grant are two calls. A poller that redeemed every cycle would
+    mint a row and write an audit entry every fifteen seconds per credential, forever.
+    """
+    runner = RecordingRunner()
+    api = FakeApi(
+        [polled_snapshot(credentialled_device()), delta(version=2)],
+        scope=scope(version=1),
+        released=released("healthy", version=1),
+    )
+    agent = credentialled_agent(api, runner)
+
+    await agent.run_cycle()
+    await agent.run_cycle()
+
+    assert api.scope_fetches == 2
+    assert api.grants_requested == 1
+    assert runner.seen[1]["community"] == "healthy"
+
+
+async def test_run_cycle_picks_up_a_rotated_credential_on_the_next_cycle() -> None:
+    """The WP's verification step: rotate the credential, the poller uses the new one next cycle."""
+    runner = RecordingRunner()
+    api = FakeApi(
+        [polled_snapshot(credentialled_device()), delta(version=2)],
+        scope=scope(version=1),
+        released=released("healthy", version=1),
+    )
+    agent = credentialled_agent(api, runner)
+
+    await agent.run_cycle()
+
+    # The platform's side of a rotation: a new secret and a version that moved.
+    api.scope = scope(version=2)
+    api.released = released("rotated", version=2)
+    await agent.run_cycle()
+
+    assert api.grants_requested == 2
+    assert runner.seen[0]["community"] == "healthy"
+    assert runner.seen[1]["community"] == "rotated"
+
+
+async def test_run_cycle_keeps_polling_when_the_vault_is_unreachable() -> None:
+    """
+    The failure path. A vault that cannot be reached leaves the material already held in force and
+    the cycle finishes — including the heartbeat, so the platform does not also report this poller
+    dead because its credential fetch failed.
+    """
+    runner = RecordingRunner()
+    heartbeat = FakePublisher()
+    api = FakeApi(
+        [polled_snapshot(credentialled_device()), delta(version=2)],
+        scope=scope(version=1),
+        released=released("healthy", version=1),
+    )
+    agent = PollerAgent(
+        SETTINGS,
+        api,
+        heartbeat,
+        engine=PollingEngine({"Snmp": runner}),
+        scheduler=CheckScheduler(clock=AdvancingClock()),
+        telemetry_publisher=FakePublisher(),
+        reachability_publisher=FakePublisher(),
+    )
+
+    await agent.run_cycle()
+
+    async def refuse() -> dict[str, Any]:
+        raise RuntimeError("the vault is unreachable")
+
+    api.fetch_credential_scope = refuse  # type: ignore[method-assign]
+    await agent.run_cycle()
+
+    assert runner.seen[1]["community"] == "healthy"
+    assert len(heartbeat.published) == 2
+
+
+async def test_run_cycle_with_nothing_to_authenticate_never_asks_for_a_grant() -> None:
+    """An estate where nothing authenticates is the normal state of a fresh install."""
+    api = FakeApi([polled_snapshot(polled_device("d1"))])
+    agent = polling_agent(
+        api, StubRunner(REACHED), FakePublisher(), FakePublisher(), FakePublisher())
+
+    await agent.run_cycle()
+
+    assert api.scope_fetches == 1
+    assert api.grants_requested == 0

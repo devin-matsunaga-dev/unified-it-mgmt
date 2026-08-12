@@ -43,10 +43,36 @@ public static class PollerEndpoints
             return result.Outcome switch
             {
                 MonitoringOutcome.Success => Results.Ok(result.Config),
-                MonitoringOutcome.NotFound => Results.Problem(
-                    statusCode: StatusCodes.Status404NotFound,
-                    title: "Poller not found.",
-                    detail: "Register the poller before fetching its configuration."),
+                MonitoringOutcome.NotFound => PollerNotFound(),
+                MonitoringOutcome.Invalid => Results.ValidationProblem(result.Errors!),
+                var outcome => throw new InvalidOperationException($"Unknown monitoring outcome '{outcome}'."),
+            };
+        });
+
+        // WP-3.11. Two calls rather than one, and the split is the point: the scope is free to ask for
+        // every cycle because it writes nothing and carries no secret, while the grant writes a row
+        // and is asked for only when a version the poller holds has moved. The poller never names a
+        // credential in either request — the scope is derived from its own group's devices.
+        pollerGroup.MapGet("/{name}/credentials", async (string name, IPollerCredentialService service,
+            CancellationToken cancellationToken) =>
+        {
+            var result = await service.GetScopeAsync(name, cancellationToken);
+            return result.Outcome switch
+            {
+                MonitoringOutcome.Success => Results.Ok(result.Scope),
+                MonitoringOutcome.NotFound => PollerNotFound(),
+                var outcome => throw new InvalidOperationException($"Unknown monitoring outcome '{outcome}'."),
+            };
+        });
+
+        pollerGroup.MapPost("/{name}/credential-grants", async (string name, ClaimsPrincipal user,
+            IPollerCredentialService service, CancellationToken cancellationToken) =>
+        {
+            var result = await service.IssueGrantAsync(name, user, cancellationToken);
+            return result.Outcome switch
+            {
+                MonitoringOutcome.Success => Results.Ok(result.Grant),
+                MonitoringOutcome.NotFound => PollerNotFound(),
                 MonitoringOutcome.Invalid => Results.ValidationProblem(result.Errors!),
                 var outcome => throw new InvalidOperationException($"Unknown monitoring outcome '{outcome}'."),
             };
@@ -54,6 +80,11 @@ public static class PollerEndpoints
 
         return endpoints;
     }
+
+    private static IResult PollerNotFound() => Results.Problem(
+        statusCode: StatusCodes.Status404NotFound,
+        title: "Poller not found.",
+        detail: "Register the poller before fetching its configuration.");
 
     private sealed class RegisterPollerValidator : AbstractValidator<RegisterPollerRequest>
     {

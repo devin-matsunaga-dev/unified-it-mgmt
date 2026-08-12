@@ -12,6 +12,7 @@ using Modules.Monitoring.Features.Heartbeats;
 using Modules.Monitoring.Features.MaintenanceWindows;
 using Modules.Monitoring.Features.Metrics;
 using Modules.Monitoring.Features.PollerConfig;
+using Platform.Integration;
 using Quartz;
 
 namespace Modules.Monitoring;
@@ -32,6 +33,11 @@ public static class MonitoringServiceCollectionExtensions
         services.AddScoped<IMonitoredDeviceService, MonitoredDeviceService>();
         services.AddScoped<IMaintenanceWindowService, MaintenanceWindowService>();
         services.AddScoped<IPollerService, PollerService>();
+        services.AddScoped<IPollerCredentialService, PollerCredentialService>();
+        // The vault's delete guard, replacing Platform's "nothing uses any credential" default. Not
+        // TryAdd: this module is the authority on the question, and a host that registers Monitoring
+        // must get the real answer.
+        services.AddScoped<ICredentialUsageDirectory, CredentialUsageDirectory>();
         services.AddScoped<IPollerHeartbeatService, PollerHeartbeatService>();
         services.AddScoped<IMetricIngestionService, MetricIngestionService>();
         services.AddScoped<IMetricQueryService, MetricQueryService>();

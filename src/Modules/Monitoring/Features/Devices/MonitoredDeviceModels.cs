@@ -68,6 +68,11 @@ public sealed record AlertTuningRequest(
     int? FlapThreshold = null,
     int? FlapWindowSeconds = null);
 
+/// <param name="CredentialId">
+/// The vault credential this check authenticates with (WP-3.11), or null. Like the alert tuning block
+/// it is a complete statement: omitting it on an update detaches the credential rather than keeping
+/// the previous one, so "this check no longer authenticates" is expressible.
+/// </param>
 public sealed record CreateCheckRequest(
     CheckType Type,
     string Name,
@@ -78,7 +83,8 @@ public sealed record CreateCheckRequest(
     ThresholdComparison Comparison = ThresholdComparison.GreaterThan,
     IReadOnlyDictionary<string, string>? Parameters = null,
     bool IsEnabled = true,
-    AlertTuningRequest? AlertTuning = null);
+    AlertTuningRequest? AlertTuning = null,
+    Guid? CredentialId = null);
 
 public sealed record UpdateCheckRequest(
     string Name,
@@ -89,8 +95,14 @@ public sealed record UpdateCheckRequest(
     ThresholdComparison Comparison = ThresholdComparison.GreaterThan,
     IReadOnlyDictionary<string, string>? Parameters = null,
     bool IsEnabled = true,
-    AlertTuningRequest? AlertTuning = null);
+    AlertTuningRequest? AlertTuning = null,
+    Guid? CredentialId = null);
 
+/// <param name="CredentialName">
+/// Read live from the vault so a check names the credential an operator recognises. Null when the
+/// check authenticates to nothing — and also when the credential has gone, which is the state the
+/// vault's delete guard exists to prevent.
+/// </param>
 public sealed record CheckResponse(
     Guid Id,
     Guid DeviceId,
@@ -107,7 +119,9 @@ public sealed record CheckResponse(
     string CreatedBy,
     DateTimeOffset CreatedAt,
     string UpdatedBy,
-    DateTimeOffset UpdatedAt);
+    DateTimeOffset UpdatedAt,
+    Guid? CredentialId = null,
+    string? CredentialName = null);
 
 public enum MonitoringOutcome
 {

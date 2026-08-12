@@ -204,7 +204,8 @@ public sealed class PollerService(
                             check.WarningThreshold,
                             check.CriticalThreshold,
                             check.Comparison,
-                            MonitoredDeviceService.Deserialize(check.ParametersJson))),
+                            MonitoredDeviceService.Deserialize(check.ParametersJson),
+                            check.CredentialId)),
                 ])),
         ];
     }

@@ -115,9 +115,50 @@ public sealed class MonitoringDemoSeederIntegrationTests(InfrastructureFixture i
     }
 
     /// <summary>
+    /// WP-3.11. With the vault seeded, the community that selects the simulator's device profile is
+    /// a credential id on the check rather than a string in its parameters — and the plaintext copy
+    /// is <em>gone</em>, not left beside it, because a stale copy would keep polling after a
+    /// rotation and make the vault look like it was working while it was being bypassed.
+    /// </summary>
+    [Fact]
+    public async Task Seed_WithVaultedCredentials_NamesThemAndStoresNoCommunityInTheClear()
+    {
+        var healthy = Guid.Parse("0199c0de-3110-7000-8000-000000000001");
+        var degraded = Guid.Parse("0199c0de-3110-7000-8000-000000000002");
+        await using var dbContext = await NewDatabaseAsync();
+
+        await new MonitoringDemoSeeder(dbContext).SeedAsync(
+            Plan() with { HealthyCredentialId = healthy, DegradedCredentialId = degraded });
+
+        var snmp = await dbContext.CheckDefinitions
+            .Where(check => check.Type == CheckType.Snmp)
+            .ToListAsync();
+        Assert.NotEmpty(snmp);
+        Assert.All(snmp, check =>
+        {
+            Assert.Contains(check.CredentialId, (Guid?[])[healthy, degraded]);
+            Assert.DoesNotContain("community", check.ParametersJson, StringComparison.Ordinal);
+        });
+        // Both profiles are still represented, or the estate would poll one simulator device twice.
+        Assert.Contains(snmp, check => check.CredentialId == healthy);
+        Assert.Contains(snmp, check => check.CredentialId == degraded);
+
+        // Nothing else authenticates, so nothing else names a credential.
+        var others = await dbContext.CheckDefinitions
+            .Where(check => check.Type != CheckType.Snmp)
+            .ToListAsync();
+        Assert.All(others, check => Assert.Null(check.CredentialId));
+    }
+
+    /// <summary>
     /// The SNMP checks have to carry the simulator's port and the community that selects its device
     /// profile, or every one of them times out against a port nothing is listening on — which is
     /// what the first live walk of this package saw, from an address the poller could not reach.
+    /// <para>
+    /// This is now also the WP-3.11 <em>fallback</em> path: with no credential supplied, the
+    /// community stays a plaintext parameter, which is what a database seeded before that package
+    /// looks like and what a check nobody has migrated keeps doing.
+    /// </para>
     /// </summary>
     [Fact]
     public async Task Seed_SnmpChecks_CarryTheSimulatorsPortAndProfileCommunity()

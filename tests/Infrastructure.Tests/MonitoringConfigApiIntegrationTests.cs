@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Security.Claims;
 using System.Text.Encodings.Web;
+using System.Text.Json;
 
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Hosting;
@@ -400,6 +401,181 @@ public sealed class MonitoringConfigApiIntegrationTests : IAsyncLifetime
         Assert.Equal("application/problem+json", response.Content.Headers.ContentType?.MediaType);
     }
 
+    // ---- WP-3.11: credentials on a check ----
+
+    /// <summary>
+    /// A check names a vault credential and the poller's configuration carries the id — and only the
+    /// id. The document is fetched over HTTP and cached in the poller's memory, so a secret must
+    /// never travel in it; the material is fetched separately, against a grant.
+    /// </summary>
+    [Fact]
+    public async Task PollerConfig_ForACheckWithACredential_CarriesTheIdAndNoMaterial()
+    {
+        var pollerGroup = NewGroup();
+        var credential = await CreateCredentialAsync("SnmpV2c", ("community", "s3cr3t-community"));
+        var device = await CreateDeviceAsync(pollerGroup, "10.20.0.20");
+        await CreateCheckAsync(device.Id, "Snmp", "CPU", 300, 10,
+            parameters: new() { ["metric"] = "cpu", ["oid"] = "1.3.6.1.2.1.1.1.0" },
+            credentialId: credential.Id);
+        var poller = await RegisterPollerAsync(NewPollerName(), pollerGroup);
+
+        var config = await GetAsync<PollerConfigDto>(
+            $"/api/pollers/{poller.Name}/config", PollerRole);
+
+        var check = Assert.Single(Assert.Single(config.Devices).Checks);
+        Assert.Equal(credential.Id, check.CredentialId);
+        Assert.DoesNotContain("community", check.Parameters.Keys);
+        Assert.DoesNotContain("s3cr3t-community", JsonSerializer.Serialize(config), StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// A read of the check names the credential so an operator recognises it, and still never says
+    /// what it is.
+    /// </summary>
+    [Fact]
+    public async Task Check_WithACredential_NamesItWithoutRevealingIt()
+    {
+        var credential = await CreateCredentialAsync("SnmpV2c", ("community", "s3cr3t-community"));
+        var device = await CreateDeviceAsync(NewGroup(), "10.20.0.21");
+
+        var check = await CreateCheckAsync(device.Id, "Snmp", "CPU", 300, 10,
+            parameters: new() { ["metric"] = "cpu", ["oid"] = "1.3.6.1.2.1.1.1.0" },
+            credentialId: credential.Id);
+
+        Assert.Equal(credential.Id, check.CredentialId);
+        Assert.Equal(credential.Name, check.CredentialName);
+        var listed = await GetAsync<List<CheckDto>>($"/api/monitored-devices/{device.Id}/checks");
+        Assert.Equal(credential.Id, Assert.Single(listed).CredentialId);
+        Assert.DoesNotContain("s3cr3t-community", JsonSerializer.Serialize(listed), StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// The interesting failure path. An SSH credential on an SNMP check would be stored happily,
+    /// released happily, and produce a check that times out for a reason nothing states.
+    /// </summary>
+    [Fact]
+    public async Task Check_WithACredentialOfTheWrongKind_IsRefused()
+    {
+        var credential = await CreateCredentialAsync(
+            "Ssh", ("username", "monitor"), ("password", "s3cr3t-password"));
+        var device = await CreateDeviceAsync(NewGroup(), "10.20.0.22");
+
+        using var request = Authenticated(HttpMethod.Post, $"/api/monitored-devices/{device.Id}/checks");
+        request.Content = JsonContent.Create(new
+        {
+            type = "Snmp",
+            name = "CPU",
+            intervalSeconds = 300,
+            timeoutSeconds = 10,
+            parameters = new Dictionary<string, string>
+            {
+                ["metric"] = "cpu",
+                ["oid"] = "1.3.6.1.2.1.1.1.0",
+            },
+            credentialId = credential.Id,
+        });
+        using var response = await _client!.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Equal("application/problem+json", response.Content.Headers.ContentType?.MediaType);
+    }
+
+    /// <summary>A check type that authenticates to nothing cannot name a credential either.</summary>
+    [Fact]
+    public async Task Check_OfATypeThatDoesNotAuthenticate_CannotNameACredential()
+    {
+        var credential = await CreateCredentialAsync("SnmpV2c", ("community", "public"));
+        var device = await CreateDeviceAsync(NewGroup(), "10.20.0.23");
+
+        using var request = Authenticated(HttpMethod.Post, $"/api/monitored-devices/{device.Id}/checks");
+        request.Content = JsonContent.Create(new
+        {
+            type = "Icmp",
+            name = "Reachability",
+            intervalSeconds = 60,
+            timeoutSeconds = 5,
+            credentialId = credential.Id,
+        });
+        using var response = await _client!.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Check_WithACredentialThatDoesNotExist_IsRefused()
+    {
+        var device = await CreateDeviceAsync(NewGroup(), "10.20.0.24");
+
+        using var request = Authenticated(HttpMethod.Post, $"/api/monitored-devices/{device.Id}/checks");
+        request.Content = JsonContent.Create(new
+        {
+            type = "Snmp",
+            name = "CPU",
+            intervalSeconds = 300,
+            timeoutSeconds = 10,
+            parameters = new Dictionary<string, string>
+            {
+                ["metric"] = "cpu",
+                ["oid"] = "1.3.6.1.2.1.1.1.0",
+            },
+            credentialId = Guid.NewGuid(),
+        });
+        using var response = await _client!.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    /// <summary>
+    /// The credential is a complete statement, like WP-3.5's alert tuning block: omitting it on an
+    /// update detaches it. Without that there is no way to say "this check stops authenticating".
+    /// </summary>
+    [Fact]
+    public async Task Check_UpdatedWithoutACredential_StopsAuthenticating()
+    {
+        var credential = await CreateCredentialAsync("SnmpV2c", ("community", "public"));
+        var device = await CreateDeviceAsync(NewGroup(), "10.20.0.25");
+        var check = await CreateCheckAsync(device.Id, "Snmp", "CPU", 300, 10,
+            parameters: new() { ["metric"] = "cpu", ["oid"] = "1.3.6.1.2.1.1.1.0" },
+            credentialId: credential.Id);
+
+        using var edit = Authenticated(HttpMethod.Put, $"/api/checks/{check.Id}");
+        edit.Content = JsonContent.Create(new
+        {
+            name = check.Name,
+            intervalSeconds = 300,
+            timeoutSeconds = 10,
+            parameters = new Dictionary<string, string>
+            {
+                ["metric"] = "cpu",
+                ["oid"] = "1.3.6.1.2.1.1.1.0",
+            },
+        });
+        using var response = await _client!.SendAsync(edit);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var updated = Assert.IsType<CheckDto>(await response.Content.ReadFromJsonAsync<CheckDto>());
+        Assert.Null(updated.CredentialId);
+    }
+
+    private async Task<CredentialDto> CreateCredentialAsync(
+        string kind,
+        params (string Key, string Value)[] material)
+    {
+        using var request = Authenticated(HttpMethod.Post, "/api/credentials", "Admin");
+        request.Content = JsonContent.Create(new
+        {
+            name = $"credential-{Guid.NewGuid():N}"[..24],
+            kind,
+            material = material.ToDictionary(field => field.Key, field => field.Value),
+            isActive = true,
+        });
+        using var response = await _client!.SendAsync(request);
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        return Assert.IsType<CredentialDto>(await response.Content.ReadFromJsonAsync<CredentialDto>());
+    }
+
+    private sealed record CredentialDto(Guid Id, string Name, string Kind, int Version);
+
     // ---- fixtures ----
 
     /// <summary>
@@ -431,7 +607,8 @@ public sealed class MonitoringConfigApiIntegrationTests : IAsyncLifetime
         int timeoutSeconds,
         double? warningThreshold = null,
         double? criticalThreshold = null,
-        Dictionary<string, string>? parameters = null)
+        Dictionary<string, string>? parameters = null,
+        Guid? credentialId = null)
     {
         using var request = Authenticated(HttpMethod.Post, $"/api/monitored-devices/{deviceId}/checks");
         request.Content = JsonContent.Create(new
@@ -443,6 +620,7 @@ public sealed class MonitoringConfigApiIntegrationTests : IAsyncLifetime
             warningThreshold,
             criticalThreshold,
             parameters,
+            credentialId,
         });
         using var response = await _client!.SendAsync(request);
         Assert.Equal(HttpStatusCode.Created, response.StatusCode);
@@ -516,7 +694,9 @@ public sealed class MonitoringConfigApiIntegrationTests : IAsyncLifetime
         double? WarningThreshold,
         double? CriticalThreshold,
         Dictionary<string, string> Parameters,
-        bool IsEnabled);
+        bool IsEnabled,
+        Guid? CredentialId,
+        string? CredentialName);
 
     private sealed record PollerDto(
         Guid Id,
@@ -550,7 +730,8 @@ public sealed class MonitoringConfigApiIntegrationTests : IAsyncLifetime
         int TimeoutSeconds,
         double? WarningThreshold,
         double? CriticalThreshold,
-        Dictionary<string, string> Parameters);
+        Dictionary<string, string> Parameters,
+        Guid? CredentialId);
 
     private sealed record PollerConfigWindowDto(
         Guid Id,

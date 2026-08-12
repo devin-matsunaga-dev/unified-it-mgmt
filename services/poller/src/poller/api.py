@@ -112,5 +112,54 @@ class PlatformApiClient:
         response.raise_for_status()
         return dict(response.json())
 
+    async def fetch_credential_scope(self) -> dict[str, Any]:
+        """
+        Which credentials this poller's checks need, and what version each is at.
+
+        Deliberately cheap: no material, no grant, and no row written on the server, so it is safe
+        to ask every cycle. It is what makes a rotation visible without the platform having to push
+        anything — the version moves and the next cycle notices.
+        """
+        response = await self._http.get(
+            f"{self._settings.api_base_url}/api/pollers/{self._settings.name}/credentials",
+            headers=await self._auth_header(),
+        )
+        if response.status_code == httpx.codes.NOT_FOUND:
+            raise PollerNotRegisteredError(f"Poller {self._settings.name} is not registered.")
+        response.raise_for_status()
+        return dict(response.json())
+
+    async def request_credential_grant(self) -> dict[str, Any]:
+        """
+        Mints a single-use grant over that same scope.
+
+        The poller names nothing here: the platform derives the scope from this poller's own
+        devices, so there is no request this poller can make that widens what it may read.
+        """
+        response = await self._http.post(
+            f"{self._settings.api_base_url}/api/pollers/{self._settings.name}/credential-grants",
+            headers=await self._auth_header(),
+        )
+        if response.status_code == httpx.codes.NOT_FOUND:
+            raise PollerNotRegisteredError(f"Poller {self._settings.name} is not registered.")
+        response.raise_for_status()
+        return dict(response.json())
+
+    async def redeem_credential_grant(self, grant_id: str, token: str) -> dict[str, Any]:
+        """
+        Spends a grant and returns the material it covers.
+
+        The one response in this client that carries secrets. It is handed straight to
+        `CredentialStore` and never logged, and the grant it spent is dead the moment this returns —
+        a retry needs a new one rather than replaying this.
+        """
+        response = await self._http.post(
+            f"{self._settings.api_base_url}/api/credential-grants/redemptions",
+            json={"grantId": grant_id, "token": token},
+            headers=await self._auth_header(),
+        )
+        response.raise_for_status()
+        return dict(response.json())
+
     async def _auth_header(self) -> dict[str, str]:
         return {"Authorization": f"Bearer {await self.access_token()}"}

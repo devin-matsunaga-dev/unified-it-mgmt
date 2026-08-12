@@ -1,15 +1,21 @@
+using Microsoft.AspNetCore.DataProtection;
+using Microsoft.AspNetCore.DataProtection.KeyManagement;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 
 using Platform.Auditing;
 using Platform.Data;
 using Platform.Directory;
+using Platform.Integration;
 using Platform.Notifications;
 using Platform.Scheduling;
 using Platform.Messaging;
+using Platform.Vault;
 
 using MassTransit;
 using Quartz;
@@ -37,6 +43,7 @@ public static class PlatformServiceCollectionExtensions
         });
         services.AddScoped<IAuditService, AuditService>();
         services.AddScoped<IDirectoryService, DirectoryService>();
+        AddCredentialVault(services);
         services.AddScoped<IConsumerIdempotencyService, ConsumerIdempotencyService>();
         services.AddScoped<ISystemPingPublisher, SystemPingPublisher>();
         services.AddMassTransit(bus =>
@@ -84,6 +91,12 @@ public static class PlatformServiceCollectionExtensions
         services.AddScoped<INotificationRouter, NotificationRouter>();
         services.AddScoped<INotificationRoutingService, NotificationRoutingService>();
         services.AddScoped<INotificationDigestService, NotificationDigestService>();
+        services.AddOptions<VaultOptions>()
+            .Bind(configuration.GetSection(VaultOptions.SectionName))
+            .Validate(options => options.GrantLifetimeSeconds >= 1,
+                $"{VaultOptions.SectionName}:GrantLifetimeSeconds must be at least 1.")
+            .ValidateOnStart();
+
         services.AddOptions<NotificationOptions>()
             .Bind(configuration.GetSection(NotificationOptions.SectionName))
             .Validate(options => options.DigestIntervalSeconds >= 1,
@@ -116,5 +129,33 @@ public static class PlatformServiceCollectionExtensions
         services.AddSingleton<IHostedService, PlatformSchedulerHostedService>();
 
         return services;
+    }
+
+    /// <summary>
+    /// WP-3.11. Registered from here rather than from a module, because a credential is a platform
+    /// fact — the poller authenticates with it, Monitoring only names it — and ARCHITECTURE §3 puts
+    /// the vault in Platform's ownership map.
+    /// </summary>
+    private static void AddCredentialVault(IServiceCollection services)
+    {
+        // The key ring lives in Postgres beside the ciphertext it protects. The default is the host's
+        // own filesystem, which in a container means a fresh key on every restart and every stored
+        // credential becoming undecryptable — silently, because nothing fails until something tries
+        // to poll. `SetApplicationName` pins the other half: the ring is namespaced by application
+        // name, so two hosts sharing this database have to agree on it to read each other's keys.
+        services.AddSingleton<DataProtectionKeyRepository>();
+        services.AddDataProtection()
+            .SetApplicationName("it-platform")
+            .Services
+            .AddSingleton<IConfigureOptions<KeyManagementOptions>>(provider =>
+                new ConfigureNamedOptions<KeyManagementOptions>(Options.DefaultName, keyManagement =>
+                    keyManagement.XmlRepository = provider.GetRequiredService<DataProtectionKeyRepository>()));
+
+        services.AddScoped<ICredentialProtector, CredentialProtector>();
+        services.AddScoped<ICredentialVault, CredentialVault>();
+
+        // Monitoring replaces this wherever it is registered. TryAdd so that whichever registration
+        // runs second does not win by accident — the same shape as `IMonitoringBroadcaster`.
+        services.TryAddScoped<ICredentialUsageDirectory, NoCredentialUsageDirectory>();
     }
 }

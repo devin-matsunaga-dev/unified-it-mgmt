@@ -1,5 +1,6 @@
 using Modules.Monitoring.Data;
 using Modules.Monitoring.Features.Devices;
+using Platform.Vault;
 
 namespace Modules.Monitoring.Features.PollerConfig;
 
@@ -55,6 +56,15 @@ public sealed record PollerDeviceConfig(
     string Address,
     IReadOnlyList<PollerCheckConfig> Checks);
 
+/// <param name="Parameters">
+/// The check's per-type settings. Since WP-3.11 these carry no secret for a check that names a
+/// credential: the poller merges the released material over this dictionary at run time.
+/// </param>
+/// <param name="CredentialId">
+/// The vault credential this check authenticates with, or null. An id and nothing else — the config
+/// document is fetched over HTTP by a service account and cached in the poller's memory, so it is not
+/// somewhere a secret may travel.
+/// </param>
 public sealed record PollerCheckConfig(
     Guid CheckId,
     CheckType Type,
@@ -64,7 +74,27 @@ public sealed record PollerCheckConfig(
     double? WarningThreshold,
     double? CriticalThreshold,
     ThresholdComparison Comparison,
-    IReadOnlyDictionary<string, string> Parameters);
+    IReadOnlyDictionary<string, string> Parameters,
+    Guid? CredentialId = null);
+
+/// <summary>
+/// Which credentials a poller's own devices need and what version each is at, with no material and no
+/// grant. This is the cheap per-cycle read that makes a rotation visible: the poller compares these
+/// versions against what it holds and asks for a grant only when they differ.
+/// </summary>
+public sealed record PollerCredentialScopeResponse(
+    string PollerName,
+    string PollerGroup,
+    IReadOnlyList<CredentialDescriptor> Credentials);
+
+public sealed record PollerCredentialScopeResult(
+    MonitoringOutcome Outcome,
+    PollerCredentialScopeResponse? Scope = null);
+
+public sealed record PollerCredentialGrantResult(
+    MonitoringOutcome Outcome,
+    CredentialGrantResponse? Grant = null,
+    IReadOnlyDictionary<string, string[]>? Errors = null);
 
 public sealed record PollerMaintenanceWindowConfig(
     Guid Id,

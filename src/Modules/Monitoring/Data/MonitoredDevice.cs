@@ -67,8 +67,26 @@ public sealed class CheckDefinition
     /// Per-type settings (SNMP OID, TCP port, HTTP URL). Held as a jsonb string and mapped to a
     /// dictionary in the service, following the WP-1.10 saved-view precedent, because the keys a
     /// check type needs are the check type's business rather than the schema's.
+    /// <para>
+    /// Since WP-3.11 this is the wrong place for a secret. A check that authenticates names a vault
+    /// credential in <see cref="CredentialId"/> instead, and the poller merges the released material
+    /// over these parameters. A plaintext <c>community</c> here still works — nothing in this package
+    /// removes the fallback — but it is stored in the clear and readable by anyone who can read a
+    /// check.
+    /// </para>
     /// </summary>
     public required string ParametersJson { get; set; }
+
+    /// <summary>
+    /// The vault credential this check authenticates with (<c>platform.credentials</c>), or null for a
+    /// check that authenticates to nothing.
+    /// <para>
+    /// An id and no foreign key: the two live in different module schemas and ARCHITECTURE §3 forbids
+    /// the join, the same arrangement WP-2.4 made for a ticket's CI link. The vault's delete guard —
+    /// <c>ICredentialUsageDirectory</c>, implemented by this module — is what keeps it resolvable.
+    /// </para>
+    /// </summary>
+    public Guid? CredentialId { get; set; }
 
     /// <summary>
     /// How many consecutive bad readings this check needs before its rules get worse. Null means the

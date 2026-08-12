@@ -6,6 +6,7 @@ using Modules.Monitoring.Data;
 using Modules.Monitoring.Features.PollerConfig;
 using Platform.Auditing;
 using Platform.Integration;
+using Platform.Vault;
 
 namespace Modules.Monitoring.Features.Devices;
 
@@ -13,7 +14,8 @@ public sealed class MonitoredDeviceService(
     MonitoringDbContext dbContext,
     ICiDirectory ciDirectory,
     IMonitoringConfigLog configLog,
-    IAuditService auditService) : IMonitoredDeviceService
+    IAuditService auditService,
+    ICredentialVault credentialVault) : IMonitoredDeviceService
 {
     /// <summary>Where a device lands when the caller does not say which poller owns it.</summary>
     public const string DefaultPollerGroup = "default";
@@ -229,7 +231,9 @@ public sealed class MonitoredDeviceService(
             .Where(check => check.DeviceId == deviceId)
             .OrderBy(check => check.Name).ThenBy(check => check.Id)
             .ToListAsync(cancellationToken);
-        return [.. checks.Select(Map)];
+        var names = await ResolveCredentialNamesAsync(
+            [.. checks.Select(check => check.CredentialId)], cancellationToken);
+        return [.. checks.Select(check => Map(check, names))];
     }
 
     public async Task<CheckResult> CreateCheckAsync(
@@ -253,6 +257,11 @@ public sealed class MonitoredDeviceService(
         if (errors.Count > 0)
         {
             return new(MonitoringOutcome.Invalid, Errors: errors);
+        }
+
+        if (await CredentialProblemAsync(request.Type, request.CredentialId, cancellationToken) is { } problem)
+        {
+            return new(MonitoringOutcome.Invalid, Errors: problem);
         }
 
         var name = request.Name.Trim();
@@ -281,6 +290,7 @@ public sealed class MonitoredDeviceService(
             HysteresisPercent = request.AlertTuning?.HysteresisPercent,
             FlapThreshold = request.AlertTuning?.FlapThreshold,
             FlapWindowSeconds = request.AlertTuning?.FlapWindowSeconds,
+            CredentialId = request.CredentialId,
             IsEnabled = request.IsEnabled,
             CreatedBy = actorId,
             CreatedAt = now,
@@ -296,7 +306,7 @@ public sealed class MonitoredDeviceService(
         await dbContext.SaveChangesAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
 
-        var response = Map(check);
+        var response = await MapAsync(check, cancellationToken);
         await auditService.WriteAsync(
             actor, "Created", "CheckDefinition", check.Id.ToString(), null, response, cancellationToken);
         return new(MonitoringOutcome.Success, response);
@@ -326,6 +336,11 @@ public sealed class MonitoredDeviceService(
             return new(MonitoringOutcome.Invalid, Errors: errors);
         }
 
+        if (await CredentialProblemAsync(check.Type, request.CredentialId, cancellationToken) is { } problem)
+        {
+            return new(MonitoringOutcome.Invalid, Errors: problem);
+        }
+
         var name = request.Name.Trim();
         if (await dbContext.CheckDefinitions.AnyAsync(
                 item => item.DeviceId == check.DeviceId && item.Name == name && item.Id != checkId,
@@ -334,7 +349,7 @@ public sealed class MonitoredDeviceService(
             return new(MonitoringOutcome.Duplicate, Error: $"This device already has a check named '{name}'.");
         }
 
-        var before = Map(check);
+        var before = await MapAsync(check, cancellationToken);
         check.Name = name;
         check.IntervalSeconds = request.IntervalSeconds;
         check.TimeoutSeconds = request.TimeoutSeconds;
@@ -349,6 +364,9 @@ public sealed class MonitoredDeviceService(
         check.HysteresisPercent = request.AlertTuning?.HysteresisPercent;
         check.FlapThreshold = request.AlertTuning?.FlapThreshold;
         check.FlapWindowSeconds = request.AlertTuning?.FlapWindowSeconds;
+        // Also a complete statement: omitting the credential detaches it, which is the only way to
+        // say "this check stops authenticating" — the same rule the tuning block above follows.
+        check.CredentialId = request.CredentialId;
         check.IsEnabled = request.IsEnabled;
         check.UpdatedBy = GetActorId(actor);
         check.UpdatedAt = DateTimeOffset.UtcNow;
@@ -360,7 +378,7 @@ public sealed class MonitoredDeviceService(
         await dbContext.SaveChangesAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
 
-        var response = Map(check);
+        var response = await MapAsync(check, cancellationToken);
         await auditService.WriteAsync(
             actor, "Updated", "CheckDefinition", check.Id.ToString(), before, response, cancellationToken);
         return new(MonitoringOutcome.Success, response);
@@ -379,7 +397,7 @@ public sealed class MonitoredDeviceService(
             return MonitoringOutcome.NotFound;
         }
 
-        var before = Map(check);
+        var before = await MapAsync(check, cancellationToken);
         var deviceId = check.DeviceId;
         var pollerGroup = check.Device.PollerGroup;
 
@@ -444,7 +462,78 @@ public sealed class MonitoredDeviceService(
             device.UpdatedAt);
     }
 
-    internal static CheckResponse Map(CheckDefinition check) => new(
+    /// <summary>
+    /// Refuses a credential a check cannot use, before it is stored.
+    /// <para>
+    /// Three ways to be wrong and they are different sentences on purpose: the credential does not
+    /// exist, it is deactivated, or it is the wrong kind for this check type. The last one is the
+    /// interesting one — an SSH credential on an SNMP check would be stored happily, released happily,
+    /// and produce a check that times out for a reason nothing states.
+    /// </para>
+    /// </summary>
+    private async Task<IReadOnlyDictionary<string, string[]>?> CredentialProblemAsync(
+        CheckType type,
+        Guid? credentialId,
+        CancellationToken cancellationToken)
+    {
+        if (credentialId is not { } id)
+        {
+            return null;
+        }
+
+        var accepted = CredentialRules.AcceptedKinds(type.ToString());
+        if (accepted.Count == 0)
+        {
+            return Field(
+                nameof(CreateCheckRequest.CredentialId),
+                $"A {type} check does not authenticate, so it cannot name a credential.");
+        }
+
+        // Metadata only — the vault has no method that would hand this service any material, which is
+        // what makes "no operator surface reaches a secret" true of the check editor as well.
+        if (await credentialVault.GetAsync(id, cancellationToken) is not { } credential)
+        {
+            return Field(nameof(CreateCheckRequest.CredentialId), $"Credential '{id}' does not exist.");
+        }
+
+        if (!credential.IsActive)
+        {
+            return Field(
+                nameof(CreateCheckRequest.CredentialId),
+                $"Credential '{credential.Name}' is deactivated and would never be released.");
+        }
+
+        if (!CredentialRules.Accepts(type.ToString(), credential.Kind))
+        {
+            return Field(
+                nameof(CreateCheckRequest.CredentialId),
+                $"A {type} check authenticates with {string.Join(" or ", accepted)}; "
+                    + $"'{credential.Name}' is a {credential.Kind} credential.");
+        }
+
+        return null;
+    }
+
+    private async Task<IReadOnlyDictionary<Guid, string>> ResolveCredentialNamesAsync(
+        IReadOnlyCollection<Guid?> credentialIds,
+        CancellationToken cancellationToken)
+    {
+        var ids = credentialIds.OfType<Guid>().Distinct().ToList();
+        if (ids.Count == 0)
+        {
+            return new Dictionary<Guid, string>();
+        }
+
+        var descriptors = await credentialVault.DescribeAsync(ids, cancellationToken);
+        return descriptors.ToDictionary(descriptor => descriptor.Id, descriptor => descriptor.Name);
+    }
+
+    private async Task<CheckResponse> MapAsync(CheckDefinition check, CancellationToken cancellationToken) =>
+        Map(check, await ResolveCredentialNamesAsync([check.CredentialId], cancellationToken));
+
+    internal static CheckResponse Map(
+        CheckDefinition check,
+        IReadOnlyDictionary<Guid, string>? credentialNames = null) => new(
         check.Id,
         check.DeviceId,
         check.Type,
@@ -465,7 +554,11 @@ public sealed class MonitoredDeviceService(
         check.CreatedBy,
         check.CreatedAt,
         check.UpdatedBy,
-        check.UpdatedAt);
+        check.UpdatedAt,
+        check.CredentialId,
+        check.CredentialId is { } id && credentialNames is not null
+            ? credentialNames.GetValueOrDefault(id)
+            : null);
 
     internal static IReadOnlyDictionary<string, string> Deserialize(string parametersJson) =>
         JsonSerializer.Deserialize<Dictionary<string, string>>(parametersJson)
