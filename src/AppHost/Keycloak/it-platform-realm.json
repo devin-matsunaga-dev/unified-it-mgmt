@@ -10,7 +10,8 @@
       { "name": "Technician" },
       { "name": "Manager" },
       { "name": "EndUser" },
-      { "name": "Poller", "description": "A polling agent reading its own configuration. Machines only — never granted to a person." }
+      { "name": "Poller", "description": "A polling agent reading its own configuration. Machines only — never granted to a person." },
+      { "name": "Discovery", "description": "A discovery service reading the ranges it may scan. Machines only, and deliberately not the same role as Poller — a scanner must not be able to redeem a credential grant." }
     ]
   },
   "clients": [
@@ -72,6 +73,31 @@
           }
         }
       ]
+    },
+    {
+      "clientId": "it-platform-discovery",
+      "name": "IT Platform Discovery",
+      "description": "The discovery service's own identity. Client credentials only: no browser flow, no password grant, and no human ever signs in as this.",
+      "enabled": true,
+      "publicClient": false,
+      "serviceAccountsEnabled": true,
+      "standardFlowEnabled": false,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "protocol": "openid-connect",
+      "secret": "${DISCOVERY_CLIENT_SECRET}",
+      "protocolMappers": [
+        {
+          "name": "API audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.client.audience": "it-platform-api",
+            "access.token.claim": "true"
+          }
+        }
+      ]
     }
   ],
   "users": [
@@ -80,6 +106,12 @@
       "enabled": true,
       "serviceAccountClientId": "it-platform-poller",
       "realmRoles": ["Poller"]
+    },
+    {
+      "username": "service-account-it-platform-discovery",
+      "enabled": true,
+      "serviceAccountClientId": "it-platform-discovery",
+      "realmRoles": ["Discovery"]
     },
     { "username": "admin1", "enabled": true, "emailVerified": true, "email": "admin1@example.test", "firstName": "Admin", "lastName": "One", "credentials": [{ "type": "password", "value": "ChangeMe-Admin1!", "temporary": false }], "realmRoles": ["Admin"] },
     { "username": "admin2", "enabled": true, "emailVerified": true, "email": "admin2@example.test", "firstName": "Admin", "lastName": "Two", "credentials": [{ "type": "password", "value": "ChangeMe-Admin2!", "temporary": false }], "realmRoles": ["Admin"] },

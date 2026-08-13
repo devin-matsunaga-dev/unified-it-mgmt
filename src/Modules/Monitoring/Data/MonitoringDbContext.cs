@@ -13,6 +13,7 @@ public sealed class MonitoringDbContext(DbContextOptions<MonitoringDbContext> op
     public DbSet<DeviceMetric> DeviceMetrics => Set<DeviceMetric>();
     public DbSet<DeviceInventoryFact> DeviceInventoryFacts => Set<DeviceInventoryFact>();
     public DbSet<Alert> Alerts => Set<Alert>();
+    public DbSet<ScanProfile> ScanProfiles => Set<ScanProfile>();
 
     /// <summary>Result shape of a bucketed metric query; never mapped to a table.</summary>
     public DbSet<MetricBucket> MetricBuckets => Set<MetricBucket>();

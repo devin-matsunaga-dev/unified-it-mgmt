@@ -194,6 +194,29 @@ public sealed class MetricBucketConfiguration : IEntityTypeConfiguration<MetricB
     }
 }
 
+public sealed class ScanProfileConfiguration : IEntityTypeConfiguration<ScanProfile>
+{
+    public void Configure(EntityTypeBuilder<ScanProfile> builder)
+    {
+        builder.ToTable("scan_profiles", "monitoring");
+        builder.HasKey(profile => profile.Id);
+        builder.Property(profile => profile.Name).HasMaxLength(200).IsRequired();
+        builder.Property(profile => profile.Description).HasMaxLength(2_000);
+        builder.Property(profile => profile.DiscoveryGroup).HasMaxLength(100).IsRequired();
+        builder.Property(profile => profile.RangesJson).HasColumnType("jsonb").IsRequired();
+        builder.Property(profile => profile.PortsJson).HasColumnType("jsonb").IsRequired();
+        builder.Property(profile => profile.CreatedBy).HasMaxLength(200).IsRequired();
+        builder.Property(profile => profile.UpdatedBy).HasMaxLength(200).IsRequired();
+
+        // Two profiles with one name are indistinguishable in the log line that says which scan found
+        // a device, which is the only place most people will ever read a profile's name.
+        builder.HasIndex(profile => profile.Name).IsUnique();
+
+        // The scanner's only query: what this group has to run.
+        builder.HasIndex(profile => new { profile.DiscoveryGroup, profile.IsEnabled });
+    }
+}
+
 public sealed class MonitoringConfigChangeConfiguration : IEntityTypeConfiguration<MonitoringConfigChange>
 {
     public void Configure(EntityTypeBuilder<MonitoringConfigChange> builder)

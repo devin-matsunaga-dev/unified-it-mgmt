@@ -3,6 +3,7 @@ using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 
 using Modules.Monitoring.Data;
+using Modules.Monitoring.Features.Discovery;
 using Modules.Monitoring.Features.PollerConfig;
 using Modules.Monitoring.Seeding;
 
@@ -296,6 +297,133 @@ public sealed class MonitoringDemoSeederIntegrationTests(InfrastructureFixture i
         var recording = File.ReadAllText(profile);
         Assert.Contains("1.3.6.1.2.1.25.3.3.1.2.", recording, StringComparison.Ordinal);
         Assert.Contains("1.3.6.1.2.1.25.2.3.1.6.", recording, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// WP-4.1's two seeded scan profiles, and both of the WP's verification cases: a sweep of the
+    /// scanner's own subnet, and a range guaranteed to contain nothing.
+    /// </summary>
+    [Fact]
+    public async Task Seed_WritesTheTwoScanProfilesAFreshRunNeeds()
+    {
+        await using var dbContext = await NewDatabaseAsync();
+
+        var result = await new MonitoringDemoSeeder(dbContext).SeedAsync(Plan());
+
+        Assert.Equal(2, result.ScanProfilesAdded);
+        var profiles = await dbContext.ScanProfiles.OrderBy(profile => profile.Name).ToListAsync();
+        Assert.All(profiles, profile => Assert.True(profile.IsEnabled));
+        Assert.All(profiles, profile => Assert.Equal("default", profile.DiscoveryGroup));
+
+        // `local` rather than a CIDR, because Docker allocates the Aspire session network's subnet at
+        // session start — a literal range would scan an address space nothing in the stack is on.
+        var sweep = profiles.Single(profile => profile.RangesJson.Contains("local", StringComparison.Ordinal));
+        Assert.True(sweep.SnmpEnabled);
+        Assert.True(sweep.NeighbourDiscoveryEnabled);
+        Assert.NotEmpty(JsonSerializer.Deserialize<List<int>>(sweep.PortsJson)!);
+
+        // And a range routed nowhere, so "scan a range with nothing → clean empty result" happens on
+        // every run rather than needing to be set up by hand.
+        var empty = profiles.Single(profile => profile.Id != sweep.Id);
+        Assert.Contains("192.0.2.", empty.RangesJson, StringComparison.Ordinal);
+        Assert.False(empty.SnmpEnabled);
+        Assert.Empty(JsonSerializer.Deserialize<List<int>>(empty.PortsJson)!);
+    }
+
+    /// <summary>
+    /// Every seeded profile would survive the validation its own API applies, which is the guard
+    /// against seeding a profile nobody can edit — the trap WP-3.1's SNMP checks fell into.
+    /// </summary>
+    [Fact]
+    public async Task Seed_EveryScanProfile_PassesTheRulesItsOwnApiWouldApply()
+    {
+        await using var dbContext = await NewDatabaseAsync();
+        await new MonitoringDemoSeeder(dbContext).SeedAsync(Plan());
+
+        foreach (var profile in await dbContext.ScanProfiles.ToListAsync())
+        {
+            var errors = ScanProfileRules.Validate(
+                JsonSerializer.Deserialize<List<string>>(profile.RangesJson)!,
+                JsonSerializer.Deserialize<List<int>>(profile.PortsJson)!,
+                profile.IntervalMinutes,
+                profile.TimeoutSeconds);
+
+            Assert.Empty(errors);
+        }
+    }
+
+    /// <summary>
+    /// Guarded on its own presence rather than on the devices', so a database seeded before WP-4.1 —
+    /// which has devices and no scan profiles — still gets them on the next run.
+    /// </summary>
+    [Fact]
+    public async Task Seed_AgainstADatabaseThatAlreadyHasDevices_StillAddsTheScanProfiles()
+    {
+        await using var dbContext = await NewDatabaseAsync();
+        var seeder = new MonitoringDemoSeeder(dbContext);
+        await seeder.SeedAsync(Plan());
+        dbContext.ScanProfiles.RemoveRange(await dbContext.ScanProfiles.ToListAsync());
+        await dbContext.SaveChangesAsync();
+
+        var again = await seeder.SeedAsync(Plan());
+
+        Assert.Equal(0, again.DevicesAdded);
+        Assert.Equal(2, again.ScanProfilesAdded);
+    }
+
+    [Fact]
+    public async Task Seed_RunTwice_AddsNoSecondCopyOfAScanProfile()
+    {
+        await using var dbContext = await NewDatabaseAsync();
+        var seeder = new MonitoringDemoSeeder(dbContext);
+        await seeder.SeedAsync(Plan());
+
+        var again = await seeder.SeedAsync(Plan());
+
+        Assert.Equal(0, again.ScanProfilesAdded);
+        Assert.Equal(2, await dbContext.ScanProfiles.CountAsync());
+    }
+
+    /// <summary>
+    /// The LLDP rows the neighbour walk reads have to be in the profile the simulator serves, and the
+    /// file has to stay sorted by OID — snmpsim answers GETNEXT by walking it in order, so an unsorted
+    /// record is one a walk never reaches. 1.0.8802 sorts before 1.3.6.1, which is why they come first.
+    /// </summary>
+    [Fact]
+    public void Seed_TheHealthySimulatorProfile_CarriesTheLldpRowsANeighbourWalkReads()
+    {
+        var lines = File.ReadAllLines(RepositoryFile("src", "AppHost", "snmpsim", "healthy.snmprec"))
+            .Where(line => line.Length > 0)
+            .ToArray();
+
+        // lldpRemSysName and lldpLocPortId: a neighbour's name and the local port that saw it.
+        Assert.Contains(lines, line => line.StartsWith("1.0.8802.1.1.2.1.4.1.1.9.", StringComparison.Ordinal));
+        Assert.Contains(lines, line => line.StartsWith("1.0.8802.1.1.2.1.3.7.1.3.", StringComparison.Ordinal));
+
+        var oids = lines.Select(line => line.Split('|')[0]).ToArray();
+        Assert.Equal([.. oids.OrderBy(oid => oid, new OidComparer())], oids);
+    }
+
+    /// <summary>Numeric per sub-identifier, which is the order SNMP walks in — "10" is after "9".</summary>
+    private sealed class OidComparer : IComparer<string>
+    {
+        public int Compare(string? left, string? right)
+        {
+            var first = Parse(left);
+            var second = Parse(right);
+            for (var index = 0; index < Math.Min(first.Length, second.Length); index++)
+            {
+                if (first[index] != second[index])
+                {
+                    return first[index].CompareTo(second[index]);
+                }
+            }
+
+            return first.Length.CompareTo(second.Length);
+        }
+
+        private static long[] Parse(string? oid) =>
+            [.. (oid ?? string.Empty).Split('.').Select(part => long.TryParse(part, out var value) ? value : 0)];
     }
 
     private static string RepositoryFile(params string[] segments)

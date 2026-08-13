@@ -48,6 +48,18 @@ namespace Modules.Monitoring.Seeding;
 /// A phrase the mock target's page carries. The seeded HTTP check matches it, which is what makes
 /// "break the expectation and watch the check fail" a one-line edit.
 /// </param>
+/// <param name="DiscoveryGroup">Which discovery service runs the seeded scan profiles (WP-4.1).</param>
+/// <param name="LocalScanRange">
+/// What the seeded scan profile sweeps. <c>local</c> rather than a CIDR because under
+/// <c>aspire run</c> the scanner's subnet is allocated by Docker at session start — a literal range
+/// would scan an address space nothing in this stack is on. The scanner resolves the keyword from its
+/// own interface.
+/// </param>
+/// <param name="EmptyScanRange">
+/// A range guaranteed to contain nothing, so the WP's second verification case — "scan a range with
+/// nothing → clean empty result, no crash" — happens on every run rather than needing to be set up.
+/// TEST-NET-1 again, for the same reason WP-3.3 used it for the unreachable device.
+/// </param>
 public sealed record MonitoringSeedPlan(
     string SnmpAddress,
     int SnmpPort,
@@ -61,9 +73,12 @@ public sealed record MonitoringSeedPlan(
     string DownableSnmpAddress = "snmpsim-downable",
     string HttpTargetAddress = "http-target",
     int HttpTargetPort = 80,
-    string HttpTargetExpectedContent = "Customer portal is serving normally.");
+    string HttpTargetExpectedContent = "Customer portal is serving normally.",
+    string DiscoveryGroup = "default",
+    string LocalScanRange = "local",
+    string EmptyScanRange = "192.0.2.0/29");
 
-public sealed record MonitoringSeedResult(int DevicesAdded, int ChecksAdded);
+public sealed record MonitoringSeedResult(int DevicesAdded, int ChecksAdded, int ScanProfilesAdded = 0);
 
 /// <summary>
 /// Three monitored devices, so a fresh <c>aspire run</c> has something to poll.
@@ -100,11 +115,15 @@ public sealed class MonitoringDemoSeeder(MonitoringDbContext dbContext)
     {
         ArgumentNullException.ThrowIfNull(plan);
 
+        // Guarded on its own presence rather than folded into the device check below, so that a
+        // database seeded before WP-4.1 — which has devices and no scan profiles — still gets them.
+        var scanProfilesAdded = await SeedScanProfilesAsync(plan, cancellationToken);
+
         if (await dbContext.MonitoredDevices.AnyAsync(cancellationToken))
         {
             // Idempotent by presence, like every other seeder here: a re-run against a database that
             // already has devices must add nothing rather than a second copy of each.
-            return new MonitoringSeedResult(0, 0);
+            return new MonitoringSeedResult(0, 0, scanProfilesAdded);
         }
 
         var now = DateTimeOffset.UtcNow;
@@ -133,8 +152,93 @@ public sealed class MonitoringDemoSeeder(MonitoringDbContext dbContext)
 
         await transaction.CommitAsync(cancellationToken);
 
-        return new MonitoringSeedResult(devices.Count, devices.Sum(device => device.Checks.Count));
+        return new MonitoringSeedResult(
+            devices.Count, devices.Sum(device => device.Checks.Count), scanProfilesAdded);
     }
+
+    /// <summary>
+    /// Two scan profiles, so a fresh <c>aspire run</c> gives the discovery service both of WP-4.1's
+    /// verification cases without anybody creating one by hand.
+    /// <para>
+    /// Unlike a device, a scan profile needs no CI and writes no config-log entry: a discovery group is
+    /// sent its profile list whole on every fetch, so there is no delta for a missing entry to break.
+    /// That makes this a plain insert.
+    /// </para>
+    /// </summary>
+    private async Task<int> SeedScanProfilesAsync(
+        MonitoringSeedPlan plan,
+        CancellationToken cancellationToken)
+    {
+        if (await dbContext.ScanProfiles.AnyAsync(cancellationToken))
+        {
+            return 0;
+        }
+
+        var now = DateTimeOffset.UtcNow;
+        var profiles = new List<ScanProfile>
+        {
+            Profile(
+                Guid.Parse("0199c0de-4100-7000-8000-000000000001"),
+                "Local subnet sweep",
+                "Everything on the network this scanner sits on: ping, fingerprint, then ask over SNMP.",
+                plan,
+                now,
+                [plan.LocalScanRange],
+                // The ports the seeded estate actually answers on, so the fingerprint finds something:
+                // SSH, the simulators' HTTP, the API, the broker's management UI and MailHog's.
+                [22, 80, 443, 5000, 8025, 15672],
+                snmpEnabled: true,
+                neighbourDiscoveryEnabled: true),
+
+            Profile(
+                Guid.Parse("0199c0de-4100-7000-8000-000000000002"),
+                "Documentation range (finds nothing)",
+                "TEST-NET-1, routed nowhere. It exists so that a scan of an empty range is something "
+                    + "an operator can watch complete cleanly rather than take on trust.",
+                plan,
+                now,
+                [plan.EmptyScanRange],
+                // No ports and no SNMP: nothing answers, and the point of this profile is that the
+                // sweep alone finishes and reports zero.
+                [],
+                snmpEnabled: false,
+                neighbourDiscoveryEnabled: false),
+        };
+
+        dbContext.ScanProfiles.AddRange(profiles);
+        await dbContext.SaveChangesAsync(cancellationToken);
+        return profiles.Count;
+    }
+
+    private static ScanProfile Profile(
+        Guid id,
+        string name,
+        string description,
+        MonitoringSeedPlan plan,
+        DateTimeOffset now,
+        IReadOnlyList<string> ranges,
+        IReadOnlyList<int> ports,
+        bool snmpEnabled,
+        bool neighbourDiscoveryEnabled) => new()
+        {
+            Id = id,
+            Name = name,
+            Description = description,
+            DiscoveryGroup = plan.DiscoveryGroup,
+            RangesJson = JsonSerializer.Serialize(ranges),
+            PortsJson = JsonSerializer.Serialize(ports),
+            // Frequent for a scan, because a fresh run should discover the estate while somebody is
+            // still watching it. A real estate scans hourly or nightly.
+            IntervalMinutes = 5,
+            TimeoutSeconds = 2,
+            SnmpEnabled = snmpEnabled,
+            NeighbourDiscoveryEnabled = neighbourDiscoveryEnabled,
+            IsEnabled = true,
+            CreatedBy = Actor,
+            CreatedAt = now,
+            UpdatedBy = Actor,
+            UpdatedAt = now,
+        };
 
     private static IEnumerable<MonitoredDevice> Plan(MonitoringSeedPlan plan, DateTimeOffset now)
     {

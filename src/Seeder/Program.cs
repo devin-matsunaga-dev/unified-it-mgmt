@@ -160,4 +160,5 @@ var monitoringResult = await new MonitoringDemoSeeder(monitoringDbContext).SeedA
             ? httpTargetPort
             : 80));
 Console.WriteLine($"Monitored devices ready. Added {monitoringResult.DevicesAdded} devices and {monitoringResult.ChecksAdded} checks.");
+Console.WriteLine($"Scan profiles ready. Added {monitoringResult.ScanProfilesAdded} profiles.");
 return 0;

@@ -44,15 +44,28 @@ public sealed class RabbitMqDefinitionsTests
     }
 
     [Fact]
-    public void Render_DeclaresEveryPollerExchangeAsMassTransitWould()
+    public void DeviceDiscoveredExchange_MatchesTheNameMassTransitPublishesUnder()
+    {
+        var urn = MessageUrn.ForType<DeviceDiscovered>().ToString();
+
+        Assert.Equal($"urn:message:{RabbitMqDefinitions.DeviceDiscoveredExchange}", urn);
+    }
+
+    [Fact]
+    public void Render_DeclaresEveryAgentExchangeAsMassTransitWould()
     {
         using var document = JsonDocument.Parse(Render());
 
         var exchanges = document.RootElement.GetProperty("exchanges").EnumerateArray().ToArray();
 
+        // Both agents' lists, because neither account may declare its own exchange. Deduplicated:
+        // RabbitMQ refuses a document that declares one exchange twice.
         Assert.Equal(
-            RabbitMqDefinitions.PollerExchanges,
+            RabbitMqDefinitions.DeclaredExchanges,
             [.. exchanges.Select(exchange => exchange.GetProperty("name").GetString()!)]);
+        Assert.Equal(
+            RabbitMqDefinitions.DeclaredExchanges.Count,
+            RabbitMqDefinitions.DeclaredExchanges.Distinct(StringComparer.Ordinal).Count());
         foreach (var exchange in exchanges)
         {
             // A type or durability mismatch fails the API's own declaration with PRECONDITION_FAILED.
@@ -92,6 +105,9 @@ public sealed class RabbitMqDefinitionsTests
     [InlineData("Contracts.Events:TicketCreated")]
     [InlineData("Contracts.Events:CiDeleted")]
     [InlineData("Contracts.Events:PollerHeartbeatMissed")]
+    // The other agent's exchange. A poller that could publish a discovery could invent a device on
+    // the network, which is exactly why the two accounts have separate lists rather than one.
+    [InlineData("Contracts.Events:DeviceDiscovered")]
     public void Render_PollerWritePattern_DoesNotMatchAnotherEventsExchange(string exchange)
     {
         using var document = JsonDocument.Parse(Render());
@@ -138,11 +154,60 @@ public sealed class RabbitMqDefinitionsTests
     }
 
     [Fact]
+    public void Render_DiscoveryPermissions_GrantWriteOnItsOneExchangeAndNothingElse()
+    {
+        using var document = JsonDocument.Parse(Render());
+
+        var permission = document.RootElement.GetProperty("permissions").EnumerateArray()
+            .Single(entry => entry.GetProperty("user").GetString() == "discovery");
+
+        Assert.Equal("", permission.GetProperty("configure").GetString());
+        Assert.Equal("", permission.GetProperty("read").GetString());
+        Assert.Equal(
+            "^(Contracts\\.Events:DeviceDiscovered)$",
+            permission.GetProperty("write").GetString());
+    }
+
+    /// <summary>
+    /// The separation in the direction that matters most for the vault: a scanner that could publish
+    /// telemetry could report a measurement of a device it has never polled, and a heartbeat would let
+    /// it impersonate a poller outright.
+    /// </summary>
+    [Theory]
+    [InlineData("Contracts.Events:PollerHeartbeat")]
+    [InlineData("Contracts.Events:DeviceTelemetryReported")]
+    [InlineData("Contracts.Events:DeviceReachabilityChanged")]
+    [InlineData("Contracts.Events:TicketCreated")]
+    public void Render_DiscoveryWritePattern_DoesNotMatchAnotherAgentsExchange(string exchange)
+    {
+        using var document = JsonDocument.Parse(Render());
+
+        var write = document.RootElement.GetProperty("permissions").EnumerateArray()
+            .Single(entry => entry.GetProperty("user").GetString() == "discovery")
+            .GetProperty("write").GetString()!;
+
+        Assert.DoesNotMatch(write, exchange);
+    }
+
+    [Fact]
+    public void Render_DiscoveryWritePattern_MatchesTheExchangeItPublishesTo()
+    {
+        using var document = JsonDocument.Parse(Render());
+
+        var write = document.RootElement.GetProperty("permissions").EnumerateArray()
+            .Single(entry => entry.GetProperty("user").GetString() == "discovery")
+            .GetProperty("write").GetString()!;
+
+        Assert.Matches(write, "Contracts.Events:DeviceDiscovered");
+    }
+
+    [Fact]
     public void Render_WritesNoPasswordInPlaintext()
     {
         var rendered = Render();
 
         Assert.DoesNotContain("poller-secret", rendered, StringComparison.Ordinal);
+        Assert.DoesNotContain("discovery-secret", rendered, StringComparison.Ordinal);
         Assert.DoesNotContain("admin-secret", rendered, StringComparison.Ordinal);
         using var document = JsonDocument.Parse(rendered);
         foreach (var user in document.RootElement.GetProperty("users").EnumerateArray())
@@ -170,6 +235,7 @@ public sealed class RabbitMqDefinitionsTests
     [
         RabbitMqDefinitions.Administrator("itplatform", "admin-secret"),
         RabbitMqDefinitions.PublishOnlyPoller("poller", "poller-secret"),
+        RabbitMqDefinitions.PublishOnlyDiscovery("discovery", "discovery-secret"),
     ]);
 
     private static string HashOf(string rendered, string username)

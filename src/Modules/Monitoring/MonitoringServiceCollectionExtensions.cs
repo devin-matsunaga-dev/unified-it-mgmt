@@ -8,6 +8,7 @@ using Modules.Monitoring.Data;
 using Modules.Monitoring.Features.Alerting;
 using Modules.Monitoring.Features.Dashboards;
 using Modules.Monitoring.Features.Devices;
+using Modules.Monitoring.Features.Discovery;
 using Modules.Monitoring.Features.Heartbeats;
 using Modules.Monitoring.Features.MaintenanceWindows;
 using Modules.Monitoring.Features.Metrics;
@@ -33,6 +34,7 @@ public static class MonitoringServiceCollectionExtensions
         services.AddScoped<IMonitoredDeviceService, MonitoredDeviceService>();
         services.AddScoped<IMaintenanceWindowService, MaintenanceWindowService>();
         services.AddScoped<IPollerService, PollerService>();
+        services.AddScoped<IScanProfileService, ScanProfileService>();
         services.AddScoped<IPollerCredentialService, PollerCredentialService>();
         // The vault's delete guard, replacing Platform's "nothing uses any credential" default. Not
         // TryAdd: this module is the authority on the question, and a host that registers Monitoring

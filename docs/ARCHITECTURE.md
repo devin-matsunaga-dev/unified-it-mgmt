@@ -19,7 +19,7 @@ A unified IT management platform: **Helpdesk (ITSM)** + **Asset Management (ITAM
 | `Platform` | class lib | Auth, audit, notifications, scheduler, outbox, vault |
 | `Contracts` | class lib | Event + shared DTO definitions (the ONLY cross-module types) |
 | `Poller` | Python (asyncio) | SNMP/ICMP/HTTP polling; publishes telemetry |
-| `Discovery` | Python | Subnet scans, LLDP/CDP, inventory (Phase 4+) |
+| `Discovery` | Python | Subnet scans, LLDP/CDP, inventory (WP-4.1 onward) |
 | `Web` | React (Vite + TS) | SPA frontend |
 
 Correlation engine starts as a consumer inside `Modules.Monitoring`; it may be extracted to its own worker later — do not pre-extract.
@@ -57,6 +57,7 @@ Dependency graph = `assets.ci_relationships` table + recursive CTEs. No graph da
 
 - OIDC via Keycloak in dev; **must swap to Entra ID by configuration only** — never reference Keycloak-specific claims in module code; map claims in one Platform location.
 - Roles: `Admin`, `Technician`, `Manager`, `EndUser`. Authorize with policy names (e.g. `CanManageTickets`), not raw role strings, at API endpoints.
+- **Service-account roles** are separate and are never granted to a person: `Poller` (WP-3.2) and `Discovery` (WP-4.1). Each is held by exactly one Keycloak client-credentials client, each has its own policy (`CanPoll`, `CanDiscover`), and both are **disjoint from every operator policy and from each other** — an agent must not need an agent's rights, an operator must not be able to redeem a credential grant, and a scanner must not be able to reach the vault at all.
 - EndUsers see only their own tickets/assets — enforced in queries, not just UI.
 
 ## 7. Invariants (never break these)

@@ -20,16 +20,20 @@ public sealed class KeycloakDemoUsersTests
     }
 
     /// <summary>
-    /// The poller's identity: a service account with the Poller role, on a client that has no
-    /// browser flow and no password grant, so nothing can sign in as it.
+    /// Each agent's identity: a service account on a client that has no browser flow and no password
+    /// grant, so nothing can sign in as it.
     /// </summary>
-    [Fact]
-    public void RealmImport_PollerClient_IsAServiceAccountWithNoInteractiveFlow()
+    [Theory]
+    [InlineData("it-platform-poller", "${POLLER_CLIENT_SECRET}")]
+    [InlineData("it-platform-discovery", "${DISCOVERY_CLIENT_SECRET}")]
+    public void RealmImport_AgentClient_IsAServiceAccountWithNoInteractiveFlow(
+        string clientId,
+        string secretPlaceholder)
     {
         using var realm = ReadRealm();
 
         var client = realm.RootElement.GetProperty("clients").EnumerateArray()
-            .Single(item => item.GetProperty("clientId").GetString() == "it-platform-poller");
+            .Single(item => item.GetProperty("clientId").GetString() == clientId);
 
         Assert.True(client.GetProperty("serviceAccountsEnabled").GetBoolean());
         Assert.False(client.GetProperty("publicClient").GetBoolean());
@@ -37,29 +41,54 @@ public sealed class KeycloakDemoUsersTests
         Assert.False(client.GetProperty("directAccessGrantsEnabled").GetBoolean());
         // Rendered by AppHost from a generated parameter; a literal here would be a credential in
         // the repository.
-        Assert.Equal("${POLLER_CLIENT_SECRET}", client.GetProperty("secret").GetString());
+        Assert.Equal(secretPlaceholder, client.GetProperty("secret").GetString());
     }
 
-    /// <summary>The Poller role is for machines: no human user in the realm carries it.</summary>
-    [Fact]
-    public void RealmImport_PollerRole_IsHeldOnlyByTheServiceAccount()
+    /// <summary>
+    /// The machine roles are for machines: no human user in the realm carries either, and each is held
+    /// by exactly one service account.
+    /// </summary>
+    [Theory]
+    [InlineData("Poller", "it-platform-poller")]
+    [InlineData("Discovery", "it-platform-discovery")]
+    public void RealmImport_AgentRole_IsHeldOnlyByItsOwnServiceAccount(string role, string clientId)
     {
         using var realm = ReadRealm();
 
         var declared = realm.RootElement.GetProperty("roles").GetProperty("realm").EnumerateArray()
-            .Select(role => role.GetProperty("name").GetString()).ToArray();
-        Assert.Contains("Poller", declared);
+            .Select(item => item.GetProperty("name").GetString()).ToArray();
+        Assert.Contains(role, declared);
 
         Assert.DoesNotContain(
             HumanUsers(),
             user => user.GetProperty("realmRoles").EnumerateArray()
-                .Any(role => role.GetString() == "Poller"));
+                .Any(item => item.GetString() == role));
 
         var serviceAccount = realm.RootElement.GetProperty("users").EnumerateArray()
-            .Single(user => user.TryGetProperty("serviceAccountClientId", out _));
-        Assert.Equal("it-platform-poller", serviceAccount.GetProperty("serviceAccountClientId").GetString());
-        Assert.Equal(["Poller"], serviceAccount.GetProperty("realmRoles").EnumerateArray()
-            .Select(role => role.GetString()));
+            .Single(user => user.TryGetProperty("serviceAccountClientId", out var owner)
+                && owner.GetString() == clientId);
+        // Exactly one role each. The scanner deliberately does not also carry Poller: managing what is
+        // scanned and redeeming a credential grant are different jobs, and CanPoll reaches the vault.
+        Assert.Equal([role], serviceAccount.GetProperty("realmRoles").EnumerateArray()
+            .Select(item => item.GetString()));
+    }
+
+    /// <summary>
+    /// Two service accounts and no more. A third would mean an agent nobody has reviewed the reach of,
+    /// and this is the assertion that makes adding one a deliberate act.
+    /// </summary>
+    [Fact]
+    public void RealmImport_ServiceAccounts_AreTheTwoAgentsAndNothingElse()
+    {
+        using var realm = ReadRealm();
+
+        var accounts = realm.RootElement.GetProperty("users").EnumerateArray()
+            .Where(user => user.TryGetProperty("serviceAccountClientId", out _))
+            .Select(user => user.GetProperty("serviceAccountClientId").GetString() ?? string.Empty)
+            .Order()
+            .ToArray();
+
+        Assert.Equal(["it-platform-discovery", "it-platform-poller"], accounts);
     }
 
     /// <summary>A service account is not a person, so it is excluded from the demo-user counts.</summary>

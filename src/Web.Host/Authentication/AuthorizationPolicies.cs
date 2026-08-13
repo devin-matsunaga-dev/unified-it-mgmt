@@ -13,6 +13,13 @@ public static class AuthorizationPolicies
     /// one.
     /// </summary>
     public const string CanPoll = "CanPoll";
+
+    /// <summary>
+    /// A discovery service reading the ranges it is meant to scan. Disjoint from every operator policy
+    /// for the same reason <see cref="CanPoll"/> is, and disjoint from <see cref="CanPoll"/> as well: a
+    /// scanner has no devices and no credential scope, so nothing it does should reach the vault.
+    /// </summary>
+    public const string CanDiscover = "CanDiscover";
 }
 
 public static class PlatformRoles
@@ -28,6 +35,13 @@ public static class PlatformRoles
     /// </summary>
     public const string Poller = "Poller";
 
+    /// <summary>
+    /// The discovery service's own role, on the same terms as <see cref="Poller"/>: machines only, and
+    /// never in a human user's realm roles. Separate from Poller so that a compromised scanner cannot
+    /// redeem a credential grant — the two agents do different work and reach different endpoints.
+    /// </summary>
+    public const string Discovery = "Discovery";
+
     public static IReadOnlySet<string> All { get; } = new HashSet<string>(StringComparer.Ordinal)
     {
         Admin,
@@ -35,5 +49,6 @@ public static class PlatformRoles
         Manager,
         EndUser,
         Poller,
+        Discovery,
     };
 }

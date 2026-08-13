@@ -1,0 +1,55 @@
+[project]
+name = "discovery"
+version = "0.1.0"
+description = "IT Platform discovery agent: scheduled subnet sweeps, port fingerprinting, SNMP identify and LLDP/CDP neighbour walks."
+requires-python = ">=3.13"
+dependencies = [
+    "aio-pika>=9.5.5",
+    "httpx>=0.28.1",
+    # Same reason the poller carries it: ICMP has no standard-library implementation, and the
+    # alternatives are hand-rolling the protocol or parsing `ping` output per locale. A sweep is the
+    # same probe as a reachability check, run against addresses nobody has claimed yet.
+    "icmplib>=3.0.4",
+    "pysnmp>=7.1.28",
+]
+
+[project.optional-dependencies]
+dev = [
+    "mypy>=1.18.2",
+    "pytest>=8.4.2",
+    "pytest-asyncio>=1.2.0",
+    "ruff>=0.14.0",
+]
+
+[project.scripts]
+discovery = "discovery.__main__:run"
+
+[build-system]
+requires = ["setuptools>=80"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 100
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "UP", "B", "ASYNC", "RUF"]
+
+[tool.mypy]
+python_version = "3.13"
+strict = true
+files = ["src", "tests"]
+
+# Neither library ships type information, and both are confined to one module here — `sweep.py` for
+# icmplib and `pysnmp_transport.py` for pysnmp — so everything above them is checked strictly against
+# this service's own protocols rather than against `Any`.
+[[tool.mypy.overrides]]
+module = ["icmplib.*", "pysnmp.*"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]

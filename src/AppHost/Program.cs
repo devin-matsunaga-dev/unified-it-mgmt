@@ -57,6 +57,12 @@ var rabbitMqPassword = AddGeneratedPassword(builder, "rabbitmq-password");
 var pollerBusUsername = builder.AddParameter("poller-bus-username", "poller");
 var pollerBusPassword = AddGeneratedPassword(builder, "poller-bus-password");
 
+// The discovery service (WP-4.1) gets its own account rather than sharing the poller's, so the two
+// write patterns stay disjoint: a scanner that could publish telemetry could report a measurement of a
+// device it has never polled. Its list is one exchange long.
+var discoveryBusUsername = builder.AddParameter("discovery-bus-username", "discovery");
+var discoveryBusPassword = AddGeneratedPassword(builder, "discovery-bus-password");
+
 // Rendered here for the same reason the Keycloak realm is: the values are only known at this point,
 // and a file on disk can be read back and checked. The renderer lives in Platform so the tests
 // import this exact document into a throwaway broker — a permission model proved against a
@@ -72,6 +78,8 @@ File.WriteAllText(
             await ValueOf(rabbitMqUsername), await ValueOf(rabbitMqPassword)),
         RabbitMqDefinitions.PublishOnlyPoller(
             await ValueOf(pollerBusUsername), await ValueOf(pollerBusPassword)),
+        RabbitMqDefinitions.PublishOnlyDiscovery(
+            await ValueOf(discoveryBusUsername), await ValueOf(discoveryBusPassword)),
     ]));
 // conf.d rather than rabbitmq.conf: the image's entrypoint writes the default-user file into the
 // same directory from RABBITMQ_DEFAULT_USER, and replacing the main file would throw that away.
@@ -92,6 +100,7 @@ var rabbitMq = builder.AddRabbitMQ("rabbitmq", rabbitMqUsername, rabbitMqPasswor
 // a generated persisted parameter rather than a literal in the template: a credential checked into
 // the repository is a credential everyone has.
 var pollerClientSecret = AddGeneratedPassword(builder, "poller-client-secret");
+var discoveryClientSecret = AddGeneratedPassword(builder, "discovery-client-secret");
 
 var realmTemplatePath = Path.Combine(builder.Environment.ContentRootPath, "Keycloak", "it-platform-realm.json");
 var renderedRealmPath = Path.Combine(builder.Environment.ContentRootPath, "obj", "keycloak", "it-platform-realm.json");
@@ -100,7 +109,8 @@ File.WriteAllText(
     renderedRealmPath,
     File.ReadAllText(realmTemplatePath)
         .Replace("${PUBLIC_HOST}", publicHostValue, StringComparison.Ordinal)
-        .Replace("${POLLER_CLIENT_SECRET}", await ValueOf(pollerClientSecret), StringComparison.Ordinal));
+        .Replace("${POLLER_CLIENT_SECRET}", await ValueOf(pollerClientSecret), StringComparison.Ordinal)
+        .Replace("${DISCOVERY_CLIENT_SECRET}", await ValueOf(discoveryClientSecret), StringComparison.Ordinal));
 
 var keycloakAdmin = builder.AddParameter("keycloak-admin", "admin");
 var keycloakPassword = AddGeneratedPassword(builder, "keycloak-password");
@@ -120,7 +130,16 @@ var keycloak = builder.AddContainer("keycloak", "quay.io/keycloak/keycloak", "26
         renderedRealmPath,
         "/opt/keycloak/data/import/it-platform-realm.json",
         isReadOnly: true)
-    .WithVolume("it-platform-keycloak-data", "/opt/keycloak/data")
+    // Deliberately no data volume, which is a change WP-4.1 had to make to be verifiable at all.
+    // `--import-realm` imports with strategy IGNORE_EXISTING: with the realm persisted in a volume,
+    // Keycloak logs "Realm 'it-platform' already exists. Import skipped" and every later edit to
+    // it-platform-realm.json is silently ignored. WP-4.1's `Discovery` role and
+    // `it-platform-discovery` client simply were not there on a machine that had run the stack
+    // before, and the only symptom was the scanner failing to get a token — nothing said why.
+    // A fresh Keycloak per run re-imports the realm every time, which is the same clean-slate call
+    // WP-1.9 made for the Postgres volume and for the same reason: everything here is rendered from
+    // the repository, so there is nothing in Keycloak worth keeping that is not also in git. The
+    // cost is that a hand-made realm change does not survive a restart, which is the point.
     .WithHttpHealthCheck("/health/ready", endpointName: "management");
 
 var minioAccessKey = builder.AddParameter("minio-access-key", "minioadmin");
@@ -280,6 +299,47 @@ builder.AddDockerfile("poller", "../../services/poller")
     // The seeded service checks poll these, so a poller that started first would report the mail
     // service and the portal down for its first cycles and raise an alert about the stack starting up.
     .WaitFor(mailhog)
+    .WaitFor(httpTarget);
+
+// The discovery service (WP-4.1). A container for the same reason the poller is one, and on the same
+// ICMP arrangement: a subnet sweep is thousands of pings, and `--cap-add=NET_RAW` does not give a
+// non-root process an effective capability. The uid must match the Dockerfile's.
+//
+// It sits on the Aspire session network, which is the whole reason the seeded profile scans the
+// keyword `local` rather than a literal CIDR: Docker allocates that network's subnet at session start,
+// so a hardcoded range would scan an address space nothing in this stack is on. What it finds is every
+// other container in the run — the simulators, the broker, the API — which is a real network scan of a
+// real network, not a fixture pretending to be one.
+builder.AddDockerfile("discovery", "../../services/discovery")
+    .WithContainerRuntimeArgs("--sysctl", "net.ipv4.ping_group_range=10001 10001")
+    .WithEnvironment("DISCOVERY_ICMP_PRIVILEGED", "false")
+    .WithEnvironment("DISCOVERY_NAME", "discovery-1")
+    .WithEnvironment("DISCOVERY_GROUP", "default")
+    .WithEnvironment("DISCOVERY_AGENT_VERSION", "0.1.0")
+    // How often it wakes to see what is due, not how often it scans: each profile carries its own
+    // interval, exactly as a check does.
+    .WithEnvironment("DISCOVERY_INTERVAL_SECONDS", "30")
+    .WithEnvironment("DISCOVERY_API_BASE_URL", webHost.GetEndpoint("http"))
+    .WithEnvironment("DISCOVERY_OIDC_TOKEN_URL", ReferenceExpression.Create(
+        $"{keycloak.GetEndpoint("http")}/realms/it-platform/protocol/openid-connect/token"))
+    .WithEnvironment("DISCOVERY_OIDC_CLIENT_ID", "it-platform-discovery")
+    .WithEnvironment("DISCOVERY_OIDC_CLIENT_SECRET", discoveryClientSecret)
+    .WithEnvironment("DISCOVERY_AMQP_URL", ReferenceExpression.Create(
+        $"amqp://{discoveryBusUsername}:{discoveryBusPassword}@" +
+        $"{rabbitMq.GetEndpoint("tcp").Property(EndpointProperty.Host)}:" +
+        $"{rabbitMq.GetEndpoint("tcp").Property(EndpointProperty.Port)}/"))
+    // Which communities an SNMP identify tries, in order. These are the simulator's two profiles: a
+    // scan meets devices nobody has configured yet, so there is no check to hang a vault credential on
+    // and the scanner's own configuration is where the list lives. Anything found this way is
+    // identified, never polled — the credential a device is *monitored* with is still the vault's.
+    .WithEnvironment("DISCOVERY_SNMP_COMMUNITIES", "healthy,degraded,public")
+    .WaitFor(webHost)
+    .WaitFor(rabbitMq)
+    .WaitFor(keycloak)
+    // Not strictly required — an empty network is a valid scan — but a scanner that started first
+    // would report an estate of nothing on its first pass and look broken.
+    .WaitFor(snmpSim)
+    .WaitFor(downableSnmpSim)
     .WaitFor(httpTarget);
 
 builder.AddProject<Projects.Seeder>("seeder")

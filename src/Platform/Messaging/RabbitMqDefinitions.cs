@@ -54,9 +54,9 @@ public static class RabbitMqDefinitions
     public const string DeviceReachabilityExchange = "Contracts.Events:DeviceReachabilityChanged";
 
     /// <summary>
-    /// Everything the poller is allowed to publish, and the exchanges the definitions file therefore
-    /// has to declare on its behalf. Adding a member here widens a credential — it is the whole
-    /// permission model in one list, which is why it is one list.
+    /// Everything the poller is allowed to publish. Adding a member here widens that credential — one
+    /// agent's whole permission model is one list, which is why it is a list and why the discovery
+    /// service has a separate one rather than three more entries in this.
     /// </summary>
     public static readonly IReadOnlyList<string> PollerExchanges =
     [
@@ -64,6 +64,25 @@ public static class RabbitMqDefinitions
         DeviceTelemetryExchange,
         DeviceReachabilityExchange,
     ];
+
+    /// <summary>One device a scan found. WP-4.1.</summary>
+    public const string DeviceDiscoveredExchange = "Contracts.Events:DeviceDiscovered";
+
+    /// <summary>
+    /// Everything the discovery service is allowed to publish. A list of its own rather than three
+    /// more members on <see cref="PollerExchanges"/>: the two agents are separate deployables with
+    /// separate credentials, and a scanner that could publish telemetry could forge a measurement of a
+    /// device it has never polled.
+    /// </summary>
+    public static readonly IReadOnlyList<string> DiscoveryExchanges = [DeviceDiscoveredExchange];
+
+    /// <summary>
+    /// Every exchange the definitions file has to declare, because no publish-only account may declare
+    /// one for itself. The union of the two agents' lists, deduplicated so that an exchange shared by
+    /// both would still be declared exactly once — RabbitMQ refuses a document that declares one twice.
+    /// </summary>
+    public static readonly IReadOnlyList<string> DeclaredExchanges =
+        [.. PollerExchanges.Concat(DiscoveryExchanges).Distinct(StringComparer.Ordinal)];
 
     /// <summary>The permission pattern that matches nothing. RabbitMQ spells "no rights" as an empty regex.</summary>
     public const string DenyAll = "";
@@ -80,6 +99,19 @@ public static class RabbitMqDefinitions
         password,
         Configure: DenyAll,
         Write: WritePattern(PollerExchanges),
+        Read: DenyAll,
+        Tags: []);
+
+    /// <summary>
+    /// The discovery service's account: it may write to <see cref="DiscoveryExchanges"/> and do nothing
+    /// else, on exactly the terms the poller's account has. Its own account rather than a shared one so
+    /// that the two write patterns stay disjoint — the whole reason the pattern is a closed list.
+    /// </summary>
+    public static RabbitMqAccount PublishOnlyDiscovery(string username, string password) => new(
+        username,
+        password,
+        Configure: DenyAll,
+        Write: WritePattern(DiscoveryExchanges),
         Read: DenyAll,
         Tags: []);
 
@@ -149,7 +181,7 @@ public static class RabbitMqDefinitions
             // Declared durable and fanout to match exactly what MassTransit declares for the same
             // message types. A mismatch on either would fail the API's own declaration with
             // PRECONDITION_FAILED and take the bus down on start-up.
-            ["exchanges"] = new JsonArray([.. PollerExchanges.Select(name => (JsonNode)new JsonObject
+            ["exchanges"] = new JsonArray([.. DeclaredExchanges.Select(name => (JsonNode)new JsonObject
             {
                 ["name"] = name,
                 ["vhost"] = VirtualHost,

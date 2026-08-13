@@ -58,6 +58,25 @@ jobs:
         working-directory: services/poller
         run: pytest
 
+      # The discovery service is a second deployable with its own dependency set, so it is installed,
+      # linted and tested separately rather than folded into the poller's steps — one `pip install -e`
+      # over both would put icmplib and pysnmp in one environment and hide a missing dependency in
+      # either. WP-3.12 added nothing to this file because `dotnet test` already ran its E2E; this
+      # package adds a pytest suite nothing else would run.
+      - name: Install discovery dependencies
+        working-directory: services/discovery
+        run: pip install -e '.[dev]'
+
+      - name: Lint and type-check discovery
+        working-directory: services/discovery
+        run: |
+          ruff check .
+          mypy
+
+      - name: Test discovery
+        working-directory: services/discovery
+        run: pytest
+
       - name: Install web dependencies
         working-directory: web
         run: npm ci

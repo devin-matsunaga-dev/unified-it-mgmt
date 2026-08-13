@@ -76,7 +76,13 @@ public static class AuthenticationServiceCollectionExtensions
             // configuration with the identity it polls under, and the endpoints behind this policy
             // are the only ones it can reach; an operator inspecting pollers uses GET /api/pollers,
             // which stays on CanManageMonitoring.
-            .AddPolicy(AuthorizationPolicies.CanPoll, policy => policy.RequireRole(PlatformRoles.Poller));
+            .AddPolicy(AuthorizationPolicies.CanPoll, policy => policy.RequireRole(PlatformRoles.Poller))
+            // The discovery service's credential, and nothing else — not Admin, and deliberately not
+            // Poller either. A scanner reads scan profiles; it has no devices to configure and no
+            // credential scope to redeem, so the two service identities stay disjoint and a stolen
+            // scanner token buys nothing the vault protects.
+            .AddPolicy(AuthorizationPolicies.CanDiscover,
+                policy => policy.RequireRole(PlatformRoles.Discovery));
 
         return services;
     }

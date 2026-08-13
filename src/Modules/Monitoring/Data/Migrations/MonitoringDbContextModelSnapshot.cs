@@ -623,6 +623,93 @@ namespace Modules.Monitoring.Data.Migrations
                     b.ToTable("pollers", "monitoring");
                 });
 
+            modelBuilder.Entity("Modules.Monitoring.Data.ScanProfile", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<string>("CreatedBy")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)")
+                        .HasColumnName("created_by");
+
+                    b.Property<string>("Description")
+                        .HasMaxLength(2000)
+                        .HasColumnType("character varying(2000)")
+                        .HasColumnName("description");
+
+                    b.Property<string>("DiscoveryGroup")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)")
+                        .HasColumnName("discovery_group");
+
+                    b.Property<int>("IntervalMinutes")
+                        .HasColumnType("integer")
+                        .HasColumnName("interval_minutes");
+
+                    b.Property<bool>("IsEnabled")
+                        .HasColumnType("boolean")
+                        .HasColumnName("is_enabled");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)")
+                        .HasColumnName("name");
+
+                    b.Property<bool>("NeighbourDiscoveryEnabled")
+                        .HasColumnType("boolean")
+                        .HasColumnName("neighbour_discovery_enabled");
+
+                    b.Property<string>("PortsJson")
+                        .IsRequired()
+                        .HasColumnType("jsonb")
+                        .HasColumnName("ports_json");
+
+                    b.Property<string>("RangesJson")
+                        .IsRequired()
+                        .HasColumnType("jsonb")
+                        .HasColumnName("ranges_json");
+
+                    b.Property<bool>("SnmpEnabled")
+                        .HasColumnType("boolean")
+                        .HasColumnName("snmp_enabled");
+
+                    b.Property<int>("TimeoutSeconds")
+                        .HasColumnType("integer")
+                        .HasColumnName("timeout_seconds");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.Property<string>("UpdatedBy")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)")
+                        .HasColumnName("updated_by");
+
+                    b.HasKey("Id")
+                        .HasName("pk_scan_profiles");
+
+                    b.HasIndex("Name")
+                        .IsUnique()
+                        .HasDatabaseName("ix_scan_profiles_name");
+
+                    b.HasIndex("DiscoveryGroup", "IsEnabled")
+                        .HasDatabaseName("ix_scan_profiles_discovery_group_is_enabled");
+
+                    b.ToTable("scan_profiles", "monitoring");
+                });
+
             modelBuilder.Entity("Modules.Monitoring.Data.Alert", b =>
                 {
                     b.HasOne("Modules.Monitoring.Data.MonitoredDevice", "Device")
