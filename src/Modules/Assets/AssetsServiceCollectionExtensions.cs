@@ -11,6 +11,7 @@ using Modules.Assets.Features.Import;
 using Modules.Assets.Features.Labels;
 using Modules.Assets.Features.Lifecycle;
 using Modules.Assets.Features.Relationships;
+using Modules.Assets.Features.Topology;
 using Platform.Integration;
 using Quartz;
 
@@ -39,6 +40,8 @@ public static class AssetsServiceCollectionExtensions
         services.AddScoped<IContractService, ContractService>();
         services.AddScoped<IContractExpiryService, ContractExpiryService>();
         services.AddScoped<IDiscoveryReviewService, DiscoveryReviewService>();
+        services.AddScoped<ITopologyService, TopologyService>();
+        services.AddScoped<ITopologyMapService, TopologyMapService>();
         services.AddQuartz(quartz =>
         {
             // Daily, starting at host start-up: the pass is idempotent, so an extra run costs nothing

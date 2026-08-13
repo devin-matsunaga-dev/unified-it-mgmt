@@ -17,6 +17,7 @@ import { DeviceDetailPage } from './features/monitoring/DeviceDetailPage'
 import { StatusBoardPage } from './features/monitoring/StatusBoardPage'
 import { PeopleListPage } from './features/people/PeopleListPage'
 import { UserDetailPage } from './features/people/UserDetailPage'
+import { TopologyPage } from './features/topology/TopologyPage'
 import { HomeRoute } from './pages/HomeRoute'
 import { LoginPage } from './pages/LoginPage'
 import { PlaceholderPage } from './pages/PlaceholderPage'
@@ -45,6 +46,7 @@ export function App() {
       <Route path="assets/import" element={<ProtectedRoute roles={['Admin', 'Technician', 'Manager']}><CiImportWizard /></ProtectedRoute>} />
       <Route path="assets/discovery" element={<ProtectedRoute roles={['Admin', 'Technician', 'Manager']}><DiscoveryReviewPage /></ProtectedRoute>} />
       <Route path="assets/:id" element={<ProtectedRoute roles={['Admin', 'Technician', 'Manager']}><CiDetailPage /></ProtectedRoute>} />
+      <Route path="topology" element={<ProtectedRoute roles={['Admin', 'Technician', 'Manager']}><TopologyPage /></ProtectedRoute>} />
       <Route path="scan" element={<ProtectedRoute roles={['Admin', 'Technician', 'Manager']}><ScanPage /></ProtectedRoute>} />
       <Route path="contracts" element={<ProtectedRoute roles={['Admin', 'Technician', 'Manager']}><ContractListPage /></ProtectedRoute>} />
       <Route path="contracts/vendors" element={<ProtectedRoute roles={['Admin', 'Technician', 'Manager']}><VendorListPage /></ProtectedRoute>} />
