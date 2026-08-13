@@ -10,6 +10,7 @@ using Modules.Monitoring.Features.Dashboards;
 using Modules.Monitoring.Features.Devices;
 using Modules.Monitoring.Features.Discovery;
 using Modules.Monitoring.Features.Heartbeats;
+using Modules.Monitoring.Features.Interfaces;
 using Modules.Monitoring.Features.MaintenanceWindows;
 using Modules.Monitoring.Features.Metrics;
 using Modules.Monitoring.Features.PollerConfig;
@@ -47,6 +48,7 @@ public static class MonitoringServiceCollectionExtensions
         services.AddScoped<IPollerHeartbeatService, PollerHeartbeatService>();
         services.AddScoped<IMetricIngestionService, MetricIngestionService>();
         services.AddScoped<IMetricQueryService, MetricQueryService>();
+        services.AddScoped<IInterfaceService, InterfaceService>();
         services.AddScoped<IAlertStateStore, RedisAlertStateStore>();
         services.AddScoped<IAlertEnrichmentService, AlertEnrichmentService>();
         services.AddScoped<IAlertEngine, AlertEngine>();

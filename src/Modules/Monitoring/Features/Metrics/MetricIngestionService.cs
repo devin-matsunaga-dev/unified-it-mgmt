@@ -50,7 +50,93 @@ public sealed class MetricIngestionService(
         }
 
         await UpsertInventoryAsync(plan.InventoryFacts, cancellationToken);
+        await UpsertInterfacesAsync(plan.Interfaces, cancellationToken);
         return written;
+    }
+
+    /// <summary>
+    /// Current state per interface, overwritten in place and only forwards — the inventory rule,
+    /// applied to a wider row.
+    /// <para>
+    /// Every column is replaced, including the rates, and that is deliberate: the row means "what
+    /// the last poll found", so a poll that could measure no rate must leave the cell empty rather
+    /// than beside a number from ten minutes ago that nothing on the page would mark as stale.
+    /// </para>
+    /// </summary>
+    private async Task UpsertInterfacesAsync(
+        IReadOnlyList<DeviceInterface> interfaces,
+        CancellationToken cancellationToken)
+    {
+        if (interfaces.Count == 0)
+        {
+            return;
+        }
+
+        // The same foreign-key guard the inventory facts need: a device deleted between the poll and
+        // its ingestion would otherwise fail the whole batch over a port nobody will look at again.
+        var deviceIds = interfaces.Select(link => link.DeviceId).Distinct().ToList();
+        var known = (await dbContext.MonitoredDevices
+            .Where(device => deviceIds.Contains(device.Id))
+            .Select(device => device.Id)
+            .ToListAsync(cancellationToken)).ToHashSet();
+        if (known.Count == 0)
+        {
+            return;
+        }
+
+        foreach (var link in interfaces.Where(link => known.Contains(link.DeviceId)))
+        {
+            await dbContext.Database.ExecuteSqlRawAsync(
+                """
+                INSERT INTO monitoring.device_interfaces
+                    (device_id, if_index, name, alias, mac_address, interface_type,
+                     admin_status, oper_status, speed_bits_per_second,
+                     bits_in_per_second, bits_out_per_second, utilisation_percent,
+                     errors_in_per_second, errors_out_per_second,
+                     discards_in_per_second, discards_out_per_second, check_id, observed_at)
+                VALUES ({0}, {1}, {2}, {3}, {4}, {5}, {6}, {7}, {8}, {9}, {10}, {11}, {12}, {13},
+                        {14}, {15}, {16}, {17})
+                ON CONFLICT (device_id, if_index) DO UPDATE
+                    SET name = EXCLUDED.name,
+                        alias = EXCLUDED.alias,
+                        mac_address = EXCLUDED.mac_address,
+                        interface_type = EXCLUDED.interface_type,
+                        admin_status = EXCLUDED.admin_status,
+                        oper_status = EXCLUDED.oper_status,
+                        speed_bits_per_second = EXCLUDED.speed_bits_per_second,
+                        bits_in_per_second = EXCLUDED.bits_in_per_second,
+                        bits_out_per_second = EXCLUDED.bits_out_per_second,
+                        utilisation_percent = EXCLUDED.utilisation_percent,
+                        errors_in_per_second = EXCLUDED.errors_in_per_second,
+                        errors_out_per_second = EXCLUDED.errors_out_per_second,
+                        discards_in_per_second = EXCLUDED.discards_in_per_second,
+                        discards_out_per_second = EXCLUDED.discards_out_per_second,
+                        check_id = EXCLUDED.check_id,
+                        observed_at = EXCLUDED.observed_at
+                    WHERE EXCLUDED.observed_at > monitoring.device_interfaces.observed_at;
+                """,
+                [
+                    Parameter(NpgsqlDbType.Uuid, link.DeviceId),
+                    Parameter(NpgsqlDbType.Integer, link.IfIndex),
+                    Parameter(NpgsqlDbType.Varchar, link.Name),
+                    Parameter(NpgsqlDbType.Varchar, link.Alias),
+                    Parameter(NpgsqlDbType.Varchar, link.MacAddress),
+                    Parameter(NpgsqlDbType.Integer, link.InterfaceType),
+                    Parameter(NpgsqlDbType.Varchar, link.AdminStatus.ToString()),
+                    Parameter(NpgsqlDbType.Varchar, link.OperStatus.ToString()),
+                    Parameter(NpgsqlDbType.Bigint, link.SpeedBitsPerSecond),
+                    Parameter(NpgsqlDbType.Double, link.BitsInPerSecond),
+                    Parameter(NpgsqlDbType.Double, link.BitsOutPerSecond),
+                    Parameter(NpgsqlDbType.Double, link.UtilisationPercent),
+                    Parameter(NpgsqlDbType.Double, link.ErrorsInPerSecond),
+                    Parameter(NpgsqlDbType.Double, link.ErrorsOutPerSecond),
+                    Parameter(NpgsqlDbType.Double, link.DiscardsInPerSecond),
+                    Parameter(NpgsqlDbType.Double, link.DiscardsOutPerSecond),
+                    Parameter(NpgsqlDbType.Uuid, link.CheckId),
+                    Parameter(NpgsqlDbType.TimestampTz, link.ObservedAt),
+                ],
+                cancellationToken);
+        }
     }
 
     /// <summary>

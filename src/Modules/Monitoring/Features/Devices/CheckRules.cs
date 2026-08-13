@@ -22,6 +22,18 @@ public static class CheckRules
     /// <summary>The HTTP methods a check may use. A check reads a service; it never changes one.</summary>
     public static IReadOnlyList<string> HttpMethods { get; } = ["GET", "HEAD"];
 
+    /// <summary>The metric family that reads whatever OID the operator names, and the only one needing one.</summary>
+    public const string RawOidMetric = "oid";
+
+    /// <summary>
+    /// The metric families an SNMP check may ask for, mirroring <c>METRICS</c> in
+    /// <c>services/poller/src/poller/checks/snmp.py</c> by hand — the same standing hazard
+    /// <see cref="Alerting.AlertRules.PrimaryMetric"/> carries, in the one place an operator types
+    /// the value rather than the poller reading it.
+    /// </summary>
+    public static IReadOnlyList<string> SnmpMetrics { get; } =
+        ["sysinfo", "cpu", "memory", "interfaces", RawOidMetric];
+
     /// <summary>The parameter each check type cannot run without. ICMP needs only the device address.</summary>
     public static IReadOnlyDictionary<CheckType, string> RequiredParameter { get; } =
         new Dictionary<CheckType, string>
@@ -118,6 +130,11 @@ public static class CheckRules
         CheckType type,
         IReadOnlyDictionary<string, string> parameters)
     {
+        if (type is CheckType.Snmp)
+        {
+            return SnmpProblem(parameters);
+        }
+
         if (RequiredParameter.TryGetValue(type, out var required)
             && (!parameters.TryGetValue(required, out var supplied) || string.IsNullOrWhiteSpace(supplied)))
         {
@@ -131,6 +148,37 @@ public static class CheckRules
             CheckType.Http => HttpProblem(parameters),
             _ => null,
         };
+    }
+
+    /// <summary>
+    /// What an SNMP check cannot run without, which depends on which metric family it asks for.
+    /// <para>
+    /// <c>oid</c> is required only by the family that reads a raw OID — the escape hatch for a vendor
+    /// MIB nobody has taught the poller. Every other family knows its own OIDs: <c>cpu</c> walks the
+    /// processor table, <c>interfaces</c> walks ifTable, and neither has anything for an operator to
+    /// name.
+    /// </para>
+    /// <para>
+    /// This is the narrow half of the WP-3.1 defect STATUS.md has carried since WP-3.3, fixed here
+    /// because WP-4.5's own check type is the second one it makes uncreatable: <c>oid</c> was the
+    /// required parameter for every SNMP check because it was written before the families existed, so
+    /// a <c>metric=interfaces</c> check had to carry an OID it never reads to get past validation —
+    /// and a seeded <c>metric=cpu</c> check could not be edited through its own API at all. The
+    /// remaining half of that note — whether an SNMP check with a plaintext community should be
+    /// refused outright now that WP-3.11's vault exists — is a separate decision and is untouched.
+    /// </para>
+    /// </summary>
+    private static string? SnmpProblem(IReadOnlyDictionary<string, string> parameters)
+    {
+        var family = Supplied(parameters, "metric")?.ToLowerInvariant();
+        if (family is not null && !SnmpMetrics.Contains(family))
+        {
+            return $"'metric' must be one of {string.Join(", ", SnmpMetrics)}.";
+        }
+
+        return family is null or RawOidMetric && Supplied(parameters, "oid") is null
+            ? $"A {CheckType.Snmp} check requires a '{RequiredParameter[CheckType.Snmp]}' parameter."
+            : null;
     }
 
     private static string? PortProblem(IReadOnlyDictionary<string, string> parameters, string what) =>

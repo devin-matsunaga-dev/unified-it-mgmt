@@ -220,6 +220,15 @@ var webHost = builder.AddProject<Projects.Web_Host>("web-host")
 // Publishing a host port instead sends the traffic through DCP's proxy, which binds loopback unless
 // told otherwise (the WP-2.7 trap) — reachable from the host and not from the container that needs
 // it, which is exactly how the first live walk of this package found every SNMP check timing out.
+//
+// WP-4.5 gave the healthy profile an interface table, and it uses two snmpsim variation modules that
+// were probed against this image rather than assumed. `numeric` makes the octet counters climb at a
+// configured rate, which is what a traffic rate is derived from — a static recording would report
+// every port carrying exactly nothing forever. `writecache` makes ifOperStatus on port 2 accept an
+// SNMP SET, which is how a port is taken down by hand without taking the device down; the write
+// lives in the simulator's memory, so restarting the container brings every port back up.
+// `src/AppHost/snmpsim/set-if-oper-status.py` is that SET, and it runs inside the poller's container
+// because this one deliberately publishes no port for anything on the host to aim at.
 const string SnmpSimHost = "snmpsim";
 const int SnmpSimPort = 161;
 var snmpSimDataPath = Path.Combine(builder.Environment.ContentRootPath, "snmpsim");

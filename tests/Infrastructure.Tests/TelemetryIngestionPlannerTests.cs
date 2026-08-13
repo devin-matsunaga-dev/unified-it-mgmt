@@ -1,5 +1,6 @@
 using Contracts.Events;
 
+using Modules.Monitoring.Data;
 using Modules.Monitoring.Features.Metrics;
 
 namespace Infrastructure.Tests;
@@ -132,6 +133,112 @@ public sealed class TelemetryIngestionPlannerTests
         Assert.Contains(plan.Metrics, metric => metric.MetricName == "cpu.utilisation");
         Assert.Contains(plan.Metrics, metric => metric.MetricName == "memory.utilisation");
         Assert.Single(plan.Rejected);
+    }
+
+    // ---- WP-4.5: interface samples ----
+
+    /// <summary>
+    /// The fold that makes a dozen flat samples one interface again. The numbers still reach the
+    /// hypertable — a per-interface chart is an ordinary series query — and this is the row beside
+    /// them that lets the device page draw a table without a query per port.
+    /// </summary>
+    [Fact]
+    public void Plan_ForInterfaceSamples_BuildsOneRowPerInterfaceAndStillStoresTheNumbers()
+    {
+        var plan = TelemetryIngestionPlanner.Plan(Batch(Result(metrics: [
+            new MetricSample("interface.1.name", null, "Gi0/1", null),
+            new MetricSample("interface.1.alias", null, "uplink to core", null),
+            new MetricSample("interface.1.oper_status", 1, null, null),
+            new MetricSample("interface.1.admin_status", 1, null, null),
+            new MetricSample("interface.1.speed_bits_per_second", 1_000_000_000, null, "bit/s"),
+            new MetricSample("interface.1.bits_in_per_second", 12_500_000, null, "bit/s"),
+            new MetricSample("interface.1.utilisation_percent", 1.25, null, "%"),
+            new MetricSample("interface.2.name", null, "Gi0/2", null),
+            new MetricSample("interface.2.oper_status", 2, null, null),
+        ])));
+
+        Assert.Equal([1, 2], plan.Interfaces.Select(link => link.IfIndex).Order());
+        var uplink = plan.Interfaces.Single(link => link.IfIndex == 1);
+        Assert.Equal("Gi0/1", uplink.Name);
+        Assert.Equal("uplink to core", uplink.Alias);
+        Assert.Equal(InterfaceStatus.Up, uplink.OperStatus);
+        Assert.Equal(1_000_000_000, uplink.SpeedBitsPerSecond);
+        Assert.Equal(12_500_000, uplink.BitsInPerSecond);
+        Assert.Equal(1.25, uplink.UtilisationPercent);
+        Assert.Equal(CheckId, uplink.CheckId);
+        Assert.Equal(Observed, uplink.ObservedAt);
+        Assert.Equal(InterfaceStatus.Down, plan.Interfaces.Single(link => link.IfIndex == 2).OperStatus);
+
+        // Every number is still a series, so the chart picker finds them and history survives the
+        // row being overwritten by the next poll.
+        Assert.Contains(plan.Metrics, metric => metric.MetricName == "interface.1.utilisation_percent");
+        Assert.Contains(plan.Metrics, metric => metric.MetricName == "interface.2.oper_status");
+        Assert.Empty(plan.Rejected);
+    }
+
+    /// <summary>
+    /// A port's name is not a device fact. Forty-eight of them would bury the sysDescr an inventory
+    /// card exists to show, and they have a table of their own.
+    /// </summary>
+    [Fact]
+    public void Plan_ForAnInterfacesTextSample_DoesNotAlsoBecomeAnInventoryFact()
+    {
+        var plan = TelemetryIngestionPlanner.Plan(Batch(Result(metrics: [
+            new MetricSample("interface.1.name", null, "Gi0/1", null),
+            new MetricSample("sysName", null, "core-sw-01", null),
+        ])));
+
+        var fact = Assert.Single(plan.InventoryFacts);
+        Assert.Equal("sysName", fact.Name);
+    }
+
+    /// <summary>
+    /// An IF-MIB status this platform has never heard of — a vendor's private value — must not fail
+    /// the batch that the other forty-seven ports arrived in.
+    /// </summary>
+    [Fact]
+    public void Plan_ForAStatusOutsideTheMib_ReadsAsUnknownRatherThanRefusingTheBatch()
+    {
+        var plan = TelemetryIngestionPlanner.Plan(Batch(Result(metrics: [
+            new MetricSample("interface.1.oper_status", 99, null, null),
+            new MetricSample("interface.1.name", null, "Gi0/1", null),
+        ])));
+
+        Assert.Equal(InterfaceStatus.Unknown, Assert.Single(plan.Interfaces).OperStatus);
+        Assert.Empty(plan.Rejected);
+    }
+
+    /// <summary>
+    /// A rate the poller could not measure this cycle — it has no baseline after a restart — must
+    /// read as absent rather than as the number it was ten minutes ago, which is what makes the row
+    /// mean "what the last poll found".
+    /// </summary>
+    [Fact]
+    public void Plan_ForAnInterfaceWithNoRate_LeavesTheRateEmptyRatherThanZero()
+    {
+        var plan = TelemetryIngestionPlanner.Plan(Batch(Result(metrics: [
+            new MetricSample("interface.1.name", null, "Gi0/1", null),
+            new MetricSample("interface.1.oper_status", 1, null, null),
+        ])));
+
+        var link = Assert.Single(plan.Interfaces);
+        Assert.Null(link.BitsInPerSecond);
+        Assert.Null(link.UtilisationPercent);
+    }
+
+    [Theory]
+    [InlineData("interface.0.name")]
+    [InlineData("interface.-1.name")]
+    [InlineData("interface.one.name")]
+    [InlineData("interface.1.sub.field")]
+    [InlineData("interfaces.1.name")]
+    public void Plan_ForANameThatIsNotAnInterfaceMetric_ProducesNoInterfaceRow(string metricName)
+    {
+        var plan = TelemetryIngestionPlanner.Plan(Batch(Result(metrics: [
+            new MetricSample(metricName, null, "Gi0/1", null),
+        ])));
+
+        Assert.Empty(plan.Interfaces);
     }
 
     private static DeviceTelemetryReported Batch(params DeviceCheckResult[] results) => new(

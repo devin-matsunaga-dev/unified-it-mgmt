@@ -202,10 +202,64 @@ async def test_run_oid_without_an_oid_parameter_is_refused() -> None:
         await run(FakeTransport(), metric="oid")
 
 
+# --- Interfaces ----------------------------------------------------------------------------------
+
+def if_tables() -> dict[str, dict[str, SnmpValue]]:
+    return {
+        oid.IF_TABLE: {
+            f"{oid.IF_DESCR}.1": "GigabitEthernet0/1",
+            f"{oid.IF_ADMIN_STATUS}.1": "1",
+            f"{oid.IF_OPER_STATUS}.1": "1",
+            f"{oid.IF_IN_OCTETS}.1": "1000",
+        },
+        oid.IF_X_TABLE: {
+            f"{oid.IF_HIGH_SPEED}.1": "1000",
+            f"{oid.IF_HC_IN_OCTETS}.1": "1000",
+        },
+    }
+
+
+async def test_run_interfaces_walks_both_tables_and_reports_each_link() -> None:
+    transport = FakeTransport(tables=if_tables())
+
+    outcome = await run(transport, metric="interfaces")
+
+    assert outcome.succeeded
+    # Two walks, not fourteen: a subtree each, from which the columns are picked out here.
+    assert transport.walked == [oid.IF_TABLE, oid.IF_X_TABLE]
+    assert metrics_of(outcome)["interface.1.name"] == "GigabitEthernet0/1"
+    assert metrics_of(outcome)["interface.1.oper_status"] == 1.0
+
+
+async def test_run_interfaces_reports_a_rate_on_the_second_cycle_of_one_check_object() -> None:
+    tables = if_tables()
+    transport = FakeTransport(tables=tables)
+    check = SnmpCheck(transport)
+
+    first = await check.run("10.0.0.5", {"metric": "interfaces"}, timeout_seconds=5)
+    tables[oid.IF_X_TABLE][f"{oid.IF_HC_IN_OCTETS}.1"] = "99000"
+    second = await check.run("10.0.0.5", {"metric": "interfaces"}, timeout_seconds=5)
+
+    # The check object spans cycles and the counters do not: a rate exists only because the same
+    # runner remembered the previous reading, which is why `SnmpCheck` is constructed once in
+    # `__main__` and not per check.
+    assert "interface.1.bits_in_per_second" not in metrics_of(first)
+    assert metrics_of(second)["interface.1.bits_in_per_second"] > 0
+
+
+async def test_run_interfaces_against_a_device_with_no_interface_table_fails_the_check() -> None:
+    outcome = await run(FakeTransport(), metric="interfaces")
+
+    # Not a success with nothing in it: a switch that answers SNMP but not IF-MIB is a check pointed
+    # at the wrong thing, and an empty chart says so far less clearly than a failing check does.
+    assert not outcome.succeeded
+    assert "no interfaces values" in (outcome.error or "")
+
+
 # --- Failures and target building ----------------------------------------------------------------
 
 async def test_run_an_unknown_metric_is_refused_by_name() -> None:
-    with pytest.raises(CheckError, match="sysinfo, cpu, memory, oid"):
+    with pytest.raises(CheckError, match="sysinfo, cpu, memory, interfaces, oid"):
         await run(FakeTransport(), metric="temperature")
 
 

@@ -265,6 +265,18 @@ public sealed class MonitoringDemoSeeder(MonitoringDbContext dbContext)
                     warning: 70, critical: 90),
                 Snmp(now, "Memory", "memory", plan, HealthyCommunity, plan.HealthyCredentialId, 60,
                     warning: 80, critical: 95),
+                // WP-4.5. Thirty seconds rather than sixty, for the same reason the down-able device
+                // polls at thirty: the WP's verification is to take a port down by hand and wait for
+                // the alert, and three sustained cycles at a minute is a three-minute silence with
+                // nothing on screen to say anything is happening.
+                //
+                // The thresholds are percent of link speed, judged per port — an interface check has
+                // no check-wide rule of its own. Nothing on the simulated switch runs near them
+                // (the busiest port is 10% of a gigabit), so the seeded estate stays quiet and the
+                // utilisation alert is demonstrated by lowering the threshold rather than by a port
+                // that is permanently over it.
+                Snmp(now, "Interfaces", "interfaces", plan, HealthyCommunity, plan.HealthyCredentialId, 30,
+                    warning: 70, critical: 90),
             ]);
 
         // The same simulator, read through a community that reports a device under strain. Nothing

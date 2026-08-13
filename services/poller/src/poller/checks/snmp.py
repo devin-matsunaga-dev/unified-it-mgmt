@@ -1,4 +1,4 @@
-"""SNMP v2c and v3: system inventory, processor load and memory use."""
+"""SNMP v2c and v3: system inventory, processor load, memory use and interface traffic."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Protocol
 
-from . import CheckError, CheckOutcome, Metric, describe, parameter_int
+from . import CheckError, CheckOutcome, Metric, describe, interfaces, parameter_int
 from . import oids as oid
 
 SnmpValue = str | int | float
@@ -17,8 +17,9 @@ SnmpValue = str | int | float
 SYS_INFO = "sysinfo"
 CPU = "cpu"
 MEMORY = "memory"
+INTERFACES = "interfaces"
 RAW_OID = "oid"
-METRICS = (SYS_INFO, CPU, MEMORY, RAW_OID)
+METRICS = (SYS_INFO, CPU, MEMORY, INTERFACES, RAW_OID)
 
 DEFAULT_PORT = 161
 DEFAULT_COMMUNITY = "public"
@@ -71,6 +72,10 @@ class SnmpCheck:
 
     def __init__(self, transport: SnmpTransport | None = None) -> None:
         self._transport = transport
+        # One cache for every interface check this poller runs, because a rate is a subtraction
+        # between two cycles and the check object is the only thing that spans them. Keyed by agent
+        # inside, so two devices never subtract one another's counters.
+        self._interfaces = interfaces.InterfaceRateCache()
 
     async def run(
         self,
@@ -93,6 +98,8 @@ class SnmpCheck:
                 metrics = await _read_cpu(transport, target)
             elif metric == MEMORY:
                 metrics = await _read_memory(transport, target)
+            elif metric == INTERFACES:
+                metrics = await self._read_interfaces(transport, target)
             else:
                 metrics = await _read_raw_oid(transport, target, parameters)
         except CheckError:
@@ -111,6 +118,29 @@ class SnmpCheck:
 
         return CheckOutcome(
             succeeded=True, latency_ms=latency_ms, metrics=tuple(metrics))
+
+    async def _read_interfaces(
+        self,
+        transport: SnmpTransport,
+        target: SnmpTarget,
+    ) -> list[Metric]:
+        """
+        Every interface the device has, with the rates its counters imply since the last cycle.
+
+        The clock is read once, before either walk, and used as the timestamp of both: a big table
+        takes a moment to walk and dividing by "when the second walk finished" would attribute that
+        moment's traffic to the wrong interval on every cycle.
+        """
+        at = time.monotonic()
+        if_table = await transport.walk(target, oid.IF_TABLE)
+        # An older access switch has no ifXTable at all. Its absence costs the 64-bit counters and
+        # the alias, both of which have an ifTable fallback, so it is an empty result rather than a
+        # failed check.
+        if_x_table = await transport.walk(target, oid.IF_X_TABLE)
+
+        readings = interfaces.read_table(if_table, if_x_table)
+        return interfaces.measure(
+            readings, self._interfaces, f"{target.host}:{target.port}", at)
 
 
 def build_target(

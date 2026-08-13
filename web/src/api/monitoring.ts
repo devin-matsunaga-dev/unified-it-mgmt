@@ -177,6 +177,37 @@ export type MetricSeries = {
   points: MetricPoint[]
 }
 
+/**
+ * One interface of one device, as the last poll found it. Every number is nullable because a rate is
+ * a subtraction between two polls: a poller that has seen this port once has its name and its status
+ * and no traffic, which is different from a port carrying nothing.
+ */
+export type DeviceInterface = {
+  ifIndex: number
+  name: string
+  alias: string | null
+  macAddress: string | null
+  interfaceType: number | null
+  adminStatus: InterfaceStatus
+  operStatus: InterfaceStatus
+  speedBitsPerSecond: number | null
+  bitsInPerSecond: number | null
+  bitsOutPerSecond: number | null
+  utilisationPercent: number | null
+  errorsInPerSecond: number | null
+  errorsOutPerSecond: number | null
+  discardsInPerSecond: number | null
+  discardsOutPerSecond: number | null
+  checkId: string
+  /** What to prepend to a field name for this port's series — `interface.3.`. Built by the API. */
+  metricPrefix: string
+  observedAt: string
+}
+
+/** IF-MIB's ifOperStatus and ifAdminStatus, which share one enumeration. */
+export type InterfaceStatus =
+  | 'Unknown' | 'Up' | 'Down' | 'Testing' | 'NotReported' | 'Dormant' | 'NotPresent' | 'LowerLayerDown'
+
 export type DeviceInventory = {
   deviceId: string
   facts: { name: string; value: string; observedAt: string }[]
@@ -218,6 +249,9 @@ export const monitoringApi = {
     resolution?: MetricResolution
     aggregation?: MetricAggregation
   }) => apiRequest<MetricSeries>(`/api/monitored-devices/${deviceId}/metrics/series${query(params)}`),
+
+  listInterfaces: (deviceId: string) =>
+    apiRequest<DeviceInterface[]>(`/api/monitored-devices/${deviceId}/interfaces`),
 
   getInventory: (deviceId: string) =>
     apiRequest<DeviceInventory>(`/api/monitored-devices/${deviceId}/inventory`),

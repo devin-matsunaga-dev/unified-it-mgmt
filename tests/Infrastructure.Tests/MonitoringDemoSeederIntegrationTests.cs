@@ -188,6 +188,35 @@ public sealed class MonitoringDemoSeederIntegrationTests(InfrastructureFixture i
         Assert.Contains(parsed, values => values["metric"] == "cpu");
         Assert.Contains(parsed, values => values["metric"] == "memory");
         Assert.Contains(parsed, values => values["metric"] == "sysinfo");
+        Assert.Contains(parsed, values => values["metric"] == "interfaces");
+    }
+
+    /// <summary>
+    /// WP-4.5's seeded check, and the two things about it that make the WP's verification possible on
+    /// a fresh run: it is on the switch whose simulator profile has an interface table, and it polls
+    /// often enough that taking a port down produces an alert while somebody is still watching.
+    /// </summary>
+    [Fact]
+    public async Task Seed_TheHealthySwitch_CarriesAnInterfaceCheckWithUtilisationThresholds()
+    {
+        await using var dbContext = await NewDatabaseAsync();
+        await new MonitoringDemoSeeder(dbContext).SeedAsync(Plan());
+
+        // Filtered in memory: `ParametersJson` is jsonb, and Postgres has no LIKE for one.
+        var check = Assert.Single(
+            await dbContext.CheckDefinitions.Where(candidate => candidate.Type == CheckType.Snmp).ToListAsync(),
+            candidate => candidate.ParametersJson.Contains("interfaces", StringComparison.Ordinal));
+
+        Assert.Equal(CheckType.Snmp, check.Type);
+        Assert.Equal("SNMP: Interfaces", check.Name);
+        // Three sustained cycles is the platform default, so this is a 90-second wait after a port
+        // is shut rather than a three-minute one.
+        Assert.Equal(30, check.IntervalSeconds);
+        // Percent of link speed, judged per port. The busiest simulated port runs at 10% of a
+        // gigabit, so a fresh run is quiet and the threshold has to be lowered to demonstrate it.
+        Assert.Equal(70d, check.WarningThreshold);
+        Assert.Equal(90d, check.CriticalThreshold);
+        Assert.Equal(ThresholdComparison.GreaterThan, check.Comparison);
     }
 
     /// <summary>
@@ -404,6 +433,37 @@ public sealed class MonitoringDemoSeederIntegrationTests(InfrastructureFixture i
         Assert.Equal([.. oids.OrderBy(oid => oid, new OidComparer())], oids);
     }
 
+    /// <summary>
+    /// WP-4.5's own half of the same file. The interface check walks two whole tables rather than a
+    /// column at a time, so what matters is that both subtrees are there — and that ifOperStatus on
+    /// port 2 is writable, because a SET against it is how the WP's second verification step takes a
+    /// port down without taking the device down.
+    /// </summary>
+    [Fact]
+    public void Seed_TheHealthySimulatorProfile_CarriesTheInterfaceTableAnInterfaceCheckWalks()
+    {
+        var lines = File.ReadAllLines(RepositoryFile("src", "AppHost", "snmpsim", "healthy.snmprec"))
+            .Where(line => line.Length > 0)
+            .ToArray();
+
+        // ifDescr and ifOperStatus from ifTable; ifHCInOctets and ifAlias from ifXTable.
+        Assert.Equal(4, lines.Count(line => line.StartsWith("1.3.6.1.2.1.2.2.1.2.", StringComparison.Ordinal)));
+        Assert.Equal(4, lines.Count(line => line.StartsWith("1.3.6.1.2.1.2.2.1.8.", StringComparison.Ordinal)));
+        Assert.Equal(4, lines.Count(line => line.StartsWith("1.3.6.1.2.1.31.1.1.1.6.", StringComparison.Ordinal)));
+        Assert.Equal(4, lines.Count(line => line.StartsWith("1.3.6.1.2.1.31.1.1.1.18.", StringComparison.Ordinal)));
+
+        // The counters move, or every rate the poller derives is zero and the utilisation graph the
+        // WP asks for is a flat line at the bottom of the chart.
+        Assert.Contains(lines, line =>
+            line.StartsWith("1.3.6.1.2.1.31.1.1.1.6.1|", StringComparison.Ordinal)
+            && line.Contains("numeric", StringComparison.Ordinal));
+
+        // And one port can be shut over SNMP, which is the whole verification gesture.
+        Assert.Contains(lines, line =>
+            line.StartsWith("1.3.6.1.2.1.2.2.1.8.2|", StringComparison.Ordinal)
+            && line.Contains("writecache", StringComparison.Ordinal));
+    }
+
     /// <summary>Numeric per sub-identifier, which is the order SNMP walks in — "10" is after "9".</summary>
     private sealed class OidComparer : IComparer<string>
     {
@@ -448,9 +508,10 @@ public sealed class MonitoringDemoSeederIntegrationTests(InfrastructureFixture i
         await using var dbContext = await NewDatabaseAsync();
         await new MonitoringDemoSeeder(dbContext).SeedAsync(Plan());
 
-        var checks = await dbContext.CheckDefinitions
-            .Where(check => check.Type != CheckType.Snmp)
-            .ToListAsync();
+        // Every check, SNMP included. Until WP-4.5 this had to exclude them: WP-3.1's rule required
+        // an `oid` parameter on any SNMP check, so the seeder's `metric=cpu` checks polled perfectly
+        // and were refused by their own API. That is the assertion that would have caught it.
+        var checks = await dbContext.CheckDefinitions.ToListAsync();
 
         Assert.NotEmpty(checks);
         Assert.All(checks, check => Assert.Empty(Modules.Monitoring.Features.Devices.CheckRules.Validate(

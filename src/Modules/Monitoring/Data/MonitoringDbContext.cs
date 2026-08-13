@@ -12,6 +12,7 @@ public sealed class MonitoringDbContext(DbContextOptions<MonitoringDbContext> op
     public DbSet<MonitoringConfigChange> ConfigChanges => Set<MonitoringConfigChange>();
     public DbSet<DeviceMetric> DeviceMetrics => Set<DeviceMetric>();
     public DbSet<DeviceInventoryFact> DeviceInventoryFacts => Set<DeviceInventoryFact>();
+    public DbSet<DeviceInterface> DeviceInterfaces => Set<DeviceInterface>();
     public DbSet<Alert> Alerts => Set<Alert>();
     public DbSet<ScanProfile> ScanProfiles => Set<ScanProfile>();
 

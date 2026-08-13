@@ -85,9 +85,19 @@ public sealed class AlertEngine(
 
             var policy = AlertPolicy.Resolve(options.Value, check);
             var rules = AlertRules.RuleIds(check);
-            var state = await LoadStateAsync(result.DeviceId, rules, open, cancellationToken);
+            // WP-4.5: an interface check's rules come from what it just reported rather than from
+            // how it is configured, so they are derived per result and joined onto the check's own
+            // two. Every other check type contributes an empty list here.
+            var interfaceRules = InterfaceAlertRules.RuleIds(result, check);
+            var state = await LoadStateAsync(
+                result.DeviceId,
+                [rules.Availability, rules.Threshold, .. interfaceRules],
+                open,
+                cancellationToken);
 
-            foreach (var observation in AlertRules.Observe(result, check, rules, policy, state))
+            var observations = AlertRules.Observe(result, check, rules, policy, state)
+                .Concat(InterfaceAlertRules.Observe(result, check, policy, state));
+            foreach (var observation in observations)
             {
                 var current = state[observation.RuleId];
                 var transition = AlertStateMachine.Advance(
@@ -124,19 +134,19 @@ public sealed class AlertEngine(
     }
 
     /// <summary>
-    /// State for both of a check's rules, with anything Redis has forgotten rebuilt from the open
+    /// State for every rule this result has a reading for, with anything Redis has forgotten rebuilt from the open
     /// alert row. This is what stops a Redis flush re-raising every alert in the estate: the counters
     /// and the flap history start again, but "this rule is already alerting, and it was published"
     /// comes from Postgres.
     /// </summary>
     private async Task<Dictionary<string, AlertState>> LoadStateAsync(
         Guid deviceId,
-        CheckRuleIds rules,
+        IReadOnlyList<string?> ruleIds,
         IReadOnlyDictionary<(Guid DeviceId, string RuleId), Alert> open,
         CancellationToken cancellationToken)
     {
         var state = new Dictionary<string, AlertState>(StringComparer.Ordinal);
-        foreach (var ruleId in new[] { rules.Availability, rules.Threshold })
+        foreach (var ruleId in ruleIds)
         {
             if (ruleId is null)
             {

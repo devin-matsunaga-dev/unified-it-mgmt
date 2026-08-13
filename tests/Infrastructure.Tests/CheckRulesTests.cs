@@ -93,6 +93,52 @@ public sealed class CheckRulesTests
         Assert.Contains($"A {type} check requires a '{required}' parameter.", errors["Parameters"]);
     }
 
+    /// <summary>
+    /// WP-4.5: an SNMP check that names a metric family knows its own OIDs, so <c>oid</c> is required
+    /// only by the family that reads whatever an operator names.
+    /// <para>
+    /// This is the narrow half of the WP-3.1 defect STATUS.md has carried since WP-3.3. Before it, a
+    /// <c>metric=interfaces</c> check had to carry an OID it never reads to get past validation, and
+    /// a seeded <c>metric=cpu</c> check could not be edited through its own API at all.
+    /// </para>
+    /// </summary>
+    [Theory]
+    [InlineData("cpu")]
+    [InlineData("memory")]
+    [InlineData("interfaces")]
+    [InlineData("sysinfo")]
+    public void Validate_AnSnmpCheckNamingAMetricFamily_NeedsNoOid(string family)
+    {
+        var errors = Validate(
+            CheckType.Snmp, 60, 5,
+            parameters: new Dictionary<string, string> { ["metric"] = family });
+
+        Assert.Empty(errors);
+    }
+
+    /// <summary>The escape-hatch family is the one that still needs to be told what to read.</summary>
+    [Fact]
+    public void Validate_AnSnmpRawOidCheckWithNoOid_IsRejected()
+    {
+        var errors = Validate(
+            CheckType.Snmp, 60, 5,
+            parameters: new Dictionary<string, string> { ["metric"] = "oid" });
+
+        Assert.Contains("A Snmp check requires a 'oid' parameter.", errors["Parameters"]);
+    }
+
+    [Fact]
+    public void Validate_AnSnmpCheckNamingAFamilyThePollerDoesNotHave_IsRejectedNamingThemAll()
+    {
+        var errors = Validate(
+            CheckType.Snmp, 60, 5,
+            parameters: new Dictionary<string, string> { ["metric"] = "temperature" });
+
+        Assert.Contains(
+            "'metric' must be one of sysinfo, cpu, memory, interfaces, oid.",
+            errors["Parameters"]);
+    }
+
     [Fact]
     public void Validate_RequiredParameterPresentButBlank_IsRejected()
     {

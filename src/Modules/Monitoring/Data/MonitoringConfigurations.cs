@@ -180,6 +180,31 @@ public sealed class DeviceInventoryFactConfiguration : IEntityTypeConfiguration<
     }
 }
 
+public sealed class DeviceInterfaceConfiguration : IEntityTypeConfiguration<DeviceInterface>
+{
+    public void Configure(EntityTypeBuilder<DeviceInterface> builder)
+    {
+        builder.ToTable("device_interfaces", "monitoring");
+
+        // The device's own index, not a surrogate: an interface has no identity apart from the
+        // device that has it, and a generated id would let one poll insert a second row for a port
+        // the previous poll already recorded.
+        builder.HasKey(link => new { link.DeviceId, link.IfIndex });
+        builder.Property(link => link.Name).HasMaxLength(100);
+        builder.Property(link => link.Alias).HasMaxLength(200);
+        builder.Property(link => link.MacAddress).HasMaxLength(100);
+        builder.Property(link => link.AdminStatus).HasConversion<string>().HasMaxLength(20).IsRequired();
+        builder.Property(link => link.OperStatus).HasConversion<string>().HasMaxLength(20).IsRequired();
+
+        builder.HasOne(link => link.Device).WithMany()
+            .HasForeignKey(link => link.DeviceId)
+            .OnDelete(DeleteBehavior.Cascade);
+
+        // No further index: the interface table's own read is one device's ports in index order,
+        // which the primary key already is.
+    }
+}
+
 public sealed class MetricBucketConfiguration : IEntityTypeConfiguration<MetricBucket>
 {
     /// <summary>Unmapped from any table: rows only ever arrive from a <c>FromSql</c> aggregation.</summary>

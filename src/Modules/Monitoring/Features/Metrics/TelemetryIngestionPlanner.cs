@@ -1,6 +1,7 @@
 using Contracts.Events;
 
 using Modules.Monitoring.Data;
+using Modules.Monitoring.Features.Interfaces;
 
 namespace Modules.Monitoring.Features.Metrics;
 
@@ -28,6 +29,8 @@ public static class TelemetryIngestionPlanner
     private const int MaxUnitLength = 20;
     private const int MaxFactNameLength = 100;
     private const int MaxFactValueLength = 1_000;
+    private const int MaxInterfaceNameLength = 100;
+    private const int MaxInterfaceAliasLength = 200;
 
     public static TelemetryIngestionPlan Plan(DeviceTelemetryReported telemetry)
     {
@@ -35,6 +38,7 @@ public static class TelemetryIngestionPlanner
 
         var metrics = new List<DeviceMetric>();
         var facts = new Dictionary<(Guid DeviceId, string Name), DeviceInventoryFact>();
+        var interfaces = new Dictionary<(Guid DeviceId, int IfIndex), DeviceInterface>();
         var rejected = new List<string>();
         var pollerName = telemetry.PollerName;
 
@@ -74,9 +78,27 @@ public static class TelemetryIngestionPlanner
                     continue;
                 }
 
+                // An interface sample is filed twice over: the number goes to the hypertable like any
+                // other, because a per-interface chart is an ordinary series query, and the fields
+                // that describe the port fold into its row so the interface table renders in one
+                // read. The text ones — a name, an alias — go only to the row: forty-eight ports
+                // would otherwise put a hundred and fifty entries in an inventory card built to show
+                // a device's sysDescr.
+                var interfaceField = false;
+                if (InterfaceMetricNames.TryParse(name, out var ifIndex, out var field))
+                {
+                    interfaceField = true;
+                    Fold(interfaces, result, ifIndex, field, sample);
+                }
+
                 if (hasValue)
                 {
                     metrics.Add(NewMetric(result, name, sample.Value!.Value, Truncate(sample.Unit, MaxUnitLength), pollerName));
+                    continue;
+                }
+
+                if (interfaceField)
+                {
                     continue;
                 }
 
@@ -104,8 +126,92 @@ public static class TelemetryIngestionPlanner
             }
         }
 
-        return new TelemetryIngestionPlan(metrics, [.. facts.Values], rejected);
+        return new TelemetryIngestionPlan(metrics, [.. facts.Values], [.. interfaces.Values], rejected);
     }
+
+    /// <summary>
+    /// Folds one sample into the interface row it describes, creating the row on first sight.
+    /// <para>
+    /// An interface arrives as a dozen separate samples in one batch — its name, its statuses, its
+    /// rates — and this is what makes them one record again. A field the poller did not send this
+    /// cycle is left null rather than carried over from the previous poll: the row says what the
+    /// last poll found, so a rate that stopped being measurable (a restarted poller has no baseline)
+    /// must read as absent rather than as the number it was ten minutes ago.
+    /// </para>
+    /// </summary>
+    private static void Fold(
+        Dictionary<(Guid DeviceId, int IfIndex), DeviceInterface> interfaces,
+        DeviceCheckResult result,
+        int ifIndex,
+        string field,
+        MetricSample sample)
+    {
+        var key = (result.DeviceId, ifIndex);
+        if (!interfaces.TryGetValue(key, out var link))
+        {
+            link = new DeviceInterface
+            {
+                DeviceId = result.DeviceId,
+                IfIndex = ifIndex,
+                CheckId = result.CheckId,
+                ObservedAt = result.ObservedAt.ToUniversalTime(),
+            };
+            interfaces[key] = link;
+        }
+        else if (result.ObservedAt.ToUniversalTime() < link.ObservedAt)
+        {
+            // Two checks, or two cycles of one, inside a single batch. The later reading owns the
+            // row for the same reason an inventory fact only moves forwards.
+            return;
+        }
+        else
+        {
+            link.ObservedAt = result.ObservedAt.ToUniversalTime();
+            link.CheckId = result.CheckId;
+        }
+
+        var text = sample.Text?.Trim();
+        var value = sample.Value;
+        switch (field)
+        {
+            case InterfaceMetricNames.Name: link.Name = Truncate(text, MaxInterfaceNameLength); break;
+            case InterfaceMetricNames.Alias: link.Alias = Truncate(text, MaxInterfaceAliasLength); break;
+            case InterfaceMetricNames.MacAddress: link.MacAddress = Truncate(text, MaxInterfaceNameLength); break;
+            case InterfaceMetricNames.InterfaceType: link.InterfaceType = AsInt(value); break;
+            case InterfaceMetricNames.AdminStatus: link.AdminStatus = AsStatus(value); break;
+            case InterfaceMetricNames.OperStatus: link.OperStatus = AsStatus(value); break;
+            case InterfaceMetricNames.Speed: link.SpeedBitsPerSecond = AsLong(value); break;
+            case InterfaceMetricNames.BitsIn: link.BitsInPerSecond = value; break;
+            case InterfaceMetricNames.BitsOut: link.BitsOutPerSecond = value; break;
+            case InterfaceMetricNames.Utilisation: link.UtilisationPercent = value; break;
+            case InterfaceMetricNames.ErrorsIn: link.ErrorsInPerSecond = value; break;
+            case InterfaceMetricNames.ErrorsOut: link.ErrorsOutPerSecond = value; break;
+            case InterfaceMetricNames.DiscardsIn: link.DiscardsInPerSecond = value; break;
+            case InterfaceMetricNames.DiscardsOut: link.DiscardsOutPerSecond = value; break;
+            // A field this version does not know. Its number still reaches the hypertable, so a
+            // poller ahead of the platform loses a column of the table and none of its history.
+            default: break;
+        }
+    }
+
+    /// <summary>
+    /// An IF-MIB status number as the enum, with anything outside it reading as unknown. A vendor's
+    /// private value must not fail the batch that the other forty-seven ports arrived in.
+    /// </summary>
+    private static InterfaceStatus AsStatus(double? value) =>
+        AsInt(value) is { } number && Enum.IsDefined(typeof(InterfaceStatus), number)
+            ? (InterfaceStatus)number
+            : InterfaceStatus.Unknown;
+
+    private static int? AsInt(double? value) =>
+        value is { } number && double.IsFinite(number) && number is > int.MinValue and < int.MaxValue
+            ? (int)number
+            : null;
+
+    private static long? AsLong(double? value) =>
+        value is { } number && double.IsFinite(number) && number is > long.MinValue and < long.MaxValue
+            ? (long)number
+            : null;
 
     private static DeviceMetric NewMetric(
         DeviceCheckResult result,
@@ -139,4 +245,5 @@ public static class TelemetryIngestionPlanner
 public sealed record TelemetryIngestionPlan(
     IReadOnlyList<DeviceMetric> Metrics,
     IReadOnlyList<DeviceInventoryFact> InventoryFacts,
+    IReadOnlyList<DeviceInterface> Interfaces,
     IReadOnlyList<string> Rejected);

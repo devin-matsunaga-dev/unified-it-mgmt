@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Sequence
 from typing import Any
 
@@ -69,9 +70,33 @@ class PySnmpTransport:
     for the agents it has spoken to, and sharing one across devices makes a failure on one device
     depend on what another did — which is exactly the coupling the "one dead device never blocks the
     cycle" rule exists to prevent.
+
+    Every call runs inside :func:`asyncio.to_thread`, which is WP-3.8's defect being fixed rather
+    than avoided: pysnmp does its BER/ASN.1 work synchronously, and that walk measured one SNMP
+    check stalling the event loop for 35-81 ms — long enough that `check.latency_ms` on the TCP and
+    HTTP checks sharing the cycle measured how busy the poller was rather than how fast the service
+    answered. WP-4.5's interface walk is a whole table rather than a handful of scalars, so the
+    stall it would have added is proportionally larger. `services/discovery/pysnmp_transport.py` has
+    done this since WP-4.1 and is the shape copied here.
     """
 
     async def get(self, target: SnmpTarget, requested: Sequence[str]) -> dict[str, SnmpValue]:
+        return await asyncio.to_thread(self._get, target, list(requested))
+
+    async def walk(self, target: SnmpTarget, root: str) -> dict[str, SnmpValue]:
+        return await asyncio.to_thread(self._walk, target, root)
+
+    def _get(self, target: SnmpTarget, requested: Sequence[str]) -> dict[str, SnmpValue]:
+        return asyncio.run(self._get_async(target, requested))
+
+    def _walk(self, target: SnmpTarget, root: str) -> dict[str, SnmpValue]:
+        return asyncio.run(self._walk_async(target, root))
+
+    async def _get_async(
+        self,
+        target: SnmpTarget,
+        requested: Sequence[str],
+    ) -> dict[str, SnmpValue]:
         engine = SnmpEngine()
         try:
             error_indication, error_status, error_index, var_binds = await get_cmd(
@@ -86,7 +111,7 @@ class PySnmpTransport:
         finally:
             engine.close_dispatcher()
 
-    async def walk(self, target: SnmpTarget, root: str) -> dict[str, SnmpValue]:
+    async def _walk_async(self, target: SnmpTarget, root: str) -> dict[str, SnmpValue]:
         engine = SnmpEngine()
         values: dict[str, SnmpValue] = {}
         try:

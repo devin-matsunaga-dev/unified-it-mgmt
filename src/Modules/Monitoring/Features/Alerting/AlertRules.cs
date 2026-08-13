@@ -110,6 +110,10 @@ public static class AlertRules
                     // OID itself — the same rule, so the two cannot disagree about the metric's name.
                     "oid" => Parameter(parameters, "metricName")
                         ?? (Parameter(parameters, "oid") is { } oid ? $"snmp.{oid}" : null),
+                    // An interface check has no one number. Its thresholds are per-port utilisation
+                    // and are read by `InterfaceAlertRules` instead — returning a metric here would
+                    // give it a second, check-wide rule on whichever port happened to be first.
+                    "interfaces" => null,
                     _ => null,
                 };
 

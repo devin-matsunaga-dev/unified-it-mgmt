@@ -2,8 +2,9 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { ArrowLeft, Check } from 'lucide-react'
 import { Suspense, lazy, useCallback, useEffect, useMemo, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
-import { monitoringApi, type Alert, type DeviceStatusTile } from '../../api/monitoring'
+import { monitoringApi, type Alert, type DeviceInterface, type DeviceStatusTile } from '../../api/monitoring'
 import { cn } from '../../lib/utils'
+import { DeviceInterfaceTable } from './DeviceInterfaceTable'
 import { LiveIndicator } from './LiveIndicator'
 import { metricRanges, parseSeriesKey, seriesKey, windowFor, type RangeKey } from './metricRanges'
 import { SeverityPill, formatAge, formatLocal, statusDot, statusLabel, statusTone } from './severity'
@@ -25,11 +26,13 @@ export function DeviceDetailPage() {
   const queryClient = useQueryClient()
   const [range, setRange] = useState<RangeKey>('24h')
   const [selected, setSelected] = useState<string | null>(null)
+  const [selectedInterface, setSelectedInterface] = useState<number | null>(null)
 
   const device = useQuery({ queryKey: ['monitoring', 'device', id], queryFn: () => monitoringApi.getDevice(id) })
   const tile = useQuery({ queryKey: ['monitoring', 'device-tile', id], queryFn: () => monitoringApi.statusBoard({ pageSize: 200 }).then((board) => board.items.find((item) => item.deviceId === id) ?? null) })
   const checks = useQuery({ queryKey: ['monitoring', 'checks', id], queryFn: () => monitoringApi.listChecks(id) })
   const metrics = useQuery({ queryKey: ['monitoring', 'metrics', id], queryFn: () => monitoringApi.listMetrics(id) })
+  const interfaces = useQuery({ queryKey: ['monitoring', 'interfaces', id], queryFn: () => monitoringApi.listInterfaces(id) })
   const alerts = useQuery({
     queryKey: ['monitoring', 'alerts', { deviceId: id, status: 'Open' }],
     queryFn: () => monitoringApi.listAlerts({ deviceId: id, status: 'Open', pageSize: 200 }),
@@ -45,6 +48,14 @@ export function DeviceDetailPage() {
   }, [metrics.data, selected])
 
   const chosen = selected ? parseSeriesKey(selected) : null
+
+  // Charting a port is charting one of its series, so selecting a row does what the picker does
+  // rather than opening a second kind of chart. Inbound traffic is the series it lands on: it is the
+  // one an operator means by "what is that port doing", and the picker is right there for the rest.
+  const onSelectInterface = useCallback((link: DeviceInterface) => {
+    setSelectedInterface(link.ifIndex)
+    setSelected(seriesKey(`${link.metricPrefix}bits_in_per_second`, link.checkId))
+  }, [])
   const window = useMemo(() => windowFor(range), [range])
   const series = useQuery({
     queryKey: ['monitoring', 'series', id, chosen, window],
@@ -80,6 +91,12 @@ export function DeviceDetailPage() {
   // The check behind the chosen series, for its thresholds — the lines the chart draws are the ones
   // the alert engine actually judges against, read from the check rather than typed in twice.
   const check = checks.data?.find((entry) => entry.id === chosen?.checkId)
+
+  // An interface check's thresholds are about one port's utilisation, so they are lines on that
+  // series and on no other: 90% drawn across a chart of bits per second is a line at 90 bit/s, which
+  // sits on the axis and means nothing.
+  const thresholdsApply = !chosen?.metric.startsWith('interface.')
+    || chosen.metric.endsWith('.utilisation_percent')
   const status = tile.data?.status ?? 'Unknown'
 
   if (device.isError) {
@@ -152,10 +169,29 @@ export function DeviceDetailPage() {
               : series.data
                 ? <Suspense fallback={<div aria-label="Loading chart" className="h-64 animate-pulse rounded-lg bg-slate-100 dark:bg-slate-800" />}>
                   <MetricChart series={series.data} range={range}
-                    warning={check?.warningThreshold} critical={check?.criticalThreshold} />
+                    warning={thresholdsApply ? check?.warningThreshold : null}
+                    critical={thresholdsApply ? check?.criticalThreshold : null} />
                 </Suspense>
                 : null}
     </section>
+
+    {/* Shown for a device that reports interfaces, and for one that could — an SNMP device with no
+        interface rows gets the empty state telling somebody how to poll them, while a mail server
+        with an HTTP check does not get a card about ports it will never have. */}
+    {(interfaces.isLoading || (interfaces.data ?? []).length > 0
+      || (checks.data ?? []).some((check) => check.type === 'Snmp')) && <section className="rounded-xl border border-slate-200 bg-white p-6 dark:border-slate-800 dark:bg-slate-900">
+      <div className="mb-4 flex flex-wrap items-center gap-3">
+        <h3 className="text-base font-semibold">Interfaces</h3>
+        {(interfaces.data ?? []).length > 0 && <span className="text-[13px] text-slate-500">
+          {interfaces.data!.filter((link) => link.operStatus === 'Up').length} of {interfaces.data!.length} up
+        </span>}
+      </div>
+      <DeviceInterfaceTable
+        interfaces={interfaces.data ?? []}
+        isLoading={interfaces.isLoading}
+        selectedIfIndex={selectedInterface}
+        onSelect={onSelectInterface} />
+    </section>}
 
     <section className="rounded-xl border border-slate-200 bg-white p-6 dark:border-slate-800 dark:bg-slate-900">
       <h3 className="mb-4 text-base font-semibold">Open alerts</h3>
