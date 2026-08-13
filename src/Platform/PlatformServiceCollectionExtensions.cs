@@ -157,5 +157,10 @@ public static class PlatformServiceCollectionExtensions
         // Monitoring replaces this wherever it is registered. TryAdd so that whichever registration
         // runs second does not win by accident — the same shape as `IMonitoringBroadcaster`.
         services.TryAddScoped<ICredentialUsageDirectory, NoCredentialUsageDirectory>();
+
+        // Same arrangement for the discovery match ladder's top rung (WP-4.2): Assets asks which CI is
+        // already monitored at an address, and a host without Monitoring gets an honest "none" instead
+        // of a start-up DI failure.
+        services.TryAddScoped<IMonitoredAddressDirectory, NoMonitoredAddressDirectory>();
     }
 }

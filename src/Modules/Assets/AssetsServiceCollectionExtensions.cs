@@ -1,3 +1,4 @@
+using MassTransit;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -5,6 +6,7 @@ using Modules.Assets.Data;
 using Modules.Assets.Features.BulkEdit;
 using Modules.Assets.Features.Cis;
 using Modules.Assets.Features.Contracts;
+using Modules.Assets.Features.Discovery;
 using Modules.Assets.Features.Import;
 using Modules.Assets.Features.Labels;
 using Modules.Assets.Features.Lifecycle;
@@ -36,6 +38,7 @@ public static class AssetsServiceCollectionExtensions
         services.AddScoped<IVendorService, VendorService>();
         services.AddScoped<IContractService, ContractService>();
         services.AddScoped<IContractExpiryService, ContractExpiryService>();
+        services.AddScoped<IDiscoveryReviewService, DiscoveryReviewService>();
         services.AddQuartz(quartz =>
         {
             // Daily, starting at host start-up: the pass is idempotent, so an extra run costs nothing
@@ -47,5 +50,16 @@ public static class AssetsServiceCollectionExtensions
         });
 
         return services;
+    }
+
+    /// <summary>
+    /// Assets' first consumer. Handed to Platform's single <c>AddMassTransit</c> through the same
+    /// callback Helpdesk and Monitoring use — the bus is configured once per host, while a consumer
+    /// belongs to the module that reacts (WP-3.2).
+    /// </summary>
+    public static void AddAssetsConsumers(IBusRegistrationConfigurator bus)
+    {
+        ArgumentNullException.ThrowIfNull(bus);
+        bus.AddConsumer<DeviceDiscoveredConsumer>();
     }
 }

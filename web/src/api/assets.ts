@@ -356,3 +356,134 @@ export const assetsApi = {
     apiRequest<CiCustomField>('/api/ci-custom-fields', { method: 'POST', body: JSON.stringify(input) }),
   deleteCustomField: (id: string) => apiRequest<void>(`/api/ci-custom-fields/${id}`, { method: 'DELETE' }),
 }
+
+// ---- Discovery review queue (WP-4.2) --------------------------------------------------------
+
+export type DiscoveredDeviceStatus = 'Pending' | 'Matched' | 'Approved' | 'Rejected'
+
+/**
+ * Which signal placed a discovery against a CI, strongest first. `Ambiguous` is not a match: two CIs
+ * claimed the device and the card asks a human which.
+ */
+export type DiscoveryMatchRule =
+  | 'None' | 'Ledger' | 'MonitoredAddress' | 'ManagementIp' | 'Hostname' | 'Name' | 'Ambiguous'
+
+export type DiscoveredSnmp = {
+  sysName: string | null
+  sysDescription: string | null
+  sysObjectId: string | null
+  sysLocation: string | null
+  sysContact: string | null
+  uptimeSeconds: number | null
+}
+
+export type DiscoveredNeighbour = {
+  protocol: string
+  localPort: string | null
+  remoteSystemName: string | null
+  remotePort: string | null
+  remoteAddress: string | null
+}
+
+export type DiscoveryContender = { ciId: string; name: string; type: CiType }
+
+export type DiscoveredDevice = {
+  id: string
+  identityKey: string
+  address: string
+  hostname: string | null
+  respondedToPing: boolean
+  openPorts: number[]
+  snmp: DiscoveredSnmp | null
+  neighbours: DiscoveredNeighbour[]
+  discoveryName: string
+  scanProfileId: string
+  scanProfileName: string
+  status: DiscoveredDeviceStatus
+  ciId: string | null
+  ciName: string | null
+  matchRule: DiscoveryMatchRule
+  contenders: DiscoveryContender[]
+  suggestedType: CiType
+  suggestedName: string
+  suggestedAttributes: Record<string, string>
+  firstSeenAt: string
+  lastSeenAt: string
+  sightingCount: number
+  reviewedBy: string | null
+  reviewedAt: string | null
+  reviewNote: string | null
+}
+
+export type DiscoveredDevicePage = { items: DiscoveredDevice[]; total: number; page: number; pageSize: number }
+
+/** `status` omitted means the pending queue; `all` is the explicit way to see the history. */
+export type DiscoveredDeviceFilter = {
+  status?: DiscoveredDeviceStatus | 'all'
+  search?: string
+  page?: number
+  pageSize?: number
+}
+
+export type ApproveDiscoveredDeviceInput = {
+  type?: CiType
+  name?: string
+  assetTag?: string | null
+  serialNumber?: string | null
+  description?: string | null
+  attributes?: Record<string, string>
+  ciId?: string
+  enrollMonitoring?: boolean
+  pollerGroup?: string | null
+  note?: string | null
+}
+
+/** What discovery last observed about a CI, beside — never written into — what the CMDB records. */
+export type CiDiscoveryFacts = {
+  ciId: string
+  address: string
+  hostname: string | null
+  respondedToPing: boolean
+  openPorts: number[]
+  snmp: DiscoveredSnmp | null
+  neighbours: DiscoveredNeighbour[]
+  discoveryName: string
+  scanProfileName: string
+  firstSeenAt: string
+  lastSeenAt: string
+  sightingCount: number
+}
+
+const matchRuleLabels: Record<DiscoveryMatchRule, string> = {
+  None: 'No match',
+  Ledger: 'Decided on an earlier scan',
+  MonitoredAddress: 'Already monitored at this address',
+  ManagementIp: 'Management IP on record',
+  Hostname: 'Hostname on record',
+  Name: 'CI named after this device',
+  Ambiguous: 'Two CIs claim it',
+}
+
+export function discoveryMatchRuleLabel(rule: string) {
+  return matchRuleLabels[rule as DiscoveryMatchRule] ?? rule
+}
+
+export function discoveredDeviceFilterToQuery(filter: DiscoveredDeviceFilter) {
+  const query = new URLSearchParams()
+  if (filter.status) query.set('status', filter.status)
+  if (filter.search?.trim()) query.set('search', filter.search.trim())
+  query.set('page', String(filter.page ?? 1))
+  query.set('pageSize', String(filter.pageSize ?? 25))
+  return query.toString()
+}
+
+export const discoveryApi = {
+  listDiscovered: (filter: DiscoveredDeviceFilter = {}) =>
+    apiRequest<DiscoveredDevicePage>(`/api/discovered-devices?${discoveredDeviceFilterToQuery(filter)}`),
+  getDiscovered: (id: string) => apiRequest<DiscoveredDevice>(`/api/discovered-devices/${id}`),
+  approveDiscovered: (id: string, input: ApproveDiscoveredDeviceInput) =>
+    apiRequest<DiscoveredDevice>(`/api/discovered-devices/${id}/approvals`, { method: 'POST', body: JSON.stringify(input) }),
+  rejectDiscovered: (id: string, note: string | null) =>
+    apiRequest<DiscoveredDevice>(`/api/discovered-devices/${id}/rejections`, { method: 'POST', body: JSON.stringify({ note }) }),
+  getCiDiscoveryFacts: (ciId: string) => apiRequest<CiDiscoveryFacts>(`/api/cis/${ciId}/discovery-facts`),
+}

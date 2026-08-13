@@ -2,14 +2,19 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { render, screen, waitFor, within } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { vi } from 'vitest'
-import { assetsApi, type Ci, type CiGraph, type CiRelationships, type CiTypeSchema } from '../../api/assets'
+import { assetsApi, discoveryApi, type Ci, type CiDiscoveryFacts, type CiGraph, type CiRelationships, type CiTypeSchema } from '../../api/assets'
+import { ApiError } from '../../api/client'
 import { helpdeskApi, type Ticket } from '../../api/helpdesk'
 import { formatDateOnly } from '../../lib/utils'
 import { CiDetailPage } from './CiDetailPage'
 
 vi.mock('../../api/assets', async (original) => {
   const actual = await original<typeof import('../../api/assets')>()
-  return { ...actual, assetsApi: Object.fromEntries(Object.entries(actual.assetsApi).map(([name, value]) => [name, typeof value === 'function' ? vi.fn() : value])) }
+  return {
+    ...actual,
+    assetsApi: Object.fromEntries(Object.entries(actual.assetsApi).map(([name, value]) => [name, typeof value === 'function' ? vi.fn() : value])),
+    discoveryApi: { ...actual.discoveryApi, getCiDiscoveryFacts: vi.fn() },
+  }
 })
 
 vi.mock('../../api/helpdesk', async (original) => {
@@ -70,6 +75,24 @@ const ticket: Ticket = {
   createdAt: '2026-08-05T00:00:00Z', updatedAt: '2026-08-06T00:00:00Z', categoryId: null, categoryName: null, customFields: [],
 }
 
+const discoveryFacts: CiDiscoveryFacts = {
+  ciId: host.id,
+  address: '172.18.0.9',
+  hostname: 'esx-01.corp.example',
+  respondedToPing: true,
+  openPorts: [22, 443],
+  snmp: {
+    sysName: 'esx-01', sysDescription: 'VMware ESXi 8.0.2 build-23305546',
+    sysObjectId: '1.3.6.1.4.1.6876', sysLocation: 'Head Office', sysContact: null, uptimeSeconds: 864000,
+  },
+  neighbours: [],
+  discoveryName: 'discovery-1',
+  scanProfileName: 'Local subnet sweep',
+  firstSeenAt: '2026-08-10T00:00:00Z',
+  lastSeenAt: '2026-08-13T09:00:00Z',
+  sightingCount: 7,
+}
+
 function renderPage() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   return render(<MemoryRouter initialEntries={[`/assets/${host.id}`]}><QueryClientProvider client={client}>
@@ -89,6 +112,7 @@ describe('CiDetailPage', () => {
     vi.mocked(assetsApi.getLifecycleHistory).mockResolvedValue([{ id: 'history-1', ciId: host.id, fromState: 'InStock', toState: 'Deployed', note: 'Racked', actorId: 'technician1', occurredAt: '2026-08-02T00:00:00Z' }])
     vi.mocked(assetsApi.getAssignments).mockResolvedValue([])
     vi.mocked(helpdeskApi.listTickets).mockResolvedValue({ items: [ticket], total: 1, page: 1, pageSize: 200 })
+    vi.mocked(discoveryApi.getCiDiscoveryFacts).mockResolvedValue(discoveryFacts)
   })
 
   it('shows the CI, its attributes, its owner, and its lifecycle history', async () => {
@@ -182,5 +206,27 @@ describe('CiDetailPage', () => {
 
     expect(await screen.findByText('Configuration item could not be loaded')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Try again' })).toBeInTheDocument()
+  })
+
+  it('shows what the network last said about the CI, beside what the CMDB records', async () => {
+    renderPage()
+
+    const discovery = (await screen.findByRole('heading', { name: 'Discovery' })).closest('section')!
+    // The scanned values sit here; the recorded attributes above the fold are untouched by them, which
+    // is the difference WP-4.6's drift report is built to find.
+    expect(await within(discovery).findByText('VMware ESXi 8.0.2 build-23305546')).toBeInTheDocument()
+    expect(within(discovery).getByText('172.18.0.9')).toBeInTheDocument()
+    expect(within(discovery).getByText(/7 scans/)).toBeInTheDocument()
+    expect(screen.getByText('Operating system').parentElement).toHaveTextContent('ESXi 8')
+  })
+
+  it('says plainly that no scan has reached a CI rather than showing an error', async () => {
+    vi.mocked(discoveryApi.getCiDiscoveryFacts).mockRejectedValue(new ApiError(404, 'No scan has reported this CI.'))
+
+    renderPage()
+
+    const discovery = (await screen.findByRole('heading', { name: 'Discovery' })).closest('section')!
+    expect(await within(discovery).findByText(/No scan has reported this asset/)).toBeInTheDocument()
+    expect(within(discovery).queryByRole('alert')).not.toBeInTheDocument()
   })
 })

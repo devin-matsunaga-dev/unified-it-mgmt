@@ -1,4 +1,4 @@
-import { Bell, Boxes, FileText, ChevronRight, CircleHelp, Contact, Gauge, Headphones, LogOut, Mail, Menu, MonitorCog, ScanLine, Search, Settings, ShieldCheck, Users, X } from 'lucide-react'
+import { Bell, Boxes, Radar, FileText, ChevronRight, CircleHelp, Contact, Gauge, Headphones, LogOut, Mail, Menu, MonitorCog, ScanLine, Search, Settings, ShieldCheck, Users, X } from 'lucide-react'
 import { useEffect, useRef, useState, type ComponentType } from 'react'
 import { NavLink, Outlet, useLocation } from 'react-router-dom'
 import { useAuth } from '../auth/AuthProvider'
@@ -12,6 +12,7 @@ const navigation: NavItem[] = [
   { label: 'Overview', to: '/', icon: Gauge },
   { label: 'Tickets', to: '/tickets', icon: Headphones },
   { label: 'Assets', to: '/assets', icon: Boxes, roles: ['Admin', 'Technician', 'Manager'] },
+  { label: 'Discovery', to: '/assets/discovery', icon: Radar, roles: ['Admin', 'Technician', 'Manager'] },
   { label: 'Contracts', to: '/contracts', icon: FileText, roles: ['Admin', 'Technician', 'Manager'] },
   { label: 'Scan', to: '/scan', icon: ScanLine, roles: ['Admin', 'Technician', 'Manager'] },
   { label: 'Monitoring', to: '/monitoring', icon: MonitorCog, roles: ['Admin', 'Technician', 'Manager'] },

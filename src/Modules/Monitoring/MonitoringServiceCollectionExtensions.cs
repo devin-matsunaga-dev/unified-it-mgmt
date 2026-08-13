@@ -40,6 +40,10 @@ public static class MonitoringServiceCollectionExtensions
         // TryAdd: this module is the authority on the question, and a host that registers Monitoring
         // must get the real answer.
         services.AddScoped<ICredentialUsageDirectory, CredentialUsageDirectory>();
+        // The top rung of WP-4.2's match ladder, on the same terms: this module knows what is monitored
+        // where, so a host that registers it must get the real answer rather than Platform's "none".
+        services.AddScoped<IMonitoredAddressDirectory, MonitoredAddressDirectory>();
+        services.AddScoped<IDiscoveryEnrollmentService, DiscoveryEnrollmentService>();
         services.AddScoped<IPollerHeartbeatService, PollerHeartbeatService>();
         services.AddScoped<IMetricIngestionService, MetricIngestionService>();
         services.AddScoped<IMetricQueryService, MetricQueryService>();
@@ -117,5 +121,7 @@ public static class MonitoringServiceCollectionExtensions
         // same separation WP-3.5 made between telemetry ingestion and alert evaluation.
         bus.AddConsumer<AlertRaisedNotificationConsumer>();
         bus.AddConsumer<AlertClearedNotificationConsumer>();
+        // Assets publishes it, Monitoring acts on it: the approval half of WP-4.2's review queue.
+        bus.AddConsumer<DiscoveredDeviceApprovedConsumer>();
     }
 }

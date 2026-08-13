@@ -5,6 +5,7 @@ using Modules.Assets.Data;
 using Modules.Assets.Features.BulkEdit;
 using Modules.Assets.Features.Cis;
 using Modules.Assets.Features.Contracts;
+using Modules.Assets.Features.Discovery;
 using Modules.Assets.Features.Import;
 using Modules.Assets.Features.Labels;
 using Modules.Assets.Features.Lifecycle;
@@ -61,6 +62,7 @@ builder.Services.AddPlatformServices(
     {
         MonitoringServiceCollectionExtensions.AddMonitoringConsumers(bus);
         HelpdeskServiceCollectionExtensions.AddHelpdeskConsumers(bus);
+        AssetsServiceCollectionExtensions.AddAssetsConsumers(bus);
     });
 builder.Services.AddHelpdeskServices(builder.Configuration);
 builder.Services.AddAssetsServices(builder.Configuration);
@@ -128,6 +130,7 @@ app.MapCiImportEndpoints();
 app.MapCiBulkEditEndpoints();
 app.MapContractEndpoints();
 app.MapCiLabelEndpoints();
+app.MapDiscoveryReviewEndpoints();
 app.MapMonitoredDeviceEndpoints();
 app.MapMaintenanceWindowEndpoints();
 app.MapMetricEndpoints();

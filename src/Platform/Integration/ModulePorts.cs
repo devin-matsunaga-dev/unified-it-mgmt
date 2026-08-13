@@ -97,6 +97,55 @@ public sealed class NoCredentialUsageDirectory : ICredentialUsageDirectory
         Task.FromResult(0);
 }
 
+/// <summary>
+/// Which CI, if any, is already polled at an address — the read Assets makes of Monitoring while
+/// placing a discovered device (WP-4.2).
+/// <para>
+/// It is the strongest rung of the match ladder and the only one that is not a heuristic: a monitored
+/// device exists because an operator created it and named the CI it is, so "this address is that CI" is
+/// a decision already taken rather than an inference from a naming convention. Assets may not query
+/// <c>monitoring.monitored_devices</c>, and Monitoring must not be where the CMDB's matching lives, so
+/// the read surface is here and Monitoring implements it — the same arrangement as
+/// <see cref="ICredentialUsageDirectory"/>, pointing the other way.
+/// </para>
+/// <para>
+/// Read-only and narrow, per ARCHITECTURE §3. Approving a discovery <em>into</em> monitoring is a write
+/// and therefore travels as an event instead; a port is never a write path.
+/// </para>
+/// </summary>
+public interface IMonitoredAddressDirectory
+{
+    /// <summary>
+    /// The CI monitored at any of <paramref name="addresses"/>, or null when none is. Takes the whole
+    /// candidate list — an address and a hostname for one discovery — because that is one query rather
+    /// than one per spelling of the same device.
+    /// <para>
+    /// Answers null rather than picking when two devices match different candidates: that is two CIs
+    /// claiming one discovery, which is a question for a human and not a tie this port may break.
+    /// </para>
+    /// </summary>
+    Task<Guid?> FindCiByAddressAsync(
+        IReadOnlyCollection<string> addresses,
+        CancellationToken cancellationToken);
+}
+
+/// <summary>
+/// The answer a host with no Monitoring module gives: nothing is monitored at any address.
+/// <para>
+/// Registered by <c>AddPlatformServices</c> with <c>TryAdd</c>, following
+/// <see cref="NoCredentialUsageDirectory"/>, so a seeder or a test host can construct the Assets module
+/// without Monitoring. The cost is bounded and worth stating: such a host still matches discoveries,
+/// just one rung down the ladder — it can never wrongly match, only queue for review something the top
+/// rung would have placed.
+/// </para>
+/// </summary>
+public sealed class NoMonitoredAddressDirectory : IMonitoredAddressDirectory
+{
+    public Task<Guid?> FindCiByAddressAsync(
+        IReadOnlyCollection<string> addresses,
+        CancellationToken cancellationToken) => Task.FromResult<Guid?>(null);
+}
+
 /// <summary>Enough of a ticket to say "this is already being worked on" beside an alert or another ticket.</summary>
 public sealed record LinkedTicketSummary(
     Guid TicketId,

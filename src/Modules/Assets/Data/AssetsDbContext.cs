@@ -20,6 +20,8 @@ public sealed class AssetsDbContext(DbContextOptions<AssetsDbContext> options) :
     public DbSet<Vendor> Vendors => Set<Vendor>();
     public DbSet<Contract> Contracts => Set<Contract>();
     public DbSet<ContractNotification> ContractNotifications => Set<ContractNotification>();
+    public DbSet<DiscoveredDevice> DiscoveredDevices => Set<DiscoveredDevice>();
+    public DbSet<CiDiscoveryFacts> CiDiscoveryFacts => Set<CiDiscoveryFacts>();
 
     /// <summary>Result shape of the recursive-CTE traversals; never mapped to a table.</summary>
     public DbSet<CiGraphHop> CiGraphHops => Set<CiGraphHop>();
