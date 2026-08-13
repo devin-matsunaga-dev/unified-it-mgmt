@@ -48,6 +48,16 @@ public enum ContractNotificationSubject
 {
     Contract = 1,
     Warranty = 2,
+
+    /// <summary>A licence pool's own end date, notified on the same 30/7/0 thresholds (WP-4.4).</summary>
+    License = 3,
+
+    /// <summary>
+    /// Not a clock at all: a product installed on more devices than its pools entitle. It shares this
+    /// table because it is the same kind of record — a raised notice an operator can read back — and
+    /// keys its dedupe on the day plus the size of the overage rather than on a due date.
+    /// </summary>
+    LicenseCompliance = 4,
 }
 
 /// <summary>

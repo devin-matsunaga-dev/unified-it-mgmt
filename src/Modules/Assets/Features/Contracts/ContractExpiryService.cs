@@ -54,7 +54,25 @@ public sealed class ContractExpiryService(
             })
             .ToListAsync(cancellationToken);
 
-        var candidates = new List<ContractExpiryCandidate>(contracts.Count + warranties.Count);
+        // Licence pools joined this pass in WP-4.4. A pool is a dated agreement like any other, and its
+        // renewal notice is the same 30/7/0 rule; a perpetual pool has no end date and is never a
+        // candidate. An inactive one is out of the estate, exactly as a retired asset's warranty is.
+        var licensePools = await dbContext.LicensePools
+            .Include(pool => pool.Product)
+            .Where(pool => pool.IsActive && pool.ExpiresAt != null && pool.ExpiresAt <= horizon)
+            .Select(pool => new
+            {
+                pool.Id,
+                pool.Name,
+                ProductName = pool.Product.Name,
+                Publisher = pool.Product.Publisher,
+                pool.Entitlements,
+                ExpiresAt = pool.ExpiresAt!.Value,
+            })
+            .ToListAsync(cancellationToken);
+
+        var candidates = new List<ContractExpiryCandidate>(
+            contracts.Count + warranties.Count + licensePools.Count);
         candidates.AddRange(contracts.Select(contract => new ContractExpiryCandidate(
             ContractNotificationSubject.Contract,
             contract.Id,
@@ -78,6 +96,15 @@ public sealed class ContractExpiryService(
             Recipient(
                 warranty.OwnerUserId is { } ownerId && ownerEmails.TryGetValue(ownerId, out var email) ? email : null,
                 fallbackRecipient))));
+
+        // A pool has no personal holder — nobody's laptop is the licence — so every licence notice goes
+        // to the asset mailbox.
+        candidates.AddRange(licensePools.Select(pool => new ContractExpiryCandidate(
+            ContractNotificationSubject.License,
+            pool.Id,
+            $"{pool.Entitlements}-seat licence for {pool.Publisher} {pool.ProductName} ({pool.Name})",
+            pool.ExpiresAt,
+            fallbackRecipient)));
 
         // Only the notices that could still be due are read back, so the dedupe set stays small even
         // once the table has years of history in it.
@@ -130,7 +157,7 @@ public sealed class ContractExpiryService(
                 cancellationToken);
         }
 
-        return new(today, contracts.Count, warranties.Count, raised);
+        return new(today, contracts.Count, warranties.Count, raised, licensePools.Count);
     }
 
     public async Task<IReadOnlyList<ContractNotificationResponse>> ListNotificationsAsync(

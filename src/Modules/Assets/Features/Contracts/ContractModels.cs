@@ -149,7 +149,11 @@ public sealed record ContractExpiryRunResponse(
     DateOnly RunDate,
     int ContractsScanned,
     int WarrantiesScanned,
-    IReadOnlyList<ContractNotificationResponse> Raised);
+    IReadOnlyList<ContractNotificationResponse> Raised,
+    // WP-4.4 added a third dated thing to the same pass: a licence pool expires the way an agreement
+    // does, on the same 30/7/0 thresholds, and duplicating the planner for it would have been two
+    // copies of one rule.
+    int LicensePoolsScanned = 0);
 
 public enum ContractOutcome
 {

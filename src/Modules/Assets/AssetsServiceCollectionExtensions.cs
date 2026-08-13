@@ -11,6 +11,7 @@ using Modules.Assets.Features.Import;
 using Modules.Assets.Features.Labels;
 using Modules.Assets.Features.Lifecycle;
 using Modules.Assets.Features.Relationships;
+using Modules.Assets.Features.Software;
 using Modules.Assets.Features.Topology;
 using Platform.Integration;
 using Quartz;
@@ -42,6 +43,10 @@ public static class AssetsServiceCollectionExtensions
         services.AddScoped<IDiscoveryReviewService, DiscoveryReviewService>();
         services.AddScoped<ITopologyService, TopologyService>();
         services.AddScoped<ITopologyMapService, TopologyMapService>();
+        services.AddScoped<ISoftwareCatalogService, SoftwareCatalogService>();
+        services.AddScoped<ISoftwareImportService, SoftwareImportService>();
+        services.AddScoped<ILicensingService, LicensingService>();
+        services.AddScoped<ISoftwareComplianceService, SoftwareComplianceService>();
         services.AddQuartz(quartz =>
         {
             // Daily, starting at host start-up: the pass is idempotent, so an extra run costs nothing
@@ -49,6 +54,14 @@ public static class AssetsServiceCollectionExtensions
             var jobKey = new JobKey("contract-expiry");
             quartz.AddJob<ContractExpiryJob>(builder => builder.WithIdentity(jobKey));
             quartz.AddTrigger(builder => builder.ForJob(jobKey).WithIdentity("contract-expiry-daily")
+                .StartNow().WithSimpleSchedule(schedule => schedule.WithIntervalInHours(24).RepeatForever()));
+
+            // The same shape for licence over-deployment (WP-4.4). It is a separate job rather than a
+            // second half of the expiry pass because it answers a different question: not "what runs
+            // out" but "what is installed more widely than it was bought for".
+            var complianceKey = new JobKey("software-compliance");
+            quartz.AddJob<SoftwareComplianceJob>(builder => builder.WithIdentity(complianceKey));
+            quartz.AddTrigger(builder => builder.ForJob(complianceKey).WithIdentity("software-compliance-daily")
                 .StartNow().WithSimpleSchedule(schedule => schedule.WithIntervalInHours(24).RepeatForever()));
         });
 

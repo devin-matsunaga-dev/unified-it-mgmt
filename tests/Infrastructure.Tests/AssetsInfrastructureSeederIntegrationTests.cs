@@ -110,6 +110,40 @@ public sealed class AssetsInfrastructureSeederIntegrationTests : IAsyncLifetime
     }
 
     /// <summary>
+    /// WP-4.4's fixture rides on this estate: its installs name the seeded laptops by key. Re-running
+    /// must add nothing, and the compliance case the WP verifies has to be there afterwards.
+    /// </summary>
+    [Fact]
+    public async Task SeedAsync_SoftwareInventory_IsWrittenOnceAndLandsOnTheSeededLaptops()
+    {
+        await using var scope = _application.Services.CreateAsyncScope();
+        var assets = scope.ServiceProvider.GetRequiredService<AssetsDbContext>();
+
+        await new SoftwareCatalogSeeder(assets).SeedAsync(_seeded.CiIds);
+        var second = await new SoftwareCatalogSeeder(assets).SeedAsync(_seeded.CiIds);
+
+        Assert.Equal(0, second.ProductsAdded);
+        Assert.Equal(0, second.RulesAdded);
+        Assert.Equal(0, second.InstallsAdded);
+        Assert.Equal(0, second.LicensePoolsAdded);
+
+        var seededIds = SeededCiIds;
+        var installs = await assets.InstalledSoftware
+            .Where(install => seededIds.Contains(install.CiId)).ToListAsync();
+        Assert.Equal(SoftwareCatalogSeeder.Installs.Count, installs.Count);
+        Assert.Equal(5, installs.Select(install => install.CiId).Distinct().Count());
+
+        // The over-deployment the WP verifies: three seats, five machines.
+        var acrobat = await assets.SoftwareProducts.SingleAsync(product => product.Name == "Acrobat Pro");
+        var pool = await assets.LicensePools.SingleAsync(item => item.ProductId == acrobat.Id);
+        Assert.Equal(3, pool.Entitlements);
+        Assert.Equal(5, installs.Count(install => install.ProductId == acrobat.Id));
+
+        // And the one raw name nothing claims, which is what the re-normalise demo is performed on.
+        Assert.Contains(installs, install => install.ProductId is null && install.RawName == "Contoso VPN Client");
+    }
+
+    /// <summary>
     /// The seeder writes history rows directly instead of walking <c>ICiLifecycleService</c>, so the
     /// guard it bypassed is asserted here against the transition table the migration seeded.
     /// </summary>

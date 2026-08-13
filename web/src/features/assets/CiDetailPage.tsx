@@ -10,6 +10,7 @@ import { Button } from '../../components/ui/Button'
 import { formatDateOnly } from '../../lib/utils'
 import { PriorityPill, StatusPill, formatLocal } from '../tickets/ticketUi'
 import { CiCoverageDialog } from './CiCoverageDialog'
+import { CiSoftwareCard } from '../software/CiSoftwareCard'
 import { CiDiscoveryCard } from './CiDiscoveryCard'
 import { CiFormDialog, type CiFormSubmit } from './CiFormDialog'
 import { CiLabelDialog } from './CiLabelDialog'
@@ -180,6 +181,8 @@ export function CiDetailPage() {
         </section>
 
         <CiDiscoveryCard ciId={item.id} />
+
+        <CiSoftwareCard ciId={item.id} />
 
         <section className="rounded-xl border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-slate-900">
           <h2 className="font-semibold">Check-in / out log</h2>

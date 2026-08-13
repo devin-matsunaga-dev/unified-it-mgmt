@@ -90,6 +90,11 @@ await assetsDbContext.Database.MigrateAsync();
 var assetsResult = await new AssetsInfrastructureSeeder(assetsDbContext, new DirectoryService(dbContext)).SeedAsync();
 Console.WriteLine($"Asset estate ready. Added {assetsResult.VendorsAdded} vendors, {assetsResult.ContractsAdded} contracts, {assetsResult.CustomFieldsAdded} CI custom fields, {assetsResult.CisAdded} configuration items, {assetsResult.RelationshipsAdded} relationships, {assetsResult.LifecycleEntriesAdded} lifecycle history entries, {assetsResult.AssignmentEntriesAdded} assignment log entries, and {assetsResult.CustomFieldValuesAdded} custom field values.");
 
+// Software inventory (WP-4.4) after the estate, because every install names a CI the estate has just
+// written. It takes the ids by key for the same reason the ticket links do.
+var softwareResult = await new SoftwareCatalogSeeder(assetsDbContext).SeedAsync(assetsResult.CiIds);
+Console.WriteLine($"Software inventory ready. Added {softwareResult.ProductsAdded} catalogue products, {softwareResult.RulesAdded} normalisation rules, {softwareResult.InstallsAdded} installed software rows, and {softwareResult.LicensePoolsAdded} licence pools.");
+
 var linkResult = await new HelpdeskCiLinkSeeder(helpdeskDbContext).SeedAsync(new CiLinkPlan(
     assetsResult.HardwareCiIds,
     assetsResult.NetworkCiIds,

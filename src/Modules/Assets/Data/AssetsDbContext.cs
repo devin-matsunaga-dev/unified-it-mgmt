@@ -24,6 +24,10 @@ public sealed class AssetsDbContext(DbContextOptions<AssetsDbContext> options) :
     public DbSet<CiDiscoveryFacts> CiDiscoveryFacts => Set<CiDiscoveryFacts>();
     public DbSet<TopologyMap> TopologyMaps => Set<TopologyMap>();
     public DbSet<TopologyMapNode> TopologyMapNodes => Set<TopologyMapNode>();
+    public DbSet<SoftwareProduct> SoftwareProducts => Set<SoftwareProduct>();
+    public DbSet<SoftwareNormalisationRule> SoftwareNormalisationRules => Set<SoftwareNormalisationRule>();
+    public DbSet<InstalledSoftware> InstalledSoftware => Set<InstalledSoftware>();
+    public DbSet<LicensePool> LicensePools => Set<LicensePool>();
 
     /// <summary>Result shape of the recursive-CTE traversals; never mapped to a table.</summary>
     public DbSet<CiGraphHop> CiGraphHops => Set<CiGraphHop>();

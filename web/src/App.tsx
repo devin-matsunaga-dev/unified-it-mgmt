@@ -17,6 +17,10 @@ import { DeviceDetailPage } from './features/monitoring/DeviceDetailPage'
 import { StatusBoardPage } from './features/monitoring/StatusBoardPage'
 import { PeopleListPage } from './features/people/PeopleListPage'
 import { UserDetailPage } from './features/people/UserDetailPage'
+import { LicensePoolPage } from './features/software/LicensePoolPage'
+import { SoftwareImportPage } from './features/software/SoftwareImportPage'
+import { SoftwarePage } from './features/software/SoftwarePage'
+import { SoftwareProductPage } from './features/software/SoftwareProductPage'
 import { TopologyPage } from './features/topology/TopologyPage'
 import { HomeRoute } from './pages/HomeRoute'
 import { LoginPage } from './pages/LoginPage'
@@ -47,6 +51,10 @@ export function App() {
       <Route path="assets/discovery" element={<ProtectedRoute roles={['Admin', 'Technician', 'Manager']}><DiscoveryReviewPage /></ProtectedRoute>} />
       <Route path="assets/:id" element={<ProtectedRoute roles={['Admin', 'Technician', 'Manager']}><CiDetailPage /></ProtectedRoute>} />
       <Route path="topology" element={<ProtectedRoute roles={['Admin', 'Technician', 'Manager']}><TopologyPage /></ProtectedRoute>} />
+      <Route path="software" element={<ProtectedRoute roles={['Admin', 'Technician', 'Manager']}><SoftwarePage /></ProtectedRoute>} />
+      <Route path="software/import" element={<ProtectedRoute roles={['Admin', 'Technician', 'Manager']}><SoftwareImportPage /></ProtectedRoute>} />
+      <Route path="software/licenses" element={<ProtectedRoute roles={['Admin', 'Technician', 'Manager']}><LicensePoolPage /></ProtectedRoute>} />
+      <Route path="software/products/:id" element={<ProtectedRoute roles={['Admin', 'Technician', 'Manager']}><SoftwareProductPage /></ProtectedRoute>} />
       <Route path="scan" element={<ProtectedRoute roles={['Admin', 'Technician', 'Manager']}><ScanPage /></ProtectedRoute>} />
       <Route path="contracts" element={<ProtectedRoute roles={['Admin', 'Technician', 'Manager']}><ContractListPage /></ProtectedRoute>} />
       <Route path="contracts/vendors" element={<ProtectedRoute roles={['Admin', 'Technician', 'Manager']}><VendorListPage /></ProtectedRoute>} />
