@@ -75,7 +75,11 @@ public sealed class AlertService(
                 dbContext.CheckDefinitions
                     .Where(check => check.Id == alert.CheckId)
                     .Select(check => check.Name)
-                    .FirstOrDefault()))
+                    .FirstOrDefault(),
+                // WP-5.1. A correlated subquery per row, which is what the filtered index on
+                // root_cause_alert_id exists for; on all but a root cause it counts nothing.
+                dbContext.Alerts.Count(other =>
+                    other.RootCauseAlertId == alert.Id && other.Status == AlertStatus.Open)))
             .ToListAsync(cancellationToken);
 
         var summaries = await enrichmentService.SummariseAsync(
@@ -99,7 +103,11 @@ public sealed class AlertService(
                 dbContext.CheckDefinitions
                     .Where(check => check.Id == alert.CheckId)
                     .Select(check => check.Name)
-                    .FirstOrDefault()))
+                    .FirstOrDefault(),
+                // WP-5.1. A correlated subquery per row, which is what the filtered index on
+                // root_cause_alert_id exists for; on all but a root cause it counts nothing.
+                dbContext.Alerts.Count(other =>
+                    other.RootCauseAlertId == alert.Id && other.Status == AlertStatus.Open)))
             .SingleOrDefaultAsync(cancellationToken);
         if (row is null)
         {
@@ -109,7 +117,66 @@ public sealed class AlertService(
         // The full WP-3.7 context here, open tickets included: this is one alert somebody opened, so
         // the extra port read is one query rather than one per row of a board.
         var context = await enrichmentService.DescribeAsync(row.Alert.CiId, cancellationToken);
-        return new AlertDetailResponse(Map(row, context), context.OpenTickets);
+        return new AlertDetailResponse(
+            Map(row, context),
+            context.OpenTickets,
+            await ImpactedAsync(row.Alert.Id, cancellationToken));
+    }
+
+    /// <summary>
+    /// What is filed under this alert (WP-5.1). Open only: a consequence that has recovered is no
+    /// longer part of the incident, and leaving it on the list would make an outage look larger than
+    /// it is while somebody is working through it.
+    /// </summary>
+    private async Task<IReadOnlyList<ImpactedAlertSummary>> ImpactedAsync(
+        Guid alertId,
+        CancellationToken cancellationToken)
+    {
+        var rows = await dbContext.Alerts.AsNoTracking()
+            .Where(alert => alert.RootCauseAlertId == alertId && alert.Status == AlertStatus.Open)
+            // Oldest first, which on an outage is roughly the order things fell over — deliberately
+            // not the board's worst-first, because this list is a sequence of events rather than a
+            // queue of work.
+            .OrderBy(alert => alert.RaisedAt)
+            .ThenBy(alert => alert.Id)
+            .Select(alert => new
+            {
+                alert.Id,
+                alert.DeviceId,
+                alert.CiId,
+                alert.RuleId,
+                alert.Severity,
+                alert.Suppression,
+                alert.Summary,
+                alert.RaisedAt,
+            })
+            .ToListAsync(cancellationToken);
+        if (rows.Count == 0)
+        {
+            return [];
+        }
+
+        var summaries = await enrichmentService.SummariseAsync(
+            [.. rows.Select(row => row.CiId)], cancellationToken);
+
+        return
+        [
+            .. rows.Select(row =>
+            {
+                summaries.TryGetValue(row.CiId, out var ci);
+                return new ImpactedAlertSummary(
+                    row.Id,
+                    row.DeviceId,
+                    row.CiId,
+                    ci?.CiName,
+                    ci?.CiType,
+                    row.RuleId,
+                    row.Severity,
+                    row.Suppression,
+                    row.Summary,
+                    row.RaisedAt);
+            }),
+        ];
     }
 
     public async Task<AlertActionResult> AcknowledgeAsync(
@@ -217,6 +284,8 @@ public sealed class AlertService(
             alert.ConsecutiveBreaches,
             alert.IsFlapping,
             alert.Suppression,
+            alert.RootCauseAlertId,
+            row.ImpactedCount,
             alert.RaisedAt,
             alert.LastObservedAt,
             alert.ClearedAt,
@@ -253,5 +322,5 @@ public sealed class AlertService(
     /// snapshotted on the alert, following the same rule as the CI fields — renaming a check has to
     /// reach every alert it raised, and the check row cannot leave without cascading the alert away.
     /// </summary>
-    private sealed record AlertRow(Alert Alert, string? DeviceAddress, string? CheckName);
+    private sealed record AlertRow(Alert Alert, string? DeviceAddress, string? CheckName, int ImpactedCount);
 }

@@ -1,8 +1,9 @@
 import { useQuery } from '@tanstack/react-query'
-import { Check, ExternalLink, X } from 'lucide-react'
+import { Check, ExternalLink, Network, X } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { monitoringApi } from '../../api/monitoring'
 import { Button } from '../../components/ui/Button'
+import { suppressionLabel } from './correlation'
 import { SeverityPill, formatAge, formatLocal } from './severity'
 
 /**
@@ -14,9 +15,11 @@ import { SeverityPill, formatAge, formatLocal } from './severity'
  * `/monitoring/alerts?alertId=…`, so the operator arrives on the board with this open on the alert
  * they were paged about rather than on a list they have to search.
  */
-export function AlertDetailDrawer({ alertId, onClose, onAcknowledge, acknowledging }: {
+export function AlertDetailDrawer({ alertId, onClose, onOpenAlert, onAcknowledge, acknowledging }: {
   alertId: string | null
   onClose: () => void
+  /** Re-points the drawer at another alert, so a cause and its consequences are one click apart. */
+  onOpenAlert: (id: string) => void
   onAcknowledge: (id: string) => void
   acknowledging: boolean
 }) {
@@ -30,6 +33,7 @@ export function AlertDetailDrawer({ alertId, onClose, onAcknowledge, acknowledgi
 
   const alert = detail.data?.alert
   const tickets = detail.data?.openTickets ?? []
+  const impacted = detail.data?.impacted ?? []
 
   return <div className="fixed inset-0 z-40 flex justify-end">
     <button type="button" aria-label="Close alert details" onClick={onClose}
@@ -64,8 +68,22 @@ export function AlertDetailDrawer({ alertId, onClose, onAcknowledge, acknowledgi
                 {alert.status}
               </span>
               {alert.isFlapping && <span className="rounded-md bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700 dark:bg-amber-500/15 dark:text-amber-300">Flapping</span>}
-              {alert.suppression !== 'None' && <span className="rounded-md bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-600 dark:bg-slate-500/15 dark:text-slate-400">Suppressed: {alert.suppression}</span>}
+              {suppressionLabel(alert.suppression) && <span className="rounded-md bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-600 dark:bg-slate-500/15 dark:text-slate-400">{suppressionLabel(alert.suppression)}</span>}
             </div>
+
+            {/* WP-5.1: the cause, from a consequence's point of view. One click, because the reason
+                this alert told nobody is the alert that did. */}
+            {alert.rootCauseAlertId && <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm dark:border-slate-800 dark:bg-slate-800/40">
+              <p className="text-[13px] text-slate-500">
+                {alert.suppression === 'RootCause'
+                  ? 'This did not open a ticket of its own. Something this asset depends on is failing too:'
+                  : 'Something this asset depends on is failing too:'}
+              </p>
+              <button type="button" onClick={() => onOpenAlert(alert.rootCauseAlertId!)}
+                className="mt-1 inline-flex items-center gap-1.5 font-medium text-blue-600 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 dark:text-blue-400">
+                <Network size={14} />Open the root-cause alert
+              </button>
+            </div>}
 
             <Section title="What is wrong">
               <Row label="Check" value={alert.checkName ?? alert.ruleId} />
@@ -116,6 +134,30 @@ export function AlertDetailDrawer({ alertId, onClose, onAcknowledge, acknowledgi
                   </li>)}
                 </ul>}
             </Section>
+
+            {/* The other half: what this alert is holding down. Rendered only for a cause, so an
+                ordinary alert's drawer is exactly what it was before WP-5.1. */}
+            {impacted.length > 0 && <Section title={`Suppressed under this alert (${impacted.length})`}>
+              <p className="text-[13px] text-slate-500">
+                These raised no ticket of their own. This one is the ticket.
+              </p>
+              <ul className="space-y-2">
+                {impacted.map((entry) => <li key={entry.alertId}>
+                  <button type="button" onClick={() => onOpenAlert(entry.alertId)}
+                    className="flex w-full items-center gap-2 text-left text-sm hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600">
+                    <SeverityPill severity={entry.severity} />
+                    <span className="min-w-0 truncate font-medium text-blue-600 dark:text-blue-400">
+                      {/* A CI that has left the CMDB is still listed, by id: a shorter list would
+                          under-report the size of the outage (the WP-3.7 rule). */}
+                      {entry.ciName ?? `CI ${entry.ciId}`}
+                    </span>
+                  </button>
+                  <p className="ml-1 truncate text-[13px] text-slate-500" title={entry.summary}>
+                    {entry.summary}
+                  </p>
+                </li>)}
+              </ul>
+            </Section>}
 
             <div className="border-t border-slate-200 pt-4 dark:border-slate-800">
               {alert.acknowledgedAt

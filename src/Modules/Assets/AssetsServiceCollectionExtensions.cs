@@ -36,6 +36,7 @@ public static class AssetsServiceCollectionExtensions
         services.AddScoped<ICiDirectory, CiDirectory>();
         services.AddScoped<ICiLifecycleService, CiLifecycleService>();
         services.AddScoped<ICiRelationshipService, CiRelationshipService>();
+        services.AddScoped<ICiDependencyDirectory, CiDependencyDirectory>();
         services.AddScoped<ICiImportService, CiImportService>();
         services.AddScoped<ICiBulkEditService, CiBulkEditService>();
         services.AddScoped<ICiLabelService, CiLabelService>();

@@ -48,4 +48,27 @@ public sealed class AlertOptions
     /// year ago is not still holding a key.
     /// </summary>
     public int StateTtlDays { get; set; } = 7;
+
+    /// <summary>
+    /// WP-5.1 root-cause suppression. On by default, and worth knowing how to turn off: with this
+    /// false the engine skips the dependency read entirely and every alert publishes exactly as it did
+    /// before the package — which is the state to put the platform in if correlation is ever suspected
+    /// of hiding something, because the failure it would be hiding is an outage.
+    /// </summary>
+    public bool CorrelationEnabled { get; set; } = true;
+
+    /// <summary>
+    /// How far apart two failures may have begun and still be treated as one incident. Ten minutes:
+    /// comfortably longer than the few cycles a burst takes to develop across an estate, and short
+    /// enough that a device dying this afternoon is not filed under a switch that has been down since
+    /// this morning. See <see cref="AlertCorrelator.Correlate"/> for why that distinction matters.
+    /// </summary>
+    public int CorrelationWindowSeconds { get; set; } = 600;
+
+    /// <summary>
+    /// How many dependency hops the correlation walk follows, clamped by WP-2.3's ceiling of 10. Five
+    /// matches <c>CiGraphQuery.DefaultDepth</c>, which is the depth the CI page's own dependency card
+    /// draws — so the causes this suppresses under are the ones an operator can already see.
+    /// </summary>
+    public int CorrelationMaxDepth { get; set; } = 5;
 }

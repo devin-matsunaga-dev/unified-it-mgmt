@@ -1,5 +1,5 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { BellRing, Check, CircleAlert, ShieldCheck, TriangleAlert, Waves } from 'lucide-react'
+import { BellRing, Check, CircleAlert, Network, ShieldCheck, TriangleAlert, Waves } from 'lucide-react'
 import { useCallback, useMemo, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { toast } from 'sonner'
@@ -7,6 +7,7 @@ import { monitoringApi, type Alert, type AlertFilter, type AlertPage } from '../
 import { Button } from '../../components/ui/Button'
 import { cn } from '../../lib/utils'
 import { AlertDetailDrawer } from './AlertDetailDrawer'
+import { correlationBadge, suppressionLabel } from './correlation'
 import { LiveIndicator } from './LiveIndicator'
 import { MonitoringTabs } from './MonitoringTabs'
 import { SeverityPill, formatAge, formatLocal, severityTone } from './severity'
@@ -140,6 +141,7 @@ export function AlertBoardPage() {
     </div>
 
     <AlertDetailDrawer alertId={alertId} onClose={() => openAlert(null)}
+      onOpenAlert={(id) => openAlert(id)}
       onAcknowledge={(id) => acknowledge.mutate(id)}
       acknowledging={acknowledge.isPending && acknowledge.variables === alertId} />
   </div>
@@ -151,6 +153,8 @@ function AlertRow({ alert, onOpen, onAcknowledge, acknowledging }: {
   onAcknowledge: () => void
   acknowledging: boolean
 }) {
+  const badge = correlationBadge(alert)
+  const suppressed = suppressionLabel(alert.suppression)
   return <tr className="border-b border-slate-100 last:border-0 hover:bg-slate-50 dark:border-slate-800 dark:hover:bg-slate-800/40">
     <td className="px-5 py-3 align-top"><SeverityPill severity={alert.severity} /></td>
     <td className="px-5 py-3 align-top">
@@ -166,7 +170,13 @@ function AlertRow({ alert, onOpen, onAcknowledge, acknowledging }: {
       <div className="mt-1 flex flex-wrap gap-2">
         {/* Both facts are only visible here: a flapping or muted rule publishes nothing at all. */}
         {alert.isFlapping && <span className="inline-flex items-center gap-1 rounded-md bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700 dark:bg-amber-500/15 dark:text-amber-300"><Waves size={12} />Flapping</span>}
-        {alert.suppression !== 'None' && <span className="inline-flex rounded-md bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-600 dark:bg-slate-500/15 dark:text-slate-400">Suppressed: {alert.suppression}</span>}
+        {/* WP-5.1's grouping. A cause says how much it is holding down; a consequence says it is held. */}
+        {badge && <span className={badge.tone === 'info'
+          ? 'inline-flex items-center gap-1 rounded-md bg-blue-100 px-2 py-0.5 text-xs font-medium text-blue-700 dark:bg-blue-500/15 dark:text-blue-300'
+          : 'inline-flex items-center gap-1 rounded-md bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-600 dark:bg-slate-500/15 dark:text-slate-400'}>
+          <Network size={12} />{badge.label}
+        </span>}
+        {suppressed && alert.suppression !== 'RootCause' && <span className="inline-flex rounded-md bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-600 dark:bg-slate-500/15 dark:text-slate-400">{suppressed}</span>}
       </div>
     </td>
     <td className="px-5 py-3 align-top">

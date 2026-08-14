@@ -162,5 +162,11 @@ public static class PlatformServiceCollectionExtensions
         // already monitored at an address, and a host without Monitoring gets an honest "none" instead
         // of a start-up DI failure.
         services.TryAddScoped<IMonitoredAddressDirectory, NoMonitoredAddressDirectory>();
+
+        // WP-5.1's two, on the same terms. Both fall back toward saying more rather than less: without
+        // Assets the correlator finds no dependencies and therefore suppresses nothing, and without
+        // Monitoring a root-cause ticket lists no impacted CIs and is an ordinary alert ticket.
+        services.TryAddScoped<ICiDependencyDirectory, NoCiDependencyDirectory>();
+        services.TryAddScoped<IAlertCorrelationDirectory, NoAlertCorrelationDirectory>();
     }
 }

@@ -42,6 +42,7 @@ function alert(overrides: Partial<Alert> = {}): Alert {
     ruleId: 'check:check-1:availability', metricName: 'check.success',
     severity: 'Critical', status: 'Open', summary: 'Host is unreachable',
     lastValue: 0, threshold: null, consecutiveBreaches: 3, isFlapping: false, suppression: 'None',
+    rootCauseAlertId: null, impactedCount: 0,
     raisedAt: '2026-08-11T11:00:00Z', lastObservedAt: '2026-08-11T11:05:00Z', clearedAt: null,
     pollerName: 'poller-1', acknowledgedAt: null, acknowledgedBy: null, acknowledgedByName: null,
     deviceAddress: '10.40.0.1', checkName: 'Reachability',
@@ -128,6 +129,30 @@ describe('AlertBoardPage', () => {
     expect(screen.getByText(/Suppressed: Maintenance/)).toBeInTheDocument()
   })
 
+  /**
+   * WP-5.1. The cause carries the size of the outage and the consequence says why it is quiet — an
+   * operator scanning the board has to be able to tell "this is the one" from "this is a symptom"
+   * without opening either.
+   */
+  it('marks a root cause with what it is holding down, and a consequence as held', async () => {
+    vi.mocked(monitoringApi.listAlerts).mockResolvedValue(page([
+      alert({ id: 'alert-cause', summary: 'Core switch is unreachable', impactedCount: 5 }),
+      alert({
+        id: 'alert-impacted',
+        summary: 'Host is unreachable',
+        suppression: 'RootCause',
+        rootCauseAlertId: 'alert-cause',
+      }),
+    ]))
+
+    renderBoard()
+
+    expect(await screen.findByText('Root cause · 5 impacted')).toBeInTheDocument()
+    expect(screen.getByText('Suppressed under its root cause')).toBeInTheDocument()
+    // The enum member must never reach a screen.
+    expect(screen.queryByText(/Suppressed: RootCause/)).not.toBeInTheDocument()
+  })
+
   it('says the estate is quiet rather than showing an empty table', async () => {
     vi.mocked(monitoringApi.listAlerts).mockResolvedValue(page([]))
 
@@ -170,6 +195,7 @@ describe('AlertBoardPage deep link', () => {
         ticketId: 'ticket-1', number: 'INC-000042', title: 'Switch unreachable',
         status: 'InProgress', priority: 'High', createdAt: '2026-08-11T10:00:00Z',
       }],
+      impacted: [],
     })
 
     renderBoard('/monitoring/alerts?alertId=alert-1')
@@ -179,6 +205,69 @@ describe('AlertBoardPage deep link', () => {
     // The open tickets are the half of the WP-3.7 context only this endpoint carries.
     expect(within(drawer).getByText('INC-000042')).toBeInTheDocument()
     expect(within(drawer).getByText('Open tickets for this asset (1)')).toBeInTheDocument()
+  })
+
+  /**
+   * The WP's "5 suppressed alerts visible under it", on screen. They opened no ticket of their own, so
+   * the root cause's drawer is where an operator finds out what else went down.
+   */
+  it('lists the suppressed alerts under a root cause', async () => {
+    vi.mocked(monitoringApi.listAlerts).mockResolvedValue(page([alert({ impactedCount: 2 })]))
+    vi.mocked(monitoringApi.getAlert).mockResolvedValue({
+      alert: alert({ impactedCount: 2 }),
+      openTickets: [],
+      impacted: [
+        {
+          alertId: 'alert-2', deviceId: 'device-2', ciId: 'ci-2', ciName: 'dc1-esx-01',
+          ciType: 'Server', ruleId: 'check:check-2:availability', severity: 'Critical',
+          suppression: 'RootCause', summary: 'Host is unreachable',
+          raisedAt: '2026-08-11T11:01:00Z',
+        },
+        {
+          alertId: 'alert-3', deviceId: 'device-3', ciId: 'ci-3', ciName: null,
+          ciType: null, ruleId: 'check:check-3:availability', severity: 'Warning',
+          suppression: 'RootCause', summary: 'Latency is above the warning threshold',
+          raisedAt: '2026-08-11T11:02:00Z',
+        },
+      ],
+    })
+
+    renderBoard('/monitoring/alerts?alertId=alert-1')
+
+    const drawer = await screen.findByRole('dialog', { name: 'Alert details' })
+    expect(within(drawer).getByText('Suppressed under this alert (2)')).toBeInTheDocument()
+    expect(within(drawer).getByText('dc1-esx-01')).toBeInTheDocument()
+    // A CI that has left the CMDB is still listed, by id: a shorter list would under-report the outage.
+    expect(within(drawer).getByText('CI ci-3')).toBeInTheDocument()
+  })
+
+  /** An ordinary alert's drawer is exactly what it was before WP-5.1. */
+  it('says nothing about impact on an alert that explains nothing', async () => {
+    vi.mocked(monitoringApi.listAlerts).mockResolvedValue(page([alert()]))
+    vi.mocked(monitoringApi.getAlert).mockResolvedValue({
+      alert: alert(), openTickets: [], impacted: [],
+    })
+
+    renderBoard('/monitoring/alerts?alertId=alert-1')
+
+    const drawer = await screen.findByRole('dialog', { name: 'Alert details' })
+    expect(within(drawer).queryByText(/Suppressed under this alert/)).not.toBeInTheDocument()
+  })
+
+  /** A consequence is one click from the cause that silenced it. */
+  it('opens the root-cause alert from a suppressed one', async () => {
+    const user = userEvent.setup()
+    vi.mocked(monitoringApi.listAlerts).mockResolvedValue(page([alert()]))
+    vi.mocked(monitoringApi.getAlert).mockResolvedValue({
+      alert: alert({ suppression: 'RootCause', rootCauseAlertId: 'alert-cause' }),
+      openTickets: [],
+      impacted: [],
+    })
+
+    renderBoard('/monitoring/alerts?alertId=alert-1')
+    await user.click(await screen.findByRole('button', { name: 'Open the root-cause alert' }))
+
+    await waitFor(() => expect(monitoringApi.getAlert).toHaveBeenCalledWith('alert-cause'))
   })
 
   it('does not open a drawer when no alert is named', async () => {
@@ -204,7 +293,7 @@ describe('AlertBoardPage deep link', () => {
   it('opens the drawer when an alert summary is clicked', async () => {
     const user = userEvent.setup()
     vi.mocked(monitoringApi.listAlerts).mockResolvedValue(page([alert()]))
-    vi.mocked(monitoringApi.getAlert).mockResolvedValue({ alert: alert(), openTickets: [] })
+    vi.mocked(monitoringApi.getAlert).mockResolvedValue({ alert: alert(), openTickets: [], impacted: [] })
 
     renderBoard()
     await user.click(await screen.findByRole('button', { name: 'Host is unreachable' }))

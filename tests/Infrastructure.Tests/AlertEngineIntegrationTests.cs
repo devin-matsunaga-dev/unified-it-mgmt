@@ -25,6 +25,7 @@ using Modules.Monitoring.Data;
 using Modules.Monitoring.Features.Alerting;
 
 using Platform.Data;
+using Platform.Integration;
 
 using StackExchange.Redis;
 
@@ -46,11 +47,14 @@ namespace Infrastructure.Tests;
 public sealed class AlertEngineIntegrationTests : IAsyncLifetime
 {
     private readonly AlertApplication _application;
+    private readonly InfrastructureFixture _infrastructure;
     private readonly string _redisConnectionString;
     private HttpClient? _client;
 
     public AlertEngineIntegrationTests(InfrastructureFixture infrastructure)
     {
+        ArgumentNullException.ThrowIfNull(infrastructure);
+        _infrastructure = infrastructure;
         _redisConnectionString = infrastructure.RedisConnectionString;
         _application = new AlertApplication(
             infrastructure.PostgresConnectionString,
@@ -484,6 +488,259 @@ public sealed class AlertEngineIntegrationTests : IAsyncLifetime
         Assert.Equal("CI not found in the CMDB", context.Headline);
     }
 
+    // ---- root-cause suppression (WP-5.1) ----
+
+    /// <summary>
+    /// The WP's headline verification step, end to end: a switch and three CIs that depend on it all
+    /// stop answering in the same cycle. Exactly one alert is published — the switch's — and the three
+    /// consequences are recorded, suppressed and filed under it.
+    /// <para>
+    /// All four cross their sustain count on the same reading, which is the case that makes inline
+    /// correlation necessary: at the top of that cycle no alert row exists for any of them, so a
+    /// correlator that read only committed state would find nothing to suppress under.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public async Task Evaluate_WhenASwitchAndItsDependentsFailTogether_PublishesOnlyTheSwitch()
+    {
+        var estate = await CreateDependencyTreeAsync(dependents: 3);
+
+        await DriveEstateAsync(estate, cycles: 3, cpu: 95);
+
+        // One publication for the whole outage.
+        var raised = await PublishedForEstateAsync<AlertRaised>(estate);
+        var cause = Assert.Single(raised);
+        Assert.Equal(estate.Root.DeviceId, cause.DeviceId);
+
+        // …and four alert rows, because suppression withholds the message and never the record.
+        var causeAlert = Assert.Single(await AlertsAsync(estate.Root.DeviceId, thresholdRuleOnly: true));
+        Assert.Equal(AlertSuppression.None, causeAlert.Suppression);
+        Assert.Null(causeAlert.RootCauseAlertId);
+
+        foreach (var dependent in estate.Dependents)
+        {
+            var alert = Assert.Single(await AlertsAsync(dependent.DeviceId, thresholdRuleOnly: true));
+            Assert.Equal(AlertStatus.Open, alert.Status);
+            Assert.Equal(AlertSeverity.Critical, alert.Severity);
+            Assert.Equal(AlertSuppression.RootCause, alert.Suppression);
+            Assert.Equal(causeAlert.Id, alert.RootCauseAlertId);
+        }
+    }
+
+    /// <summary>
+    /// "Stop a leaf only → normal single alert path unaffected." Nothing this CI depends on is failing,
+    /// so the correlator has nothing to say and the alert travels exactly as it did before WP-5.1.
+    /// </summary>
+    [Fact]
+    public async Task Evaluate_WhenOnlyADependentFails_PublishesItNormally()
+    {
+        var estate = await CreateDependencyTreeAsync(dependents: 1);
+        var leaf = estate.Dependents[0];
+
+        await DriveAsync(leaf, [95, 95, 95]);
+
+        var alert = Assert.Single(await AlertsAsync(leaf.DeviceId, thresholdRuleOnly: true));
+        Assert.Equal(AlertSuppression.None, alert.Suppression);
+        Assert.Null(alert.RootCauseAlertId);
+        Assert.Single(await PublishedAsync<AlertRaised>(
+            leaf.DeviceId, $"check:{leaf.CheckId}:cpu.utilisation_percent"));
+    }
+
+    /// <summary>
+    /// "Revive → all clear." The switch recovers and takes its dependents with it, and the whole
+    /// outage closes having published one raise and one clear — the three suppressed alerts announce
+    /// neither, because nobody was ever told they had started.
+    /// </summary>
+    [Fact]
+    public async Task Evaluate_WhenTheSwitchRecovers_ClearsTheCauseAndSaysNothingAboutTheConsequences()
+    {
+        var estate = await CreateDependencyTreeAsync(dependents: 2);
+        await DriveEstateAsync(estate, cycles: 3, cpu: 95);
+
+        await DriveEstateAsync(estate, cycles: 2, cpu: 10, startingCycle: 3);
+
+        var cleared = Assert.Single(await PublishedForEstateAsync<AlertCleared>(estate));
+        Assert.Equal(estate.Root.DeviceId, cleared.DeviceId);
+
+        foreach (var dependent in estate.Dependents)
+        {
+            // The row closed quietly, which is what a suppressed alert recovering has to do.
+            var alert = Assert.Single(await AlertsAsync(dependent.DeviceId, thresholdRuleOnly: true));
+            Assert.Equal(AlertStatus.Cleared, alert.Status);
+            Assert.Null(alert.RootCauseAlertId);
+        }
+    }
+
+    /// <summary>
+    /// The half of the recovery that would be easy to get wrong: the cause is fixed and a consequence
+    /// is not. It was never really a consequence, so it has to speak for itself the moment the
+    /// explanation goes away — an alert suppressed under a cause that has recovered would be an outage
+    /// nobody was ever told about.
+    /// </summary>
+    [Fact]
+    public async Task Evaluate_WhenTheCauseRecoversAndADependentDoesNot_PublishesTheDependentThen()
+    {
+        var estate = await CreateDependencyTreeAsync(dependents: 1);
+        var stubborn = estate.Dependents[0];
+        await DriveEstateAsync(estate, cycles: 3, cpu: 95);
+        Assert.Empty(await PublishedAsync<AlertRaised>(
+            stubborn.DeviceId, $"check:{stubborn.CheckId}:cpu.utilisation_percent"));
+
+        // The switch is healthy again; the server behind it is still at 95%.
+        await DriveBatchAsync(
+            [(estate.Root, 10d), (stubborn, 95d)], cycles: 3, startingCycle: 3);
+
+        Assert.Single(await PublishedAsync<AlertRaised>(
+            stubborn.DeviceId, $"check:{stubborn.CheckId}:cpu.utilisation_percent"));
+        var alert = Assert.Single(await AlertsAsync(stubborn.DeviceId, thresholdRuleOnly: true));
+        Assert.Equal(AlertSuppression.None, alert.Suppression);
+        Assert.Null(alert.RootCauseAlertId);
+    }
+
+    /// <summary>
+    /// The failure path, and the property the whole feature is built around: two CIs that depend on
+    /// each other explain each other, so neither can be named as the cause and <em>neither is
+    /// silenced</em>. A clustered pair is a real estate shape (WP-2.3 accepts cycles deliberately), and
+    /// two tickets is the correct answer — nought would be an outage nothing reported.
+    /// </summary>
+    [Fact]
+    public async Task Evaluate_WhenTwoFailingCisDependOnEachOther_PublishesBoth()
+    {
+        var first = await CreateDeviceWithCpuCheckAsync();
+        var second = await CreateDeviceWithCpuCheckAsync();
+        await RelateAsync(first.CiId, second.CiId);
+        await RelateAsync(second.CiId, first.CiId);
+
+        await DriveBatchAsync([(first, 95d), (second, 95d)], cycles: 3);
+
+        Assert.Single(await PublishedAsync<AlertRaised>(
+            first.DeviceId, $"check:{first.CheckId}:cpu.utilisation_percent"));
+        Assert.Single(await PublishedAsync<AlertRaised>(
+            second.DeviceId, $"check:{second.CheckId}:cpu.utilisation_percent"));
+        Assert.All(
+            await AlertsAsync(first.DeviceId, thresholdRuleOnly: true),
+            alert => Assert.Equal(AlertSuppression.None, alert.Suppression));
+    }
+
+    /// <summary>
+    /// Correlation reads the CMDB through a port, and a CI with no relationships at all is the normal
+    /// case on most estates. Two unrelated devices failing at once are two incidents and two tickets.
+    /// </summary>
+    [Fact]
+    public async Task Evaluate_WhenTwoUnrelatedDevicesFail_PublishesBoth()
+    {
+        var first = await CreateDeviceWithCpuCheckAsync();
+        var second = await CreateDeviceWithCpuCheckAsync();
+
+        await DriveBatchAsync([(first, 95d), (second, 95d)], cycles: 3);
+
+        Assert.Single(await PublishedAsync<AlertRaised>(
+            first.DeviceId, $"check:{first.CheckId}:cpu.utilisation_percent"));
+        Assert.Single(await PublishedAsync<AlertRaised>(
+            second.DeviceId, $"check:{second.CheckId}:cpu.utilisation_percent"));
+    }
+
+    /// <summary>
+    /// The kill switch, on a host of its own. This is the setting to reach for if correlation is ever
+    /// suspected of hiding something, so "off really means off" has to be a test rather than a claim:
+    /// the same estate that produces one publication above produces two here, with no grouping
+    /// recorded on either row.
+    /// <para>
+    /// Found missing by the hand-verification walk on 2026-08-14, which exercised the flag live and
+    /// noticed nothing automated covered it.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public async Task Evaluate_WithCorrelationDisabled_PublishesEveryAlertAndGroupsNothing()
+    {
+        var estate = await CreateDependencyTreeAsync(dependents: 1);
+        await using var uncorrelated = new AlertApplication(
+            _infrastructure.PostgresConnectionString,
+            _infrastructure.RabbitMqConnectionString,
+            _infrastructure.RedisConnectionString,
+            _infrastructure.MinioConnectionString,
+            new Dictionary<string, string?> { ["Monitoring:Alerting:CorrelationEnabled"] = "false" });
+
+        await DriveBatchAsync(
+            [.. estate.All.Select(device => (device, 95d))], cycles: 3, host: uncorrelated);
+
+        foreach (var device in estate.All)
+        {
+            var alert = Assert.Single(await AlertsAsync(device.DeviceId, thresholdRuleOnly: true));
+            Assert.Equal(AlertSuppression.None, alert.Suppression);
+            Assert.Null(alert.RootCauseAlertId);
+            Assert.Single(await PublishedAsync<AlertRaised>(
+                device.DeviceId, $"check:{device.CheckId}:cpu.utilisation_percent"));
+        }
+    }
+
+    /// <summary>
+    /// The other side of the port: what a root-cause ticket reads to list the CIs an outage took with
+    /// it. Open alerts only, so a consequence that recovers drops off it.
+    /// </summary>
+    [Fact]
+    public async Task ImpactedBy_ForARootCauseAlert_ListsWhatIsSuppressedUnderIt()
+    {
+        var estate = await CreateDependencyTreeAsync(dependents: 2);
+        await DriveEstateAsync(estate, cycles: 3, cpu: 95);
+        var cause = Assert.Single(await AlertsAsync(estate.Root.DeviceId, thresholdRuleOnly: true));
+
+        await using var scope = _application.Services.CreateAsyncScope();
+        var impacted = await scope.ServiceProvider.GetRequiredService<IAlertCorrelationDirectory>()
+            .GetImpactedByAsync(cause.Id, CancellationToken.None);
+
+        Assert.Equal(2, impacted.Count);
+        Assert.Equal(
+            [.. estate.Dependents.Select(dependent => dependent.CiId).Order()],
+            [.. impacted.Select(entry => entry.CiId).Order()]);
+        Assert.All(impacted, entry => Assert.Equal("Critical", entry.Severity));
+    }
+
+    /// <summary>
+    /// The Assets side of the same arrangement, over a real graph: the port answers with both ends
+    /// inside the set it was asked about and never with a healthy dependency, because the caller is
+    /// only ever asking about things that are already broken.
+    /// </summary>
+    [Fact]
+    public async Task Dependencies_AmongAFailingSet_ReportsOnlyThePairsInsideIt()
+    {
+        var switchCi = await CreateCiAsync();
+        var host = await CreateCiAsync();
+        var vm = await CreateCiAsync();
+        var bystander = await CreateCiAsync();
+        await RelateAsync(host.Id, switchCi.Id);
+        await RelateAsync(vm.Id, host.Id);
+
+        await using var scope = _application.Services.CreateAsyncScope();
+        var links = await scope.ServiceProvider.GetRequiredService<ICiDependencyDirectory>()
+            .GetDependenciesAmongAsync([switchCi.Id, host.Id, vm.Id], maxDepth: 5, CancellationToken.None);
+
+        // host→switch, vm→host, and vm→switch two hops away: the walk is transitive, which is what
+        // lets the correlator file a whole chain under its far end without walking it itself.
+        Assert.Equal(3, links.Count);
+        Assert.Contains(links, link => link.CiId == host.Id && link.DependsOnCiId == switchCi.Id && link.Depth == 1);
+        Assert.Contains(links, link => link.CiId == vm.Id && link.DependsOnCiId == host.Id && link.Depth == 1);
+        Assert.Contains(links, link => link.CiId == vm.Id && link.DependsOnCiId == switchCi.Id && link.Depth == 2);
+        Assert.DoesNotContain(links, link => link.CiId == bystander.Id || link.DependsOnCiId == bystander.Id);
+    }
+
+    /// <summary>
+    /// A set of one cannot contain a dependency, and the port says so without going to the database —
+    /// which is the shape of almost every call, because almost every estate has one thing wrong at a
+    /// time.
+    /// </summary>
+    [Fact]
+    public async Task Dependencies_ForASingleCi_AnswersNothing()
+    {
+        var ci = await CreateCiAsync();
+
+        await using var scope = _application.Services.CreateAsyncScope();
+        var links = await scope.ServiceProvider.GetRequiredService<ICiDependencyDirectory>()
+            .GetDependenciesAmongAsync([ci.Id], maxDepth: 5, CancellationToken.None);
+
+        Assert.Empty(links);
+    }
+
     [Fact]
     public async Task Evaluate_WithNoTelemetry_Throws()
     {
@@ -498,6 +755,12 @@ public sealed class AlertEngineIntegrationTests : IAsyncLifetime
 
     private sealed record DeviceFixture(Guid DeviceId, Guid CiId, Guid CheckId, string Address);
 
+    /// <summary>A cause and the devices whose CIs depend on it (WP-5.1).</summary>
+    private sealed record EstateFixture(DeviceFixture Root, IReadOnlyList<DeviceFixture> Dependents)
+    {
+        public IEnumerable<DeviceFixture> All => [Root, .. Dependents];
+    }
+
     private static readonly DateTimeOffset Base = DateTimeOffset.UtcNow.AddHours(-1);
 
     private static DateTimeOffset Now(int cycle) => Base.AddMinutes(cycle);
@@ -511,6 +774,78 @@ public sealed class AlertEngineIntegrationTests : IAsyncLifetime
                 Guid.CreateVersion7(), Now(cycle), "poller-1", "default", cycle,
                 [Reading(fixture, fixture.CheckId, Now(cycle), readings[cycle])]));
         }
+    }
+
+    /// <summary>
+    /// A switch and the devices that depend on it: one CI per device, and a relationship pointing from
+    /// each dependent to the switch, which by WP-2.3's convention is "this needs that".
+    /// </summary>
+    private async Task<EstateFixture> CreateDependencyTreeAsync(int dependents)
+    {
+        var root = await CreateDeviceWithCpuCheckAsync();
+        var behind = new List<DeviceFixture>(dependents);
+        for (var index = 0; index < dependents; index++)
+        {
+            var dependent = await CreateDeviceWithCpuCheckAsync();
+            await RelateAsync(dependent.CiId, root.CiId);
+            behind.Add(dependent);
+        }
+
+        return new EstateFixture(root, behind);
+    }
+
+    /// <summary>"<paramref name="sourceCiId"/> needs <paramref name="targetCiId"/>" — WP-2.3's direction.</summary>
+    private async Task RelateAsync(Guid sourceCiId, Guid targetCiId)
+    {
+        using var request = Authenticated(HttpMethod.Post, $"/api/cis/{sourceCiId}/relationships");
+        request.Content = JsonContent.Create(new { targetCiId, type = "DependsOn" });
+        using var response = await _client!.SendAsync(request);
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+    }
+
+    private Task DriveEstateAsync(EstateFixture estate, int cycles, double cpu, int startingCycle = 0) =>
+        DriveBatchAsync(
+            [.. estate.All.Select(device => (device, cpu))], cycles, startingCycle);
+
+    /// <summary>
+    /// Several devices in <em>one</em> telemetry batch, which is what a poller actually publishes: one
+    /// message per cycle carrying every device it polled (WP-3.3). Driving them as separate batches
+    /// would be a different test — and an easier one, because the second batch would find the first
+    /// device's alert already committed.
+    /// </summary>
+    private async Task DriveBatchAsync(
+        IReadOnlyList<(DeviceFixture Device, double Cpu)> devices,
+        int cycles,
+        int startingCycle = 0,
+        AlertApplication? host = null)
+    {
+        for (var cycle = startingCycle; cycle < startingCycle + cycles; cycle++)
+        {
+            var observedAt = Now(cycle);
+            await EvaluateAsync(
+                new DeviceTelemetryReported(
+                    Guid.CreateVersion7(), observedAt, "poller-1", "default", cycle,
+                    [.. devices.Select(entry => Reading(entry.Device, entry.Device.CheckId, observedAt, entry.Cpu))]),
+                host);
+        }
+    }
+
+    /// <summary>
+    /// What this estate published, scoped to its own devices. The Platform outbox is shared by the
+    /// whole collection, so counting messages globally would pass or fail on test order — the same
+    /// trap the per-rule reads below avoid.
+    /// </summary>
+    private async Task<IReadOnlyList<TEvent>> PublishedForEstateAsync<TEvent>(EstateFixture estate)
+        where TEvent : class
+    {
+        var published = new List<TEvent>();
+        foreach (var device in estate.All)
+        {
+            published.AddRange(await PublishedAsync<TEvent>(
+                device.DeviceId, $"check:{device.CheckId}:cpu.utilisation_percent"));
+        }
+
+        return published;
     }
 
     private async Task DriveFailuresAsync(DeviceFixture fixture, int cycles)
@@ -539,9 +874,9 @@ public sealed class AlertEngineIntegrationTests : IAsyncLifetime
         Succeeded: true, LatencyMs: 4, Error: null,
         Metrics: [new MetricSample("cpu.utilisation_percent", cpu, null, "%")]);
 
-    private async Task<int> EvaluateAsync(DeviceTelemetryReported telemetry)
+    private async Task<int> EvaluateAsync(DeviceTelemetryReported telemetry, AlertApplication? host = null)
     {
-        await using var scope = _application.Services.CreateAsyncScope();
+        await using var scope = (host ?? _application).Services.CreateAsyncScope();
         return await scope.ServiceProvider.GetRequiredService<IAlertEngine>()
             .EvaluateAsync(telemetry, CancellationToken.None);
     }
@@ -778,16 +1113,24 @@ public sealed class AlertEngineIntegrationTests : IAsyncLifetime
         private readonly string _redisConnectionString;
         private readonly string _minioConnectionString;
 
+        /// <summary>
+        /// Settings this host overrides on top of the defaults below — how a test spins a second host
+        /// with the platform tuned differently, following `TopologyApiIntegrationTests`' node budget.
+        /// </summary>
+        private readonly IReadOnlyDictionary<string, string?> _overrides;
+
         public AlertApplication(
             string connectionString,
             string rabbitMqConnectionString,
             string redisConnectionString,
-            string minioConnectionString)
+            string minioConnectionString,
+            IReadOnlyDictionary<string, string?>? overrides = null)
         {
             _connectionString = connectionString;
             _rabbitMqConnectionString = rabbitMqConnectionString;
             _redisConnectionString = redisConnectionString;
             _minioConnectionString = minioConnectionString;
+            _overrides = overrides ?? new Dictionary<string, string?>();
             // Both as environment variables as well as in-memory configuration: Aspire's
             // AddNpgsqlDataSource and AddRedisClient read the builder's configuration while the host
             // is being built, which is before WebApplicationFactory's ConfigureAppConfiguration
@@ -820,6 +1163,9 @@ public sealed class AlertEngineIntegrationTests : IAsyncLifetime
                     ["Platform:EnableMessageBus"] = "false",
                     ["Platform:EnableScheduler"] = "false",
                 }));
+            // After the defaults, so a test can replace one of them.
+            builder.ConfigureAppConfiguration(configuration =>
+                configuration.AddInMemoryCollection(_overrides));
             builder.ConfigureServices(services =>
             {
                 services.RemoveAll<IHostedService>();

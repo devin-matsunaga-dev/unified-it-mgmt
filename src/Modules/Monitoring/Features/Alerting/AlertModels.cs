@@ -35,6 +35,18 @@ public sealed record AlertListRequest(
 /// still <c>Open</c> here: a muted rule that recovers keeps its row until suppression lifts and the
 /// next reading reconciles it (WP-3.5).
 /// </param>
+/// <param name="RootCauseAlertId">
+/// The alert this one is filed under, while something its CI depends on is failing too (WP-5.1); null
+/// for an alert that explains only itself, which is most of them. Present independently of
+/// <paramref name="Suppression"/> on purpose: an alert that had already been published when the cause
+/// appeared keeps its own ticket and still shows the grouping, because "related to that" is true
+/// whether or not anybody was told.
+/// </param>
+/// <param name="ImpactedCount">
+/// How many open alerts are filed under this one — zero for all but a root cause. Counted rather than
+/// listed, because a board row has space for a number; the alerts themselves are on
+/// <see cref="AlertDetailResponse"/>.
+/// </param>
 public sealed record AlertResponse(
     Guid Id,
     Guid DeviceId,
@@ -50,6 +62,8 @@ public sealed record AlertResponse(
     int ConsecutiveBreaches,
     bool IsFlapping,
     AlertSuppression Suppression,
+    Guid? RootCauseAlertId,
+    int ImpactedCount,
     DateTimeOffset RaisedAt,
     DateTimeOffset LastObservedAt,
     DateTimeOffset? ClearedAt,
@@ -76,9 +90,32 @@ public sealed record AlertResponse(
 /// One alert with the whole WP-3.7 context, including what is already being worked on for its CI.
 /// This is the "shown on alert board" half that WP-3.7 recorded as belonging here.
 /// </summary>
+/// <param name="Impacted">
+/// The open alerts filed under this one (WP-5.1) — the five suppressed alerts an operator expects to
+/// find under the one root-cause ticket. Empty for every alert that is not a cause, and read here
+/// rather than on the list because it is a query per alert.
+/// </param>
 public sealed record AlertDetailResponse(
     AlertResponse Alert,
-    IReadOnlyList<Platform.Integration.LinkedTicketSummary> OpenTickets);
+    IReadOnlyList<Platform.Integration.LinkedTicketSummary> OpenTickets,
+    IReadOnlyList<ImpactedAlertSummary> Impacted);
+
+/// <summary>
+/// One alert suppressed underneath another: enough to name the CI and say what is wrong with it,
+/// without the whole WP-3.7 enrichment a board row carries.
+/// </summary>
+/// <param name="CiName">Null when the CI has left the CMDB; the row is still listed, by id.</param>
+public sealed record ImpactedAlertSummary(
+    Guid AlertId,
+    Guid DeviceId,
+    Guid CiId,
+    string? CiName,
+    string? CiType,
+    string RuleId,
+    AlertSeverity Severity,
+    AlertSuppression Suppression,
+    string Summary,
+    DateTimeOffset RaisedAt);
 
 public sealed record AlertPageResponse(
     IReadOnlyList<AlertResponse> Items,

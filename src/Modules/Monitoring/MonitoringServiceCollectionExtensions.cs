@@ -52,6 +52,7 @@ public static class MonitoringServiceCollectionExtensions
         services.AddScoped<IAlertStateStore, RedisAlertStateStore>();
         services.AddScoped<IAlertEnrichmentService, AlertEnrichmentService>();
         services.AddScoped<IAlertEngine, AlertEngine>();
+        services.AddScoped<IAlertCorrelationDirectory, AlertCorrelationDirectory>();
         services.AddScoped<IAlertService, AlertService>();
         services.AddScoped<IStatusBoardService, StatusBoardService>();
         services.AddScoped<IMonitoringLiveUpdateService, MonitoringLiveUpdateService>();

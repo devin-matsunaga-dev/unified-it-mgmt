@@ -34,6 +34,9 @@ public sealed class AssetsDbContext(DbContextOptions<AssetsDbContext> options) :
     /// <summary>Result shape of the recursive-CTE traversals; never mapped to a table.</summary>
     public DbSet<CiGraphHop> CiGraphHops => Set<CiGraphHop>();
 
+    /// <summary>Result shape of the WP-5.1 correlation traversal; never mapped to a table.</summary>
+    public DbSet<CiDependencyHop> CiDependencyHops => Set<CiDependencyHop>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.HasDefaultSchema("assets");
@@ -41,7 +44,8 @@ public sealed class AssetsDbContext(DbContextOptions<AssetsDbContext> options) :
 
         foreach (var entity in modelBuilder.Model.GetEntityTypes())
         {
-            // Query-result shapes (CiGraphHop) map to no table, so only rename the ones that do.
+            // Query-result shapes (CiGraphHop, CiDependencyHop) map to no table, so only rename the
+            // ones that do.
             if (entity.GetTableName() is { } tableName)
             {
                 entity.SetTableName(ToSnakeCase(tableName));

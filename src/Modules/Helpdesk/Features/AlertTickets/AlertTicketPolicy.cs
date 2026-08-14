@@ -20,6 +20,17 @@ public sealed record AlertCiContext(CiSummary? Ci, IReadOnlyList<LinkedTicketSum
     public static readonly AlertCiContext Unknown = new(null, []);
 }
 
+/// <summary>
+/// One CI that is failing because the alert being ticketed is failing (WP-5.1), as the root-cause
+/// ticket names it.
+/// </summary>
+/// <param name="Name">
+/// Read through <see cref="ICiDirectory"/> at composition time, or null for a CI the CMDB no longer
+/// holds — in which case the id is printed, because "something else went down and I cannot tell you
+/// what" is still worth saying.
+/// </param>
+public sealed record ImpactedCi(Guid CiId, string? Name, string? Type, string Summary);
+
 /// <summary>What an alert becomes when it is written down as a ticket.</summary>
 public sealed record AlertTicketDraft(
     string Title,
@@ -54,7 +65,18 @@ public static class AlertTicketPolicy
             ? (TicketLevel.High, TicketLevel.High)
             : (TicketLevel.Medium, TicketLevel.Medium);
 
-    public static AlertTicketDraft Compose(AlertRaised alert, AlertCiContext context)
+    /// <summary>
+    /// How many affected CIs the description lists by name before it starts counting. Twenty rather
+    /// than WP-3.7's five for related tickets, because there the list was context beside the point and
+    /// here it <em>is</em> the point — but a core switch can take a hundred CIs with it, and a ticket
+    /// whose description is a hundred lines of inventory is one nobody reads to the end.
+    /// </summary>
+    private const int ImpactedCiLimit = 20;
+
+    public static AlertTicketDraft Compose(
+        AlertRaised alert,
+        AlertCiContext context,
+        IReadOnlyList<ImpactedCi>? impacted = null)
     {
         ArgumentNullException.ThrowIfNull(alert);
         ArgumentNullException.ThrowIfNull(context);
@@ -73,10 +95,63 @@ public static class AlertTicketPolicy
             $"Rule: {alert.RuleId}",
             string.Empty,
             CmdbBlock(alert.CiId, context),
+            ImpactBlock(impacted),
             string.Empty,
             "Opened automatically by monitoring. It resolves itself when the alert clears.");
         return new AlertTicketDraft(title, Truncate(description, 10_000), urgency, impact);
     }
+
+    /// <summary>
+    /// The CIs this outage took with it (WP-5.1) — the half of "open ONE root-cause ticket listing
+    /// affected CIs" that makes the one ticket enough. Each of these has an alert of its own that was
+    /// deliberately not published, so this list is the only place they are written down for whoever
+    /// picks the ticket up.
+    /// <para>
+    /// Empty for the overwhelming majority of alerts, which explain nothing but themselves, and it
+    /// contributes no heading at all in that case — a ticket that said "Affected: none" would invite
+    /// the reader to wonder what was meant to be there.
+    /// </para>
+    /// <para>
+    /// Dated rather than live, like the CMDB block above it: these are the CIs that were failing when
+    /// the ticket was opened. One of them recovering does not rewrite the description, and the alert
+    /// board is where the current grouping is read.
+    /// </para>
+    /// </summary>
+    public static string ImpactBlock(IReadOnlyList<ImpactedCi>? impacted)
+    {
+        if (impacted is null || impacted.Count == 0)
+        {
+            return string.Empty;
+        }
+
+        var lines = new List<string>(impacted.Count + 3)
+        {
+            string.Empty,
+            impacted.Count == 1
+                ? "Affected by this (1 CI, its own alert suppressed under this one)"
+                : $"Affected by this ({impacted.Count} CIs, their own alerts suppressed under this one)",
+        };
+
+        lines.AddRange(impacted
+            .Take(ImpactedCiLimit)
+            .Select(ci => $"- {Describe(ci)}: {ci.Summary}"));
+
+        if (impacted.Count > ImpactedCiLimit)
+        {
+            lines.Add($"- …and {impacted.Count - ImpactedCiLimit} more, listed on the alert board.");
+        }
+
+        return string.Join(Environment.NewLine, lines);
+    }
+
+    private static string Describe(ImpactedCi ci) => ci switch
+    {
+        { Name: { Length: > 0 } name, Type: { Length: > 0 } type } => $"{name} ({type})",
+        { Name: { Length: > 0 } name } => name,
+        // Named by id rather than omitted: the CI has gone from the CMDB since the alert was raised,
+        // and a shorter list would misreport the size of the outage.
+        _ => $"CI {ci.CiId} (no longer in the CMDB)",
+    };
 
     /// <summary>
     /// The CMDB context WP-3.7 asks the ticket to carry, written into the description so the ticket

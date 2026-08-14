@@ -43,6 +43,7 @@ public sealed class AlertTicketAutomation(
     ITicketCiLinkService ciLinkService,
     ICiDirectory ciDirectory,
     ITicketLinkDirectory ticketLinkDirectory,
+    IAlertCorrelationDirectory alertCorrelationDirectory,
     IAlertAutomationGuard guard,
     IAuditService auditService,
     INotificationService notificationService,
@@ -123,7 +124,8 @@ public sealed class AlertTicketAutomation(
 
         // Read before the ticket exists, so "open related tickets" cannot list the one being opened.
         var context = await DescribeCiAsync(alert.CiId, cancellationToken);
-        var draft = AlertTicketPolicy.Compose(alert, context);
+        var impacted = await DescribeImpactAsync(alert, cancellationToken);
+        var draft = AlertTicketPolicy.Compose(alert, context, impacted);
         var created = await ticketService.CreateAsync(
             new CreateTicketRequest(
                 draft.Title,
@@ -237,6 +239,52 @@ public sealed class AlertTicketAutomation(
         var open = await ticketLinkDirectory.GetOpenTicketsForCiAsync(
             ciId, OpenRelatedTicketLimit, cancellationToken);
         return new AlertCiContext(ci, open);
+    }
+
+    /// <summary>
+    /// The CIs failing underneath this alert (WP-5.1), named rather than listed as ids. Two port reads,
+    /// both on the path that opens a ticket — which happens once per problem — and neither on the path
+    /// that annotates one, because a recurrence is not a new outage to enumerate.
+    /// <para>
+    /// A failure here never fails the raise, following the same rule as the CI link below: the ticket
+    /// is the thing somebody has to act on, and a root-cause ticket that lists nothing is a degraded
+    /// ticket rather than a lost alert. The alerts themselves are already suppressed and visible on the
+    /// board either way.
+    /// </para>
+    /// </summary>
+    private async Task<IReadOnlyList<ImpactedCi>> DescribeImpactAsync(
+        AlertRaised alert,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var suppressed = await alertCorrelationDirectory.GetImpactedByAsync(alert.AlertId, cancellationToken);
+            if (suppressed.Count == 0)
+            {
+                return [];
+            }
+
+            var ids = suppressed.Select(entry => entry.CiId).Where(id => id != Guid.Empty).Distinct().ToList();
+            var names = (await ciDirectory.GetSummariesAsync(ids, cancellationToken))
+                .ToDictionary(ci => ci.Id);
+
+            return
+            [
+                .. suppressed.Select(entry => new ImpactedCi(
+                    entry.CiId,
+                    names.TryGetValue(entry.CiId, out var ci) ? ci.Name : null,
+                    names.TryGetValue(entry.CiId, out var typed) ? typed.Type : null,
+                    entry.Summary)),
+            ];
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            logger.LogWarning(
+                exception,
+                "Alert {RuleId} could not read what it is suppressing; its ticket lists no affected CIs.",
+                alert.RuleId);
+            return [];
+        }
     }
 
     /// <summary>

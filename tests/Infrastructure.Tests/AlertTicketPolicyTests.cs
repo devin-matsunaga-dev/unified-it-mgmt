@@ -193,6 +193,75 @@ public sealed class AlertTicketPolicyTests
     public void Compose_WithNoContext_Throws() =>
         Assert.Throws<ArgumentNullException>(() => AlertTicketPolicy.Compose(Raised(), null!));
 
+    // ---- the root-cause ticket (WP-5.1) ----
+
+    /// <summary>
+    /// The half of "open ONE root-cause ticket listing affected CIs" that makes one ticket enough.
+    /// Each of these has an alert of its own that was deliberately never published, so the ticket is
+    /// the only place they are written down for whoever picks it up.
+    /// </summary>
+    [Fact]
+    public void Compose_ForARootCauseAlert_NamesEveryCiTheOutageTookWithIt()
+    {
+        var draft = AlertTicketPolicy.Compose(Raised(), AlertCiContext.Unknown, [
+            new ImpactedCi(Guid.CreateVersion7(), "dc1-esx-01", "Server", "Host is unreachable."),
+            new ImpactedCi(Guid.CreateVersion7(), "dc1-app-01", "VirtualMachine", "Host is unreachable."),
+        ]);
+
+        Assert.Contains("Affected by this (2 CIs", draft.Description, StringComparison.Ordinal);
+        Assert.Contains("- dc1-esx-01 (Server): Host is unreachable.", draft.Description, StringComparison.Ordinal);
+        Assert.Contains("- dc1-app-01 (VirtualMachine)", draft.Description, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// An ordinary alert explains nothing but itself, and its ticket must not gain a heading with
+    /// nothing under it — "Affected: none" invites the reader to wonder what was meant to be there.
+    /// </summary>
+    [Fact]
+    public void Compose_ForAnAlertThatExplainsNothing_SaysNothingAboutImpact()
+    {
+        var draft = AlertTicketPolicy.Compose(Raised(), AlertCiContext.Unknown);
+
+        Assert.DoesNotContain("Affected by this", draft.Description, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// A core switch can take a hundred CIs with it, and a description that is a hundred lines of
+    /// inventory is one nobody reads to the end. The count is still the true one — a truncated list
+    /// that under-reported the size of the outage would be worse than no list at all.
+    /// </summary>
+    [Fact]
+    public void Compose_WithMoreAffectedCisThanFitInADescription_CountsTheRestRatherThanDroppingThem()
+    {
+        var impacted = Enumerable.Range(1, 25)
+            .Select(index => new ImpactedCi(Guid.CreateVersion7(), $"host-{index:D2}", "Server", "Unreachable."))
+            .ToArray();
+
+        var draft = AlertTicketPolicy.Compose(Raised(), AlertCiContext.Unknown, impacted);
+
+        Assert.Contains("Affected by this (25 CIs", draft.Description, StringComparison.Ordinal);
+        Assert.Contains("host-20", draft.Description, StringComparison.Ordinal);
+        Assert.DoesNotContain("host-21", draft.Description, StringComparison.Ordinal);
+        Assert.Contains("…and 5 more", draft.Description, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// A CI that has left the CMDB since its alert was raised is still listed, by id. Dropping it
+    /// would make the ticket claim a smaller outage than the one that happened.
+    /// </summary>
+    [Fact]
+    public void Compose_WithAnAffectedCiThatHasLeftTheCmdb_ListsItByIdRatherThanOmittingIt()
+    {
+        var missing = Guid.CreateVersion7();
+
+        var draft = AlertTicketPolicy.Compose(Raised(), AlertCiContext.Unknown, [
+            new ImpactedCi(missing, null, null, "Host is unreachable."),
+        ]);
+
+        Assert.Contains("Affected by this (1 CI,", draft.Description, StringComparison.Ordinal);
+        Assert.Contains($"CI {missing} (no longer in the CMDB)", draft.Description, StringComparison.Ordinal);
+    }
+
     [Fact]
     public void RecurrenceNote_WhenTheSeverityRose_SaysSoRatherThanRepeatingItself()
     {

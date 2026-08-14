@@ -48,3 +48,15 @@ public sealed class CiGraphHopConfiguration : IEntityTypeConfiguration<CiGraphHo
         builder.Property(hop => hop.Depth).HasColumnName("depth");
     }
 }
+
+public sealed class CiDependencyHopConfiguration : IEntityTypeConfiguration<CiDependencyHop>
+{
+    /// <summary>Unmapped from any table: rows only ever arrive from a <c>FromSql</c> traversal.</summary>
+    public void Configure(EntityTypeBuilder<CiDependencyHop> builder)
+    {
+        builder.HasNoKey().ToTable((string?)null);
+        builder.Property(hop => hop.CiId).HasColumnName("ci_id");
+        builder.Property(hop => hop.DependsOnCiId).HasColumnName("depends_on_ci_id");
+        builder.Property(hop => hop.Depth).HasColumnName("depth");
+    }
+}

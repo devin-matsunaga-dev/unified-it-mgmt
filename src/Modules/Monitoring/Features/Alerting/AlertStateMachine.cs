@@ -49,6 +49,13 @@ public static class AlertStateMachine
     /// how a number is read rather than of how a state advances.
     /// </param>
     /// <param name="muted">True when an active maintenance window covers the device.</param>
+    /// <param name="explainedByRootCause">
+    /// True when something this device's CI depends on is failing too (WP-5.1), so this alert is a
+    /// consequence and the cause is being reported instead. Suppresses in exactly the same way as the
+    /// other two and is deliberately the weakest of the three: a muted device says "muted" even when
+    /// its cause is known, because the operator who opened the window is the one who wants to read the
+    /// reason off the board.
+    /// </param>
     /// <param name="newAlertId">
     /// The id to use if this reading opens an alert. Passed in rather than generated here so this
     /// function stays a function: the same inputs give the same outputs, and a test can assert on the
@@ -61,7 +68,8 @@ public static class AlertStateMachine
         double? value,
         AlertPolicy policy,
         bool muted,
-        Guid newAlertId)
+        Guid newAlertId,
+        bool explainedByRootCause = false)
     {
         ArgumentNullException.ThrowIfNull(state);
         ArgumentNullException.ThrowIfNull(policy);
@@ -113,6 +121,7 @@ public static class AlertStateMachine
         var flapping = next.IsFlapping(observedAt);
         var suppression = muted ? AlertSuppression.Maintenance
             : flapping ? AlertSuppression.Flapping
+            : explainedByRootCause ? AlertSuppression.RootCause
             : AlertSuppression.None;
 
         if (suppression is not AlertSuppression.None || severity == next.PublishedSeverity)

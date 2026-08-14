@@ -44,3 +44,16 @@ public sealed class CiGraphHop
     public Guid CiId { get; set; }
     public int Depth { get; set; }
 }
+
+/// <summary>
+/// One row of the WP-5.1 correlation traversal: a CI the walk started from, one of the CIs it needs,
+/// and the fewest hops between them. Keyless, like <see cref="CiGraphHop"/>, and separate from it
+/// because this walk carries the root it came from — several roots are walked in one statement, so
+/// "which CI reached this one" is part of the answer rather than the caller's context.
+/// </summary>
+public sealed class CiDependencyHop
+{
+    public Guid CiId { get; set; }
+    public Guid DependsOnCiId { get; set; }
+    public int Depth { get; set; }
+}

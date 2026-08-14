@@ -78,6 +78,24 @@ public sealed class AlertConfiguration : IEntityTypeConfiguration<Alert>
         // The alert board's query: what is wrong now, worst first.
         builder.HasIndex(alert => new { alert.Status, alert.Severity, alert.RaisedAt });
 
+        // WP-5.1. Both readers of this column ask the same question — "what is filed under this alert"
+        // — so it is indexed rather than scanned: the root-cause ticket asks once per raise, and the
+        // alert board asks once per root-cause row it renders.
+        builder.HasIndex(alert => alert.RootCauseAlertId)
+            .HasFilter("root_cause_alert_id IS NOT NULL");
+
+        // SetNull rather than Cascade or Restrict, and the choice is forced by the cascade below.
+        // Alerts go when their device goes, so deleting the switch deletes the cause while its
+        // consequences live on other devices and survive: Cascade would delete their alerts too — an
+        // outage disappearing from the board because somebody decommissioned the thing that caused it
+        // — and Restrict would make deleting that device fail with a foreign key error naming a table
+        // the operator never touched. Nulling it is self-healing: the consequence is left suppressed
+        // under nothing, its next reading finds no failing dependency, and it publishes on its own
+        // account one cycle later.
+        builder.HasOne<Alert>().WithMany()
+            .HasForeignKey(alert => alert.RootCauseAlertId)
+            .OnDelete(DeleteBehavior.SetNull);
+
         // An alert is about one device's rule, so it goes when the device goes — the same reasoning
         // as a check definition, and unlike a metric, which is a fact about a moment.
         builder.HasOne(alert => alert.Device).WithMany()

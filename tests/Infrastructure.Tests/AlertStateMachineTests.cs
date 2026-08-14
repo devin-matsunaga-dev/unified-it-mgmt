@@ -238,6 +238,79 @@ public sealed class AlertStateMachineTests
         Assert.Null(transition.State.AlertId);
     }
 
+    // ---- root-cause suppression (WP-5.1) ----
+
+    /// <summary>
+    /// The consequence half of the WP's demo: a device whose dependency is also down is evaluated and
+    /// recorded exactly as usual, and tells nobody — which is what stops five dependents becoming five
+    /// tickets.
+    /// </summary>
+    [Fact]
+    public void Advance_WhenADependencyIsFailingToo_RaisesNothingAndRecordsWhy()
+    {
+        var run = Drive([Bad, Bad, Bad, Bad, Bad], rootCause: true);
+
+        Assert.DoesNotContain(run.Actions, action => action is not AlertAction.None);
+        Assert.All(run.Suppressions, suppression => Assert.Equal(AlertSuppression.RootCause, suppression));
+
+        // Suppressed, not blind — the same property the maintenance window has. The board still shows
+        // a Critical alert against this device; only the event was withheld.
+        Assert.Equal(AlertSeverity.Critical, run.State.Severity);
+        Assert.NotNull(run.State.AlertId);
+        Assert.Equal(AlertSeverity.Ok, run.State.PublishedSeverity);
+    }
+
+    /// <summary>
+    /// "Revive → all clear", and the half of it that would be easy to get wrong: the cause recovering
+    /// while the consequence has not. The dependent is no longer explained by anything, so the very
+    /// next reading publishes on its own account rather than staying silent forever.
+    /// </summary>
+    [Fact]
+    public void Advance_WhenTheCauseRecoversAndTheDependentDoesNot_RaisesThen()
+    {
+        var suppressed = Drive([Bad, Bad, Bad, Bad], rootCause: true);
+
+        var transition = AlertStateMachine.Advance(
+            suppressed.State, Bad, Start + (Step * 4), value: 99, Policy, muted: false,
+            Guid.CreateVersion7(), explainedByRootCause: false);
+
+        Assert.Equal(AlertAction.Raise, transition.Action);
+        Assert.Equal(AlertSeverity.Critical, transition.Severity);
+        // The same alert, not a second one: the row has been open the whole time.
+        Assert.Equal(suppressed.State.AlertId, transition.State.AlertId);
+    }
+
+    /// <summary>
+    /// The ordinary case of a recovery: the switch comes back, its dependents come back with it, and
+    /// nothing announces a clear for an alert nobody was ever told about.
+    /// </summary>
+    [Fact]
+    public void Advance_WhenBothRecover_SaysNothingAndClosesTheRow()
+    {
+        var suppressed = Drive([Bad, Bad, Bad, Bad, Good, Good], rootCause: true);
+        Assert.Equal(AlertSeverity.Ok, suppressed.State.Severity);
+
+        var transition = AlertStateMachine.Advance(
+            suppressed.State, Good, Start + (Step * 6), value: 1, Policy, muted: false,
+            Guid.CreateVersion7(), explainedByRootCause: false);
+
+        Assert.Equal(AlertAction.None, transition.Action);
+        Assert.Null(transition.State.AlertId);
+    }
+
+    /// <summary>
+    /// A maintenance window outranks a known cause. Both suppress, so the alert is silent either way
+    /// and only the recorded reason differs — but the operator who opened the window is the one
+    /// reading the board, and "Maintenance" is the answer they are looking for.
+    /// </summary>
+    [Fact]
+    public void Advance_WhenMutedAndExplained_RecordsTheWindowRatherThanTheCause()
+    {
+        var run = Drive([Bad, Bad, Bad, Bad], muted: true, rootCause: true);
+
+        Assert.All(run.Suppressions, suppression => Assert.Equal(AlertSuppression.Maintenance, suppression));
+    }
+
     // ---- per-check tuning ----
 
     /// <summary>
@@ -282,7 +355,10 @@ public sealed class AlertStateMachineTests
         IReadOnlyList<Guid> AlertIds);
 
     /// <summary>One reading a minute, which is what a check on a fixed interval produces.</summary>
-    private static Run Drive(IReadOnlyList<AlertSeverity> readings, bool muted = false)
+    private static Run Drive(
+        IReadOnlyList<AlertSeverity> readings,
+        bool muted = false,
+        bool rootCause = false)
     {
         var state = new AlertState();
         var actions = new List<AlertAction>();
@@ -299,7 +375,8 @@ public sealed class AlertStateMachineTests
                 value: readings[index] is AlertSeverity.Ok ? 1 : 99,
                 Policy,
                 muted,
-                Guid.CreateVersion7());
+                Guid.CreateVersion7(),
+                rootCause);
 
             state = transition.State;
             actions.Add(transition.Action);

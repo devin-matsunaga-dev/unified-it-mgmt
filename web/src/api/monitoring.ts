@@ -2,7 +2,7 @@ import { apiRequest } from './client'
 
 export type AlertSeverity = 'Ok' | 'Warning' | 'Critical'
 export type AlertStatus = 'Open' | 'Cleared'
-export type AlertSuppression = 'None' | 'Maintenance' | 'Flapping'
+export type AlertSuppression = 'None' | 'Maintenance' | 'Flapping' | 'RootCause'
 export type DeviceStatus = 'Ok' | 'Warning' | 'Critical' | 'Unknown' | 'Disabled'
 export type CheckType = 'Icmp' | 'Snmp' | 'Tcp' | 'Http' | 'Tls'
 export type MetricResolution = 'Auto' | 'Raw' | 'FiveMinute'
@@ -27,6 +27,10 @@ export type Alert = {
   consecutiveBreaches: number
   isFlapping: boolean
   suppression: AlertSuppression
+  /** The alert this one is filed under while a dependency of its CI is failing too (WP-5.1). */
+  rootCauseAlertId: string | null
+  /** How many open alerts are filed under this one. Zero for all but a root cause. */
+  impactedCount: number
   raisedAt: string
   lastObservedAt: string
   clearedAt: string | null
@@ -59,7 +63,25 @@ export type LinkedTicket = {
   createdAt: string
 }
 
-export type AlertDetail = { alert: Alert; openTickets: LinkedTicket[] }
+/** One alert suppressed underneath another, as the root cause's drawer lists it (WP-5.1). */
+export type ImpactedAlert = {
+  alertId: string
+  deviceId: string
+  ciId: string
+  ciName: string | null
+  ciType: string | null
+  ruleId: string
+  severity: AlertSeverity
+  suppression: AlertSuppression
+  summary: string
+  raisedAt: string
+}
+
+export type AlertDetail = {
+  alert: Alert
+  openTickets: LinkedTicket[]
+  impacted: ImpactedAlert[]
+}
 
 export type AlertCounts = { open: number; critical: number; warning: number; unacknowledged: number }
 

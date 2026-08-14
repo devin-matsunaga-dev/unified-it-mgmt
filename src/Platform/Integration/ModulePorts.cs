@@ -146,6 +146,116 @@ public sealed class NoMonitoredAddressDirectory : IMonitoredAddressDirectory
         CancellationToken cancellationToken) => Task.FromResult<Guid?>(null);
 }
 
+/// <summary>
+/// Which of these CIs depends on which — the read Monitoring makes of the CMDB while deciding whether
+/// an alert is a cause or a consequence (WP-5.1).
+/// <para>
+/// Narrow on purpose. It answers only about CIs the caller already named, never "what depends on this",
+/// because the correlation question is always asked about a set that is already alerting: a walk that
+/// returned the whole subtree would hand the alert engine an estate-sized answer to a question about
+/// six devices. Monitoring may not query <c>assets.ci_relationships</c>, and Assets must not be where
+/// alert correlation lives, so the read surface is here and Assets implements it.
+/// </para>
+/// <para>
+/// Read-only and narrow, per ARCHITECTURE §3. Nothing here creates or confirms an edge — a correlation
+/// is a reading of the graph an operator asserted, and WP-4.3 is emphatic that nothing derived from
+/// monitoring may write one.
+/// </para>
+/// </summary>
+public interface ICiDependencyDirectory
+{
+    /// <summary>
+    /// For each of <paramref name="ciIds"/>, the others in that same set it transitively depends on.
+    /// Direction follows WP-2.3: a CI depends on what it needs, so <c>DependsOnCiId</c> is an ancestor
+    /// of <c>CiId</c> and its failure is the one that would explain the other's.
+    /// <para>
+    /// Both ends are always inside <paramref name="ciIds"/>. A dependency that is perfectly healthy is
+    /// not part of the answer, because the caller only asked about things that are currently bad.
+    /// </para>
+    /// </summary>
+    /// <param name="maxDepth">
+    /// Hops to walk, clamped by the implementation to WP-2.3's ceiling. A chain longer than this is
+    /// reported as far as it was walked rather than truncated silently — the near end is still correct.
+    /// </param>
+    Task<IReadOnlyList<CiDependencyLink>> GetDependenciesAmongAsync(
+        IReadOnlyCollection<Guid> ciIds,
+        int maxDepth,
+        CancellationToken cancellationToken);
+}
+
+/// <summary>
+/// "<paramref name="CiId"/> needs <paramref name="DependsOnCiId"/>, and it is <paramref name="Depth"/>
+/// hops away." The fewest hops, where several routes exist.
+/// </summary>
+public sealed record CiDependencyLink(Guid CiId, Guid DependsOnCiId, int Depth);
+
+/// <summary>
+/// The answer a host with no Assets module gives: nothing depends on anything.
+/// <para>
+/// Registered by <c>AddPlatformServices</c> with <c>TryAdd</c>, following
+/// <see cref="NoMonitoredAddressDirectory"/>. The degradation is worth stating because it is the safe
+/// direction and not merely a convenience: with no dependency graph, no alert is ever suppressed and
+/// every one of them publishes exactly as it did before WP-5.1. A correlation engine that cannot read
+/// the CMDB must fall back to telling somebody about everything, never to silence.
+/// </para>
+/// </summary>
+public sealed class NoCiDependencyDirectory : ICiDependencyDirectory
+{
+    public Task<IReadOnlyList<CiDependencyLink>> GetDependenciesAmongAsync(
+        IReadOnlyCollection<Guid> ciIds,
+        int maxDepth,
+        CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyList<CiDependencyLink>>([]);
+}
+
+/// <summary>
+/// What else is failing because of this alert — the read Helpdesk makes of Monitoring while composing
+/// a root-cause ticket (WP-5.1).
+/// <para>
+/// It exists so the ticket can list the CIs an outage took with it without <c>AlertRaised</c> growing a
+/// member. CONVENTIONS versions an event by a new type rather than by mutation, and a list that is
+/// already committed to the alert rows before the event is published is a read, not a payload. The
+/// ordering that makes it safe is WP-3.5's: the engine commits every alert row before it publishes
+/// anything, so a consumer of <c>AlertRaised</c> asking this question can never see a correlation the
+/// database does not yet hold.
+/// </para>
+/// </summary>
+public interface IAlertCorrelationDirectory
+{
+    /// <summary>
+    /// The open alerts currently suppressed underneath <paramref name="rootCauseAlertId"/>, oldest
+    /// first. Empty for an ordinary alert that explains nothing but itself, which is most of them.
+    /// </summary>
+    Task<IReadOnlyList<CorrelatedAlertSummary>> GetImpactedByAsync(
+        Guid rootCauseAlertId,
+        CancellationToken cancellationToken);
+}
+
+/// <summary>Enough of a suppressed alert to name it in a ticket: which CI, and what was wrong with it.</summary>
+public sealed record CorrelatedAlertSummary(
+    Guid AlertId,
+    Guid CiId,
+    Guid DeviceId,
+    string RuleId,
+    string Severity,
+    string Summary);
+
+/// <summary>
+/// The answer a host with no Monitoring module gives: this alert explains nothing.
+/// <para>
+/// Registered by <c>AddPlatformServices</c> with <c>TryAdd</c>, following
+/// <see cref="NoCredentialUsageDirectory"/>. A root-cause ticket in such a host is an ordinary alert
+/// ticket, which is what it was before this package.
+/// </para>
+/// </summary>
+public sealed class NoAlertCorrelationDirectory : IAlertCorrelationDirectory
+{
+    public Task<IReadOnlyList<CorrelatedAlertSummary>> GetImpactedByAsync(
+        Guid rootCauseAlertId,
+        CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyList<CorrelatedAlertSummary>>([]);
+}
+
 /// <summary>Enough of a ticket to say "this is already being worked on" beside an alert or another ticket.</summary>
 public sealed record LinkedTicketSummary(
     Guid TicketId,

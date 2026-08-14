@@ -12,6 +12,7 @@ using Modules.Monitoring.Data;
 using Modules.Monitoring.Features.Dashboards;
 
 using Platform.Auditing;
+using Platform.Integration;
 
 namespace Modules.Monitoring.Features.Alerting;
 
@@ -35,6 +36,7 @@ public sealed class AlertEngine(
     IAlertStateStore stateStore,
     IAlertEnrichmentService enrichmentService,
     IMonitoringLiveUpdateService liveUpdates,
+    ICiDependencyDirectory dependencyDirectory,
     IPublishEndpoint publishEndpoint,
     IAuditService auditService,
     IOptions<AlertOptions> options,
@@ -59,11 +61,79 @@ public sealed class AlertEngine(
             .Where(check => checkIds.Contains(check.Id))
             .ToDictionaryAsync(check => check.Id, cancellationToken);
         var muted = await MutedDevicesAsync(deviceIds, telemetry.OccurredAt, cancellationToken);
+
+        // Estate-wide, and that is WP-5.1's change to this query: it used to load only the devices in
+        // this batch. A cause and its consequences sit on different devices by definition, and are
+        // routinely polled on different cycles by different pollers, so correlation cannot see the
+        // failure it needs from a batch-shaped window. The cost is bounded by how much is broken
+        // rather than by the size of the estate — an alert row exists only while something is wrong.
         var open = await dbContext.Alerts
-            .Where(alert => deviceIds.Contains(alert.DeviceId) && alert.Status == AlertStatus.Open)
+            .Where(alert => alert.Status == AlertStatus.Open)
             .ToDictionaryAsync(alert => (alert.DeviceId, alert.RuleId), cancellationToken);
 
+        // Evaluated in three passes rather than one, because whether an alert is worth publishing now
+        // depends on what else is failing — which is not known until every rule in the batch has been
+        // advanced. Pass one advances everything as though nothing were correlated; pass two works out
+        // which failures explain which; pass three re-advances the explained ones, from the state they
+        // started in, as suppressed. The state machine stays pure and is simply run twice for the few
+        // rules whose answer changed.
+        var candidates = await EvaluateCandidatesAsync(telemetry, checks, muted, open, cancellationToken);
+        var untouched = UntouchedOpenAlerts(candidates, open);
+        var correlation = await CorrelateAsync(candidates, untouched, cancellationToken);
+        Recorrelate(candidates, correlation);
+
         var published = new List<PendingPublication>();
+        foreach (var candidate in candidates)
+        {
+            var record = Apply(candidate.Observation, candidate.Transition, open, telemetry.PollerName, correlation);
+            await stateStore.WriteAsync(
+                candidate.Observation.DeviceId,
+                candidate.Observation.RuleId,
+                candidate.Transition.State,
+                cancellationToken);
+
+            if (candidate.Transition.Action is not AlertAction.None && record is not null)
+            {
+                published.Add(new PendingPublication(candidate.Observation, candidate.Transition, record));
+            }
+        }
+
+        RegroupUntouchedAlerts(untouched, correlation);
+
+        // The durable record is committed before anything is published, following WP-3.2's rule that
+        // a failed publish should leave a row saying what happened rather than a message about an
+        // alert nothing remembers. WP-5.1 leans on the same ordering for a second reason: the
+        // root-cause ticket reads the suppressed alerts back through a port while handling the event
+        // published below, so every one of them has to be committed before that event exists.
+        await dbContext.SaveChangesAsync(cancellationToken);
+
+        foreach (var pending in published)
+        {
+            await PublishAsync(pending, cancellationToken);
+        }
+
+        return published.Count;
+    }
+
+    /// <summary>
+    /// Pass one: advance every rule the batch has a reading for, as though nothing were correlated,
+    /// and keep what each one started from. Nothing is written here — not the alert rows, not Redis —
+    /// because pass three may have to run some of these again from the state they began in.
+    /// </summary>
+    private async Task<List<Candidate>> EvaluateCandidatesAsync(
+        DeviceTelemetryReported telemetry,
+        IReadOnlyDictionary<Guid, CheckDefinition> checks,
+        IReadOnlySet<Guid> muted,
+        IReadOnlyDictionary<(Guid DeviceId, string RuleId), Alert> open,
+        CancellationToken cancellationToken)
+    {
+        var candidates = new List<Candidate>();
+
+        // The batch's own view of state, layered over Redis. It used to be Redis itself doing this
+        // job, because the old loop wrote each rule's state before reading the next result. Deferring
+        // those writes means a batch carrying several cycles of one check would otherwise read the
+        // same starting state for each of them, and the "for N cycles" counter would never advance.
+        var working = new Dictionary<(Guid DeviceId, string RuleId), AlertState>();
 
         // Oldest first. A batch is one cycle so the readings are near-simultaneous, but a poller that
         // fell behind can carry several cycles of one check, and the N-cycle rule is only a count of
@@ -93,44 +163,232 @@ public sealed class AlertEngine(
                 result.DeviceId,
                 [rules.Availability, rules.Threshold, .. interfaceRules],
                 open,
+                working,
                 cancellationToken);
 
+            var isMuted = muted.Contains(result.DeviceId);
             var observations = AlertRules.Observe(result, check, rules, policy, state)
                 .Concat(InterfaceAlertRules.Observe(result, check, policy, state));
             foreach (var observation in observations)
             {
                 var current = state[observation.RuleId];
+                // Allocated once and carried, so that pass three re-running this rule produces the
+                // same alert id rather than a second one. The state machine is a function of its
+                // inputs and this is one of them.
+                var newAlertId = Guid.CreateVersion7();
                 var transition = AlertStateMachine.Advance(
                     current,
                     observation.Severity,
                     observation.ObservedAt,
                     observation.Value,
                     policy,
-                    muted.Contains(result.DeviceId),
-                    Guid.CreateVersion7());
+                    isMuted,
+                    newAlertId);
 
-                var record = Apply(observation, transition, open, telemetry.PollerName);
-                await stateStore.WriteAsync(
-                    result.DeviceId, observation.RuleId, transition.State, cancellationToken);
-
-                if (transition.Action is not AlertAction.None && record is not null)
-                {
-                    published.Add(new PendingPublication(observation, transition, record));
-                }
+                candidates.Add(new Candidate(observation, current, transition, policy, newAlertId, isMuted));
+                working[(observation.DeviceId, observation.RuleId)] = transition.State;
             }
         }
 
-        // The durable record is committed before anything is published, following WP-3.2's rule that
-        // a failed publish should leave a row saying what happened rather than a message about an
-        // alert nothing remembers.
-        await dbContext.SaveChangesAsync(cancellationToken);
+        return candidates;
+    }
 
-        foreach (var pending in published)
+    /// <summary>
+    /// The open alerts this batch says nothing about. They still count toward what is failing — a
+    /// switch that went down ten minutes ago is not in tonight's telemetry for the servers behind it —
+    /// and they are the rows <see cref="RegroupUntouchedAlerts"/> re-files afterwards.
+    /// </summary>
+    private static List<Alert> UntouchedOpenAlerts(
+        IReadOnlyList<Candidate> candidates,
+        IReadOnlyDictionary<(Guid DeviceId, string RuleId), Alert> open)
+    {
+        var touched = candidates
+            .Select(candidate => (candidate.Observation.DeviceId, candidate.Observation.RuleId))
+            .ToHashSet();
+        return [.. open.Values.Where(alert => !touched.Contains((alert.DeviceId, alert.RuleId)))];
+    }
+
+    /// <summary>
+    /// Pass two: everything that will be failing once this batch is applied, and which of those
+    /// failures explains which. The graph read is the only thing on this path that leaves the module,
+    /// and it is skipped entirely unless at least two CIs are in trouble — one CI cannot be a
+    /// consequence of itself, so the overwhelmingly common case costs nothing.
+    /// </summary>
+    private async Task<CorrelationOutcome> CorrelateAsync(
+        IReadOnlyList<Candidate> candidates,
+        IReadOnlyList<Alert> untouched,
+        CancellationToken cancellationToken)
+    {
+        if (!options.Value.CorrelationEnabled)
         {
-            await PublishAsync(pending, cancellationToken);
+            return CorrelationOutcome.None;
         }
 
-        return published.Count;
+        var failingSince = new Dictionary<Guid, DateTimeOffset>();
+        var alertsByCi = new Dictionary<Guid, List<OpenAlertFact>>();
+
+        void Record(Guid ciId, Guid alertId, AlertSeverity severity, DateTimeOffset raisedAt)
+        {
+            // A device whose CI was deleted still alerts, and still deserves its ticket — it simply
+            // cannot take part in a correlation, because it is not on the graph.
+            if (ciId == Guid.Empty)
+            {
+                return;
+            }
+
+            if (!failingSince.TryGetValue(ciId, out var since) || raisedAt < since)
+            {
+                failingSince[ciId] = raisedAt;
+            }
+
+            if (!alertsByCi.TryGetValue(ciId, out var alerts))
+            {
+                alertsByCi[ciId] = alerts = [];
+            }
+
+            alerts.Add(new OpenAlertFact(alertId, severity, raisedAt));
+        }
+
+        foreach (var candidate in candidates)
+        {
+            if (candidate.Transition.Severity is AlertSeverity.Ok
+                || candidate.Transition.State.AlertId is not { } alertId)
+            {
+                continue;
+            }
+
+            Record(
+                candidate.Observation.CiId,
+                alertId,
+                candidate.Transition.Severity,
+                candidate.Transition.State.RaisedAt ?? candidate.Observation.ObservedAt);
+        }
+
+        foreach (var alert in untouched.Where(alert => alert.Severity is not AlertSeverity.Ok))
+        {
+            Record(alert.CiId, alert.Id, alert.Severity, alert.RaisedAt);
+        }
+
+        if (failingSince.Count < 2)
+        {
+            return CorrelationOutcome.None;
+        }
+
+        var links = await dependencyDirectory.GetDependenciesAmongAsync(
+            [.. failingSince.Keys], options.Value.CorrelationMaxDepth, cancellationToken);
+        var correlations = AlertCorrelator.Correlate(
+            [.. failingSince.Select(entry => new FailingCi(entry.Key, entry.Value))],
+            links,
+            TimeSpan.FromSeconds(options.Value.CorrelationWindowSeconds));
+        if (correlations.Count == 0)
+        {
+            return CorrelationOutcome.None;
+        }
+
+        // Which of a cause's alerts the consequences are filed under. A switch that has failed its
+        // availability rule and three interface rules holds four; the worst and oldest of them is the
+        // one an operator opens, so it is the one this points at. Ties break on the id, so two
+        // consecutive cycles cannot move a suppressed alert between two tickets.
+        var representative = alertsByCi.ToDictionary(
+            entry => entry.Key,
+            entry => entry.Value
+                .OrderByDescending(alert => alert.Severity)
+                .ThenBy(alert => alert.RaisedAt)
+                .ThenBy(alert => alert.AlertId)
+                .First()
+                .AlertId);
+
+        logger.LogInformation(
+            "Correlated {ImpactedCount} of {FailingCount} failing CIs to {CauseCount} root cause(s).",
+            correlations.Count,
+            failingSince.Count,
+            correlations.Select(correlation => correlation.RootCauseCiId).Distinct().Count());
+
+        return new CorrelationOutcome(
+            correlations.ToDictionary(correlation => correlation.CiId),
+            representative);
+    }
+
+    /// <summary>
+    /// Pass three: re-advance every rule whose CI turned out to be a consequence, from the state it
+    /// started this batch in, with the suppression the correlator found. Re-running is cheap and
+    /// exact — the state machine is pure and the alert id it would allocate was fixed in pass one.
+    /// <para>
+    /// A rule is re-run as a whole run rather than per reading, so a batch carrying three cycles of one
+    /// check still advances its counters in order.
+    /// </para>
+    /// </summary>
+    private static void Recorrelate(List<Candidate> candidates, CorrelationOutcome correlation)
+    {
+        if (correlation.IsEmpty)
+        {
+            return;
+        }
+
+        var byRule = new Dictionary<(Guid DeviceId, string RuleId), List<int>>();
+        for (var index = 0; index < candidates.Count; index++)
+        {
+            var key = (candidates[index].Observation.DeviceId, candidates[index].Observation.RuleId);
+            if (!byRule.TryGetValue(key, out var indexes))
+            {
+                byRule[key] = indexes = [];
+            }
+
+            indexes.Add(index);
+        }
+
+        foreach (var indexes in byRule.Values)
+        {
+            var first = candidates[indexes[0]];
+            if (!correlation.Impacted.ContainsKey(first.Observation.CiId))
+            {
+                continue;
+            }
+
+            // Suppression prevents a ticket; it can never un-open one. A rule somebody has already been
+            // told about keeps its published state and only gains the grouping — re-suppressing it here
+            // would leave the alert row claiming nobody was told, which is what WP-3.5's Redis rebuild
+            // reads to decide whether to publish. It would re-raise the same alert after a flush.
+            if (first.PriorState.PublishedSeverity is not AlertSeverity.Ok)
+            {
+                continue;
+            }
+
+            var state = first.PriorState;
+            foreach (var index in indexes)
+            {
+                var candidate = candidates[index];
+                var transition = AlertStateMachine.Advance(
+                    state,
+                    candidate.Observation.Severity,
+                    candidate.Observation.ObservedAt,
+                    candidate.Observation.Value,
+                    candidate.Policy,
+                    candidate.Muted,
+                    candidate.NewAlertId,
+                    explainedByRootCause: true);
+                candidates[index] = candidate with { Transition = transition };
+                state = transition.State;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Files the open alerts this batch did not touch under whatever now explains them — and only that.
+    /// <para>
+    /// Their <see cref="Alert.Suppression"/> is deliberately left alone: the state machine did not run
+    /// for these rules, so writing a suppression onto them would be recording a decision nothing made,
+    /// and WP-3.5 reads that field to rebuild whether the alert was ever published. The grouping is
+    /// safe because it says only "this is related to that", which is true whether or not anybody was
+    /// told about it.
+    /// </para>
+    /// </summary>
+    private static void RegroupUntouchedAlerts(IReadOnlyList<Alert> untouched, CorrelationOutcome correlation)
+    {
+        foreach (var alert in untouched)
+        {
+            alert.RootCauseAlertId = correlation.RootCauseAlertFor(alert.CiId, alert.Id);
+        }
     }
 
     /// <summary>
@@ -143,6 +401,7 @@ public sealed class AlertEngine(
         Guid deviceId,
         IReadOnlyList<string?> ruleIds,
         IReadOnlyDictionary<(Guid DeviceId, string RuleId), Alert> open,
+        IReadOnlyDictionary<(Guid DeviceId, string RuleId), AlertState> working,
         CancellationToken cancellationToken)
     {
         var state = new Dictionary<string, AlertState>(StringComparer.Ordinal);
@@ -150,6 +409,15 @@ public sealed class AlertEngine(
         {
             if (ruleId is null)
             {
+                continue;
+            }
+
+            // What this batch has already decided about the rule outranks both Redis and the row, and
+            // has to: nothing is written until every pass has run, so Redis still holds the state this
+            // batch started from.
+            if (working.TryGetValue((deviceId, ruleId), out var pending))
+            {
+                state[ruleId] = pending;
                 continue;
             }
 
@@ -185,7 +453,8 @@ public sealed class AlertEngine(
         AlertObservation observation,
         AlertTransition transition,
         Dictionary<(Guid DeviceId, string RuleId), Alert> open,
-        string pollerName)
+        string pollerName,
+        CorrelationOutcome correlation)
     {
         var key = (observation.DeviceId, observation.RuleId);
         open.TryGetValue(key, out var alert);
@@ -219,6 +488,10 @@ public sealed class AlertEngine(
             alert.ConsecutiveBreaches = transition.State.ConsecutiveBreaches;
             alert.IsFlapping = transition.State.IsFlapping(observation.ObservedAt);
             alert.Suppression = transition.SuppressedBy;
+            // Rewritten on every reading rather than only when it is set, so a cause that recovers
+            // un-files its consequences on their next cycle instead of leaving them pointing at an
+            // explanation that no longer holds.
+            alert.RootCauseAlertId = correlation.RootCauseAlertFor(observation.CiId, alert.Id);
             return new AlertRecord(alert.Id, alert.RaisedAt, transition.Severity);
         }
 
@@ -236,6 +509,10 @@ public sealed class AlertEngine(
         alert.ClearedAt = observation.ObservedAt;
         alert.IsFlapping = transition.State.IsFlapping(observation.ObservedAt);
         alert.Suppression = AlertSuppression.None;
+        // A recovered alert explains nothing and is explained by nothing. Kept null rather than
+        // preserved as history because the row is now the record of a problem that ended, and a
+        // cleared alert filed under a cause reads on the board as one that is still suppressed.
+        alert.RootCauseAlertId = null;
         open.Remove(key);
         return new AlertRecord(alert.Id, alert.RaisedAt, previousSeverity);
     }
@@ -375,4 +652,53 @@ public sealed class AlertEngine(
         AlertObservation Observation,
         AlertTransition Transition,
         AlertRecord Record);
+
+    /// <summary>
+    /// One rule's reading, advanced but not yet committed. <see cref="PriorState"/> and
+    /// <see cref="NewAlertId"/> are what make the third pass able to re-run it and get the same answer
+    /// for everything except the suppression.
+    /// </summary>
+    private sealed record Candidate(
+        AlertObservation Observation,
+        AlertState PriorState,
+        AlertTransition Transition,
+        AlertPolicy Policy,
+        Guid NewAlertId,
+        bool Muted);
+
+    /// <summary>One open alert reduced to what choosing a CI's representative alert needs.</summary>
+    private sealed record OpenAlertFact(Guid AlertId, AlertSeverity Severity, DateTimeOffset RaisedAt);
+
+    /// <summary>
+    /// What the correlator decided, in the form the rest of the pass needs it: which CIs are
+    /// consequences, and which alert stands for each CI that is a cause.
+    /// </summary>
+    private sealed record CorrelationOutcome(
+        IReadOnlyDictionary<Guid, AlertCorrelation> Impacted,
+        IReadOnlyDictionary<Guid, Guid> RepresentativeAlertByCi)
+    {
+        /// <summary>Nothing is explained by anything — every estate on almost every cycle.</summary>
+        public static CorrelationOutcome None { get; } = new(
+            new Dictionary<Guid, AlertCorrelation>(),
+            new Dictionary<Guid, Guid>());
+
+        public bool IsEmpty => Impacted.Count == 0;
+
+        /// <summary>
+        /// The alert <paramref name="ciId"/> should be filed under, or null when it is a cause in its
+        /// own right. Never answers with <paramref name="alertId"/> itself: an alert filed under itself
+        /// would render on the board as a group containing only its own header.
+        /// </summary>
+        public Guid? RootCauseAlertFor(Guid ciId, Guid alertId)
+        {
+            if (!Impacted.TryGetValue(ciId, out var correlation)
+                || !RepresentativeAlertByCi.TryGetValue(correlation.RootCauseCiId, out var rootCauseAlertId)
+                || rootCauseAlertId == alertId)
+            {
+                return null;
+            }
+
+            return rootCauseAlertId;
+        }
+    }
 }
