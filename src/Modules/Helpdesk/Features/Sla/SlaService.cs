@@ -242,8 +242,10 @@ public sealed class SlaService(
         return string.IsNullOrWhiteSpace(baseUrl) ? null : $"{baseUrl.TrimEnd('/')}/tickets/{ticketId}";
     }
 
+    // The SLA arithmetic itself lives in SlaClock, so the blast-radius read (WP-5.2) asks the same
+    // question of a whole outage that this file asks of one ticket without a second copy of it.
     private static double CurrentElapsedSeconds(TicketSla sla, DateTimeOffset now) =>
-        sla.AccumulatedBusinessSeconds + (sla.ActiveSince is null ? 0 : BusinessTimeCalculator.Elapsed(sla.ActiveSince.Value, now, sla.Policy.Calendar).TotalSeconds);
+        SlaClock.ElapsedSeconds(sla, now);
 
     private static void AccumulateActive(TicketSla sla, DateTimeOffset now)
     {
@@ -252,11 +254,8 @@ public sealed class SlaService(
         sla.ActiveSince = null;
     }
 
-    private static DateTimeOffset DueAt(TicketSla sla, DateTimeOffset now, double targetSeconds)
-    {
-        var remaining = Math.Max(0, targetSeconds - sla.AccumulatedBusinessSeconds);
-        return BusinessTimeCalculator.Add(sla.ActiveSince ?? now, TimeSpan.FromSeconds(remaining), sla.Policy.Calendar);
-    }
+    private static DateTimeOffset DueAt(TicketSla sla, DateTimeOffset now, double targetSeconds) =>
+        SlaClock.DueAt(sla, now, targetSeconds);
 
     private static SlaRemainingResponse MapRemaining(TicketSla sla, DateTimeOffset now)
     {

@@ -2,7 +2,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { render, screen, waitFor, within } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { vi } from 'vitest'
-import { assetsApi, discoveryApi, type Ci, type CiDiscoveryFacts, type CiGraph, type CiRelationships, type CiTypeSchema } from '../../api/assets'
+import { assetsApi, discoveryApi, type Ci, type CiDiscoveryFacts, type CiGraph, type CiImpact, type CiRelationships, type CiTypeSchema } from '../../api/assets'
 import { ApiError } from '../../api/client'
 import { helpdeskApi, type Ticket } from '../../api/helpdesk'
 import { formatDateOnly } from '../../lib/utils'
@@ -68,6 +68,28 @@ const relationships: CiRelationships = {
   downstream: [{ id: 'edge-2', sourceCiId: 'ci-vm', sourceCiName: 'vm-payroll', sourceCiType: 'Virtual', targetCiId: host.id, targetCiName: 'esx-01', targetCiType: 'Server', type: 'RunsOn', description: null, createdBy: 'technician1', createdAt: '2026-08-04T00:00:00Z' }],
 }
 
+/** The same host and VM as the graphs above, as the WP-5.2 blast-radius panel reads them. */
+const blastRadius: CiImpact = {
+  rootCiId: host.id, rootCiName: 'esx-01', rootCiType: 'Server',
+  maxDepth: 5, maxDepthReached: false, containsCycle: false,
+  summary: {
+    ciCount: 2, directCiCount: 1, openTicketCount: 1, breachedSlaCount: 1, atRiskSlaCount: 0,
+    nextSlaDueAt: null, affectedUserCount: 1, affectedDepartmentCount: 1, cisWithoutDepartment: 0,
+    cisTruncated: false, ticketsTruncated: false,
+  },
+  cis: [
+    { ciId: host.id, name: 'esx-01', type: 'Server', lifecycleState: 'Deployed', isActive: true, depth: 0, ownerUserId: 'user-1', ownerName: 'Technician One', departmentId: 'dept-1', departmentName: 'IT', siteName: 'Head Office', openTicketCount: 0 },
+    { ciId: 'ci-vm', name: 'vm-payroll', type: 'Virtual', lifecycleState: 'Deployed', isActive: true, depth: 1, ownerUserId: 'user-1', ownerName: 'Technician One', departmentId: 'dept-1', departmentName: 'IT', siteName: 'Head Office', openTicketCount: 1 },
+  ],
+  tickets: [{
+    ticketId: 'ticket-9', number: 'INC-000099', title: 'Payroll run failed', status: 'InProgress',
+    priority: 'Critical', createdAt: '2026-08-14T06:00:00Z', ciId: 'ci-vm', ciName: 'vm-payroll',
+    sla: { policyName: 'Standard', resolutionDueAt: '2026-08-14T10:00:00Z', remainingSeconds: 0, breached: true, atRisk: false },
+  }],
+  departments: [{ departmentId: 'dept-1', name: 'IT', ciCount: 2, openTicketCount: 1 }],
+  users: [{ userId: 'user-1', name: 'Technician One', ciCount: 2, openTicketCount: 1 }],
+}
+
 const ticket: Ticket = {
   id: 'ticket-1', number: 'INC-000042', title: 'Host fan failure', description: 'Loud', type: 'Incident',
   urgency: 'High', impact: 'High', priority: 'Critical', status: 'InProgress', requesterId: 'enduser1',
@@ -108,6 +130,7 @@ describe('CiDetailPage', () => {
     vi.mocked(assetsApi.listLifecycleStates).mockResolvedValue([{ state: 'Deployed', allowedTargets: ['InStock', 'InRepair', 'Retired'] }])
     vi.mocked(assetsApi.getAncestors).mockResolvedValue(ancestors)
     vi.mocked(assetsApi.getImpactedBy).mockResolvedValue(impact)
+    vi.mocked(assetsApi.getImpact).mockResolvedValue(blastRadius)
     vi.mocked(assetsApi.getRelationships).mockResolvedValue(relationships)
     vi.mocked(assetsApi.getLifecycleHistory).mockResolvedValue([{ id: 'history-1', ciId: host.id, fromState: 'InStock', toState: 'Deployed', note: 'Racked', actorId: 'technician1', occurredAt: '2026-08-02T00:00:00Z' }])
     vi.mocked(assetsApi.getAssignments).mockResolvedValue([])
@@ -132,6 +155,21 @@ describe('CiDetailPage', () => {
     const tickets = (await screen.findByRole('heading', { name: 'Ticket history' })).closest('section')!
     expect(within(tickets).getByRole('link', { name: 'Host fan failure' })).toHaveAttribute('href', '/tickets/ticket-1')
     expect(within(tickets).getByText('#INC-000042')).toBeInTheDocument()
+  })
+
+  /**
+   * The relations card above says what depends on this CI; the blast-radius panel says what that
+   * costs. Both are on the page, and this is the assertion that the second one is mounted at all.
+   */
+  it('mounts the blast-radius panel under the relations card, with what it would cost', async () => {
+    renderPage()
+
+    const radius = (await screen.findByRole('heading', { name: 'Blast radius' })).closest('section')!
+    await waitFor(() => expect(assetsApi.getImpact).toHaveBeenCalledWith(host.id, 5))
+    expect(within(radius).getByText('1 other CI affected · 1 directly', { exact: false })).toBeInTheDocument()
+    // Scoped to the ticket row: "SLA breached" is also the label on the summary tile above it.
+    const ticketRow = within(radius).getByText('Payroll run failed').closest('li')!
+    expect(within(ticketRow).getByText('SLA breached')).toBeInTheDocument()
   })
 
   it('draws a path in each direction, rooted at the open CI', async () => {

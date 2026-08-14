@@ -8,6 +8,7 @@ using Modules.Assets.Features.Cis;
 using Modules.Assets.Features.Contracts;
 using Modules.Assets.Features.Discovery;
 using Modules.Assets.Features.Drift;
+using Modules.Assets.Features.Impact;
 using Modules.Assets.Features.Import;
 using Modules.Assets.Features.Labels;
 using Modules.Assets.Features.Lifecycle;
@@ -45,6 +46,7 @@ public static class AssetsServiceCollectionExtensions
         services.AddScoped<IContractExpiryService, ContractExpiryService>();
         services.AddScoped<IDiscoveryReviewService, DiscoveryReviewService>();
         services.AddScoped<IDriftService, DriftService>();
+        services.AddScoped<IImpactService, ImpactService>();
         services.AddScoped<IPhysicalAuditService, PhysicalAuditService>();
         services.AddScoped<ITopologyService, TopologyService>();
         services.AddScoped<ITopologyMapService, TopologyMapService>();

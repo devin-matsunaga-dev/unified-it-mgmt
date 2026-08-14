@@ -3,6 +3,7 @@ import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { assetsApi, type CiImpact } from '../../api/assets'
 import type { Alert, AlertPage } from '../../api/monitoring'
 import { monitoringApi } from '../../api/monitoring'
 import { AlertBoardPage, matches, sortAlerts } from './AlertBoardPage'
@@ -16,6 +17,14 @@ vi.mock('../../api/monitoring', async (original) => {
       ...actual.monitoringApi, listAlerts: vi.fn(), acknowledgeAlert: vi.fn(), getAlert: vi.fn(),
     },
   }
+})
+
+// The drawer mounts the WP-5.2 blast-radius panel, which reads the CMDB. Stubbed here rather than left
+// to a real request: what these tests are about is the alert, and an unmocked call would put the
+// panel's "could not be loaded" alert on every drawer assertion below.
+vi.mock('../../api/assets', async (original) => {
+  const actual = await original<typeof import('../../api/assets')>()
+  return { ...actual, assetsApi: { ...actual.assetsApi, getImpact: vi.fn() } }
 })
 
 // The hub opens a real websocket; every screen here reads over HTTP first and only then listens, so
@@ -50,6 +59,32 @@ function alert(overrides: Partial<Alert> = {}): Alert {
     lifecycleState: 'Deployed', ownerName: 'Tessa Nolan', siteName: 'Primary Data Centre',
     departmentName: 'IT', warrantyExpiresAt: null, warrantyStatus: 'Active',
     warrantyDaysRemaining: 640, contractName: null,
+    ...overrides,
+  }
+}
+
+/** What the CMDB says would follow the alerting switch down (WP-5.2). */
+function blastRadius(overrides: Partial<CiImpact> = {}): CiImpact {
+  return {
+    rootCiId: 'ci-1', rootCiName: 'dc1-core-sw-01', rootCiType: 'NetworkDevice',
+    maxDepth: 5, maxDepthReached: false, containsCycle: false,
+    summary: {
+      ciCount: 3, directCiCount: 2, openTicketCount: 1, breachedSlaCount: 1, atRiskSlaCount: 0,
+      nextSlaDueAt: null, affectedUserCount: 1, affectedDepartmentCount: 1, cisWithoutDepartment: 0,
+      cisTruncated: false, ticketsTruncated: false,
+    },
+    cis: [
+      { ciId: 'ci-1', name: 'dc1-core-sw-01', type: 'NetworkDevice', lifecycleState: 'Deployed', isActive: true, depth: 0, ownerUserId: null, ownerName: null, departmentId: 'dept-it', departmentName: 'IT', siteName: 'Primary Data Centre', openTicketCount: 0 },
+      { ciId: 'ci-esx', name: 'dc1-esx-01', type: 'Server', lifecycleState: 'Deployed', isActive: true, depth: 1, ownerUserId: 'user-1', ownerName: 'Tessa Nolan', departmentId: 'dept-it', departmentName: 'IT', siteName: 'Primary Data Centre', openTicketCount: 1 },
+      { ciId: 'ci-db', name: 'dc1-db-01', type: 'Server', lifecycleState: 'Deployed', isActive: true, depth: 1, ownerUserId: 'user-1', ownerName: 'Tessa Nolan', departmentId: 'dept-it', departmentName: 'IT', siteName: 'Primary Data Centre', openTicketCount: 0 },
+    ],
+    tickets: [{
+      ticketId: 'ticket-7', number: 'INC-000077', title: 'Finance ERP is down', status: 'InProgress',
+      priority: 'Critical', createdAt: '2026-08-11T09:00:00Z', ciId: 'ci-esx', ciName: 'dc1-esx-01',
+      sla: { policyName: 'Standard', resolutionDueAt: '2026-08-11T11:00:00Z', remainingSeconds: 0, breached: true, atRisk: false },
+    }],
+    departments: [{ departmentId: 'dept-it', name: 'IT', ciCount: 3, openTicketCount: 1 }],
+    users: [{ userId: 'user-1', name: 'Tessa Nolan', ciCount: 2, openTicketCount: 1 }],
     ...overrides,
   }
 }
@@ -205,6 +240,44 @@ describe('AlertBoardPage deep link', () => {
     // The open tickets are the half of the WP-3.7 context only this endpoint carries.
     expect(within(drawer).getByText('INC-000042')).toBeInTheDocument()
     expect(within(drawer).getByText('Open tickets for this asset (1)')).toBeInTheDocument()
+  })
+
+  /**
+   * WP-5.2, in the drawer: the alert says one switch is down, and this says what goes with it. The
+   * panel reads the CMDB by the alert's own CI id, so an operator triaging a page never has to open
+   * the asset to find out how much of the estate is behind it.
+   */
+  it('shows the blast radius of the alerting asset', async () => {
+    vi.mocked(monitoringApi.listAlerts).mockResolvedValue(page([alert()]))
+    vi.mocked(monitoringApi.getAlert).mockResolvedValue({ alert: alert(), openTickets: [], impacted: [] })
+    vi.mocked(assetsApi.getImpact).mockResolvedValue(blastRadius())
+
+    renderBoard('/monitoring/alerts?alertId=alert-1')
+
+    const drawer = await screen.findByRole('dialog', { name: 'Alert details' })
+    await waitFor(() => expect(assetsApi.getImpact).toHaveBeenCalledWith('ci-1', 5))
+    const radius = within(drawer).getByRole('region', { name: 'Blast radius' })
+    expect(await within(radius).findByRole('link', { name: 'dc1-esx-01' })).toHaveAttribute('href', '/assets/ci-esx')
+    expect(within(radius).getByText('Finance ERP is down')).toBeInTheDocument()
+    expect(within(radius).getByRole('link', { name: /Open the full blast radius/ }))
+      .toHaveAttribute('href', '/assets/ci-1')
+  })
+
+  /**
+   * A blast radius is a walk of the dependency graph, so an alert whose CI has left the CMDB has no
+   * node to walk from. Asking anyway would be a 404 rendered as a broken panel.
+   */
+  it('draws no blast radius for an alert whose CI is not in the CMDB', async () => {
+    vi.mocked(monitoringApi.listAlerts).mockResolvedValue(page([alert({ ciFound: false, ciName: null })]))
+    vi.mocked(monitoringApi.getAlert).mockResolvedValue({
+      alert: alert({ ciFound: false, ciName: null }), openTickets: [], impacted: [],
+    })
+
+    renderBoard('/monitoring/alerts?alertId=alert-1')
+
+    await screen.findByRole('dialog', { name: 'Alert details' })
+    expect(screen.queryByRole('region', { name: 'Blast radius' })).not.toBeInTheDocument()
+    expect(assetsApi.getImpact).not.toHaveBeenCalled()
   })
 
   /**

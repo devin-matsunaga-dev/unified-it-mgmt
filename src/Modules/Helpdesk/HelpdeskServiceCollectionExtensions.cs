@@ -35,6 +35,7 @@ public static class HelpdeskServiceCollectionExtensions
         services.AddScoped<IAssignmentService, AssignmentService>();
         services.AddScoped<ITicketCiLinkService, TicketCiLinkService>();
         services.AddScoped<ITicketLinkDirectory, TicketCiLinkDirectory>();
+        services.AddScoped<ITicketImpactDirectory, TicketImpactDirectory>();
         services.AddScoped<ITicketViewService, TicketViewService>();
         services.AddScoped<ICannedResponseService, CannedResponseService>();
         services.AddScoped<IInteractionService, InteractionService>();

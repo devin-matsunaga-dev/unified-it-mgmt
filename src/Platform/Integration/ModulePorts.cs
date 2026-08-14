@@ -264,3 +264,97 @@ public sealed record LinkedTicketSummary(
     string Status,
     string Priority,
     DateTimeOffset CreatedAt);
+
+/// <summary>
+/// What is already on the clock across a set of CIs — the read Assets makes of Helpdesk while working
+/// out a blast radius (WP-5.2).
+/// <para>
+/// A second port rather than a third method on <see cref="ITicketLinkDirectory"/>, following WP-5.1's
+/// call: that one answers "is anything open on this one CI", asked while deleting a CI or rendering a
+/// card, and it is deliberately per-CI. This one is asked about a whole outage at once and carries the
+/// SLA clock, which is a join and an arithmetic <see cref="LinkedTicketSummary"/> has no room for.
+/// Widening the older port would put that cost on every caller of it, and there are four.
+/// </para>
+/// <para>
+/// Read-only and narrow, per ARCHITECTURE §3. Nothing here changes a ticket or its SLA — a blast radius
+/// is a reading of what an outage would cost, never a decision about it.
+/// </para>
+/// </summary>
+public interface ITicketImpactDirectory
+{
+    /// <summary>
+    /// The unfinished tickets linked to any of <paramref name="ciIds"/>, worst SLA exposure first, capped
+    /// at <paramref name="limit"/>. "Open" follows <see cref="ITicketLinkDirectory"/>: anything not
+    /// Resolved or Closed.
+    /// <para>
+    /// One statement for the whole set rather than a query per CI. A blast radius is largest exactly when
+    /// the estate is worst, which is the wrong moment to make the answer cost one round trip per CI.
+    /// </para>
+    /// </summary>
+    /// <returns>
+    /// The tickets to render and how many there are in total. The two differ once an outage carries more
+    /// open work than the panel will list, and the caller states the honest number — WP-2.4's rule that a
+    /// truncated answer must never look like a complete one.
+    /// </returns>
+    Task<ImpactedTicketSet> GetOpenTicketsForCisAsync(
+        IReadOnlyCollection<Guid> ciIds,
+        int limit,
+        CancellationToken cancellationToken);
+}
+
+/// <summary>The tickets a blast radius carries, and the true total behind them.</summary>
+public sealed record ImpactedTicketSet(IReadOnlyList<ImpactedTicketSummary> Tickets, int Total);
+
+/// <summary>
+/// One open ticket sitting on a CI inside the blast radius, with the CI it is linked to so the caller
+/// can attribute it without a second lookup.
+/// </summary>
+/// <param name="Sla">
+/// Null when no SLA policy matched the ticket's priority when it was raised, which is a real state
+/// rather than a missing read: nothing is on the clock, and the panel must say so rather than imply a
+/// deadline that does not exist.
+/// </param>
+public sealed record ImpactedTicketSummary(
+    Guid TicketId,
+    Guid CiId,
+    string Number,
+    string Title,
+    string Status,
+    string Priority,
+    DateTimeOffset CreatedAt,
+    SlaExposure? Sla);
+
+/// <summary>
+/// Where one ticket stands against its resolution target, measured now.
+/// <para>
+/// Computed from the SLA clock at read time rather than read off the stored breach flags, because those
+/// are advanced by the scheduler's pass and a blast radius asked between two passes would under-report
+/// the exposure. The flags remain the audited record of when a breach was *declared*; this is what the
+/// clock says at this instant, which is the same source <c>GET /api/tickets/{id}/sla</c> answers from.
+/// </para>
+/// </summary>
+/// <param name="RemainingSeconds">Business seconds left against the resolution target; zero once breached.</param>
+public sealed record SlaExposure(
+    string PolicyName,
+    DateTimeOffset ResolutionDueAt,
+    double RemainingSeconds,
+    bool Breached,
+    bool AtRisk);
+
+/// <summary>
+/// The answer a host with no Helpdesk module gives: nothing is open anywhere.
+/// <para>
+/// Registered by <c>AddPlatformServices</c> with <c>TryAdd</c>, following
+/// <see cref="NoCiDependencyDirectory"/>. The degradation is the honest one for this read: a blast
+/// radius still names every CI an outage would take with it, and reports no tickets and no SLA exposure
+/// rather than refusing to answer. It under-states the cost of the outage and can never over-state it.
+/// </para>
+/// </summary>
+public sealed class NoTicketImpactDirectory : ITicketImpactDirectory
+{
+    public Task<ImpactedTicketSet> GetOpenTicketsForCisAsync(
+        IReadOnlyCollection<Guid> ciIds,
+        int limit,
+        CancellationToken cancellationToken) =>
+        Task.FromResult(new ImpactedTicketSet([], 0));
+}

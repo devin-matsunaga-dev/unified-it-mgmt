@@ -9,6 +9,7 @@ import { helpdeskApi } from '../../api/helpdesk'
 import { Button } from '../../components/ui/Button'
 import { formatDateOnly } from '../../lib/utils'
 import { PriorityPill, StatusPill, formatLocal } from '../tickets/ticketUi'
+import { BlastRadiusPanel } from './BlastRadiusPanel'
 import { CiCoverageDialog } from './CiCoverageDialog'
 import { CiSoftwareCard } from '../software/CiSoftwareCard'
 import { CiDiscoveryCard } from './CiDiscoveryCard'
@@ -26,6 +27,7 @@ export function CiDetailPage() {
   const [lifecycleOpen, setLifecycleOpen] = useState(false)
   const [coverageOpen, setCoverageOpen] = useState(false)
   const [labelOpen, setLabelOpen] = useState(false)
+  const [impactDepth, setImpactDepth] = useState(5)
 
   const ci = useQuery({ queryKey: ['cis', id], queryFn: () => assetsApi.getCi(id), enabled: Boolean(id) })
   const schemas = useQuery({ queryKey: ['ci-type-schemas'], queryFn: assetsApi.listTypeSchemas, staleTime: 0, refetchOnMount: 'always' })
@@ -91,6 +93,11 @@ export function CiDetailPage() {
         </section>
 
         <CiRelationsGraph ci={item} />
+
+        {/* WP-5.2, directly under the relations card: the tree above says what depends on this, and
+            this says what that costs. */}
+        <BlastRadiusPanel ciId={item.id} depth={impactDepth}
+          onDeeper={() => setImpactDepth((value) => Math.min(value + 3, 10))} />
 
         <section className="rounded-xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
           <div className="flex items-center gap-3 border-b border-slate-200 p-5 dark:border-slate-800">

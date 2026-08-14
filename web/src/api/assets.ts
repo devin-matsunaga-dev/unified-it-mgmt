@@ -125,6 +125,81 @@ export type CiGraph = {
 }
 
 /**
+ * Where one open ticket stands against its resolution target (WP-5.2). Null on a ticket whose priority
+ * matched no SLA policy when it was raised — nothing is on the clock, which is a real state and not a
+ * missing read.
+ */
+export type SlaExposure = {
+  policyName: string
+  resolutionDueAt: string
+  remainingSeconds: number
+  breached: boolean
+  atRisk: boolean
+}
+
+export type ImpactedCi = {
+  ciId: string
+  name: string
+  type: CiType
+  lifecycleState: CiLifecycleState
+  isActive: boolean
+  /** Hops from the CI that failed; the CI itself is 0, because it is part of its own outage. */
+  depth: number
+  ownerUserId: string | null
+  ownerName: string | null
+  departmentId: string | null
+  departmentName: string | null
+  siteName: string | null
+  openTicketCount: number
+}
+
+export type ImpactedTicket = {
+  ticketId: string
+  number: string
+  title: string
+  status: string
+  priority: string
+  createdAt: string
+  /** The affected CI nearest the failure that this ticket is linked to. */
+  ciId: string
+  ciName: string
+  sla: SlaExposure | null
+}
+
+export type ImpactedDepartment = { departmentId: string; name: string; ciCount: number; openTicketCount: number }
+
+export type ImpactedUser = { userId: string; name: string; ciCount: number; openTicketCount: number }
+
+export type CiImpactSummary = {
+  ciCount: number
+  directCiCount: number
+  openTicketCount: number
+  breachedSlaCount: number
+  atRiskSlaCount: number
+  nextSlaDueAt: string | null
+  affectedUserCount: number
+  affectedDepartmentCount: number
+  cisWithoutDepartment: number
+  cisTruncated: boolean
+  ticketsTruncated: boolean
+}
+
+/** "What breaks if this dies": the graph, what is already open on it, and who feels it. */
+export type CiImpact = {
+  rootCiId: string
+  rootCiName: string
+  rootCiType: CiType
+  maxDepth: number
+  maxDepthReached: boolean
+  containsCycle: boolean
+  summary: CiImpactSummary
+  cis: ImpactedCi[]
+  tickets: ImpactedTicket[]
+  departments: ImpactedDepartment[]
+  users: ImpactedUser[]
+}
+
+/**
  * What covers a CI. Contract fields are read live from the contract rather than snapshotted, so a
  * renamed contract reaches every CI it covers at once.
  */
@@ -335,6 +410,7 @@ export const assetsApi = {
   deleteRelationship: (relationshipId: string) => apiRequest<void>(`/api/ci-relationships/${relationshipId}`, { method: 'DELETE' }),
   getImpactedBy: (id: string, maxDepth = 3) => apiRequest<CiGraph>(`/api/cis/${id}/impacted-by?maxDepth=${maxDepth}`),
   getAncestors: (id: string, maxDepth = 3) => apiRequest<CiGraph>(`/api/cis/${id}/ancestors?maxDepth=${maxDepth}`),
+  getImpact: (id: string, maxDepth = 5) => apiRequest<CiImpact>(`/api/cis/${id}/impact?maxDepth=${maxDepth}`),
   listTypeSchemas: () => apiRequest<CiTypeSchema[]>('/api/ci-type-schemas'),
   // Each step re-sends the file the browser already holds, so a half-mapped import is never parked
   // on the server between steps.

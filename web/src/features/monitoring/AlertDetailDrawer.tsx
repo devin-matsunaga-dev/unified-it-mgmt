@@ -3,6 +3,7 @@ import { Check, ExternalLink, Network, X } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { monitoringApi } from '../../api/monitoring'
 import { Button } from '../../components/ui/Button'
+import { BlastRadiusPanel } from '../assets/BlastRadiusPanel'
 import { suppressionLabel } from './correlation'
 import { SeverityPill, formatAge, formatLocal } from './severity'
 
@@ -134,6 +135,11 @@ export function AlertDetailDrawer({ alertId, onClose, onOpenAlert, onAcknowledge
                   </li>)}
                 </ul>}
             </Section>
+
+            {/* WP-5.2, under the asset it is about: what else fails if this one does. Rendered only
+                when the alert names a CI the CMDB still holds — a blast radius is a walk of the
+                dependency graph, and an alert whose CI has left the estate has no node to walk from. */}
+            {alert.ciFound && <BlastRadiusPanel ciId={alert.ciId} compact />}
 
             {/* The other half: what this alert is holding down. Rendered only for a cause, so an
                 ordinary alert's drawer is exactly what it was before WP-5.1. */}

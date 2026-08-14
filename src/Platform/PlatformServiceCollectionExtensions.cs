@@ -168,5 +168,10 @@ public static class PlatformServiceCollectionExtensions
         // Monitoring a root-cause ticket lists no impacted CIs and is an ordinary alert ticket.
         services.TryAddScoped<ICiDependencyDirectory, NoCiDependencyDirectory>();
         services.TryAddScoped<IAlertCorrelationDirectory, NoAlertCorrelationDirectory>();
+
+        // WP-5.2's, on the same terms. Without Helpdesk a blast radius still names every CI the outage
+        // would take with it and reports no tickets — it under-states what is at stake and can never
+        // over-state it, which is the safe direction for a number an operator triages on.
+        services.TryAddScoped<ITicketImpactDirectory, NoTicketImpactDirectory>();
     }
 }
