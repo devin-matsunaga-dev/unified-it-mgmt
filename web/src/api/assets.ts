@@ -199,6 +199,81 @@ export type CiImpact = {
   users: ImpactedUser[]
 }
 
+// ---- CI timeline (WP-5.3) -------------------------------------------------------------------
+
+/** The four things that happen to a CI. Also the filter's vocabulary: `?types=alert,ticket`. */
+export type CiTimelineEventKind = 'Alert' | 'Ticket' | 'Lifecycle' | 'Config'
+
+/**
+ * One thing that happened, already worded by the server. `title` and `detail` are composed there because
+ * composing them needs the source rows; everything typed beside them exists so the browser can link out
+ * and render the same pills the rest of the app does.
+ */
+export type CiTimelineEntry = {
+  kind: CiTimelineEventKind
+  id: string
+  occurredAt: string
+  title: string
+  detail: string | null
+  actor: string | null
+  /** Alerts only: `Ok`, `Warning` or `Critical`. A string here, like `ImpactedTicket.priority`, so
+      one module's client does not import another's vocabulary. */
+  severity: string | null
+  status: string | null
+  priority: string | null
+  alertId: string | null
+  deviceId: string | null
+  ticketId: string | null
+  ticketNumber: string | null
+  /** Set only where a ticket was attached to this CI materially later than it was raised. */
+  linkedAt: string | null
+}
+
+/**
+ * What one source contributed. `requested: false` means the filter excluded it and it was never
+ * queried — which is a different statement from "there are none", and the panel says so.
+ */
+export type CiTimelineSource = {
+  kind: CiTimelineEventKind
+  requested: boolean
+  returned: number
+  total: number
+  truncated: boolean
+}
+
+export type CiTimelineSummary = {
+  entryCount: number
+  totalCount: number
+  truncated: boolean
+  earliestAt: string | null
+  latestAt: string | null
+}
+
+export type CiTimeline = {
+  ciId: string
+  ciName: string
+  from: string | null
+  to: string | null
+  limit: number
+  kinds: CiTimelineEventKind[]
+  summary: CiTimelineSummary
+  sources: CiTimelineSource[]
+  entries: CiTimelineEntry[]
+}
+
+export type CiTimelineFilter = { types?: CiTimelineEventKind[]; from?: string; to?: string; limit?: number }
+
+export function ciTimelineQuery(filter: CiTimelineFilter) {
+  const query = new URLSearchParams()
+  // Omitted rather than sent empty: no filter means every kind, and `types=` would be a filter that
+  // asks for nothing.
+  if (filter.types?.length) query.set('types', filter.types.join(','))
+  if (filter.from) query.set('from', filter.from)
+  if (filter.to) query.set('to', filter.to)
+  if (filter.limit) query.set('limit', String(filter.limit))
+  return query.toString()
+}
+
 /**
  * What covers a CI. Contract fields are read live from the contract rather than snapshotted, so a
  * renamed contract reaches every CI it covers at once.
@@ -411,6 +486,10 @@ export const assetsApi = {
   getImpactedBy: (id: string, maxDepth = 3) => apiRequest<CiGraph>(`/api/cis/${id}/impacted-by?maxDepth=${maxDepth}`),
   getAncestors: (id: string, maxDepth = 3) => apiRequest<CiGraph>(`/api/cis/${id}/ancestors?maxDepth=${maxDepth}`),
   getImpact: (id: string, maxDepth = 5) => apiRequest<CiImpact>(`/api/cis/${id}/impact?maxDepth=${maxDepth}`),
+  getTimeline: (id: string, filter: CiTimelineFilter = {}) => {
+    const query = ciTimelineQuery(filter)
+    return apiRequest<CiTimeline>(`/api/cis/${id}/timeline${query ? `?${query}` : ''}`)
+  },
   listTypeSchemas: () => apiRequest<CiTypeSchema[]>('/api/ci-type-schemas'),
   // Each step re-sends the file the browser already holds, so a half-mapped import is never parked
   // on the server between steps.

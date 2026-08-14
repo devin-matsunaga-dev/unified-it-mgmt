@@ -17,6 +17,7 @@ import { CiFormDialog, type CiFormSubmit } from './CiFormDialog'
 import { CiLabelDialog } from './CiLabelDialog'
 import { CiLifecycleDrawer } from './CiLifecycleDrawer'
 import { CiRelationsGraph } from './CiRelationsGraph'
+import { CiTimelinePanel } from './CiTimelinePanel'
 import { ciLifecycleLabel, ciLifecycleTone, describeAssignment } from './lifecycle'
 
 /** The asset 360° page: what the CI is, what it depends on, and every ticket ever raised about it. */
@@ -98,6 +99,10 @@ export function CiDetailPage() {
             this says what that costs. */}
         <BlastRadiusPanel ciId={item.id} depth={impactDepth}
           onDeeper={() => setImpactDepth((value) => Math.min(value + 3, 10))} />
+
+        {/* WP-5.3. Above the ticket list rather than replacing it: the list answers "what work is on
+            this asset", the timeline answers "what happened to it, and in what order". */}
+        <CiTimelinePanel ciId={item.id} />
 
         <section className="rounded-xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
           <div className="flex items-center gap-3 border-b border-slate-200 p-5 dark:border-slate-800">

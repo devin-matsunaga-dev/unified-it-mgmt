@@ -15,6 +15,7 @@ using Modules.Assets.Features.Lifecycle;
 using Modules.Assets.Features.PhysicalAudits;
 using Modules.Assets.Features.Relationships;
 using Modules.Assets.Features.Software;
+using Modules.Assets.Features.Timeline;
 using Modules.Assets.Features.Topology;
 using Platform.Integration;
 using Quartz;
@@ -48,6 +49,7 @@ public static class AssetsServiceCollectionExtensions
         services.AddScoped<IDriftService, DriftService>();
         services.AddScoped<IImpactService, ImpactService>();
         services.AddScoped<IPhysicalAuditService, PhysicalAuditService>();
+        services.AddScoped<ICiTimelineService, CiTimelineService>();
         services.AddScoped<ITopologyService, TopologyService>();
         services.AddScoped<ITopologyMapService, TopologyMapService>();
         services.AddScoped<ISoftwareCatalogService, SoftwareCatalogService>();

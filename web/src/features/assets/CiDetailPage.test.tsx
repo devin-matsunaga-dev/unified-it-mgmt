@@ -2,7 +2,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { render, screen, waitFor, within } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { vi } from 'vitest'
-import { assetsApi, discoveryApi, type Ci, type CiDiscoveryFacts, type CiGraph, type CiImpact, type CiRelationships, type CiTypeSchema } from '../../api/assets'
+import { assetsApi, discoveryApi, type Ci, type CiDiscoveryFacts, type CiGraph, type CiImpact, type CiRelationships, type CiTimeline, type CiTypeSchema } from '../../api/assets'
 import { ApiError } from '../../api/client'
 import { helpdeskApi, type Ticket } from '../../api/helpdesk'
 import { formatDateOnly } from '../../lib/utils'
@@ -115,6 +115,32 @@ const discoveryFacts: CiDiscoveryFacts = {
   sightingCount: 7,
 }
 
+/**
+ * WP-5.3. Deliberately carries neither the lifecycle move nor the ticket the cards below already show:
+ * the panel is asserted in full in `CiTimelinePanel.test.tsx`, and what this page's test needs to know is
+ * that it is mounted and reading.
+ */
+const timeline: CiTimeline = {
+  ciId: host.id,
+  ciName: host.name,
+  from: null,
+  to: null,
+  limit: 50,
+  kinds: ['Alert', 'Ticket', 'Lifecycle', 'Config'],
+  summary: { entryCount: 1, totalCount: 1, truncated: false, earliestAt: '2026-08-13T09:00:00Z', latestAt: '2026-08-13T09:00:00Z' },
+  sources: [
+    { kind: 'Alert', requested: true, returned: 1, total: 1, truncated: false },
+    { kind: 'Ticket', requested: true, returned: 0, total: 0, truncated: false },
+    { kind: 'Lifecycle', requested: true, returned: 0, total: 0, truncated: false },
+    { kind: 'Config', requested: true, returned: 0, total: 0, truncated: false },
+  ],
+  entries: [{
+    kind: 'Alert', id: 'alert-1', occurredAt: '2026-08-13T09:00:00Z', title: 'Fan speed below threshold',
+    detail: '10.10.0.21 · recovered after 4 minutes', actor: null, severity: 'Warning', status: 'Cleared',
+    priority: null, alertId: 'alert-1', deviceId: 'device-1', ticketId: null, ticketNumber: null, linkedAt: null,
+  }],
+}
+
 function renderPage() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   return render(<MemoryRouter initialEntries={[`/assets/${host.id}`]}><QueryClientProvider client={client}>
@@ -131,6 +157,7 @@ describe('CiDetailPage', () => {
     vi.mocked(assetsApi.getAncestors).mockResolvedValue(ancestors)
     vi.mocked(assetsApi.getImpactedBy).mockResolvedValue(impact)
     vi.mocked(assetsApi.getImpact).mockResolvedValue(blastRadius)
+    vi.mocked(assetsApi.getTimeline).mockResolvedValue(timeline)
     vi.mocked(assetsApi.getRelationships).mockResolvedValue(relationships)
     vi.mocked(assetsApi.getLifecycleHistory).mockResolvedValue([{ id: 'history-1', ciId: host.id, fromState: 'InStock', toState: 'Deployed', note: 'Racked', actorId: 'technician1', occurredAt: '2026-08-02T00:00:00Z' }])
     vi.mocked(assetsApi.getAssignments).mockResolvedValue([])
@@ -155,6 +182,15 @@ describe('CiDetailPage', () => {
     const tickets = (await screen.findByRole('heading', { name: 'Ticket history' })).closest('section')!
     expect(within(tickets).getByRole('link', { name: 'Host fan failure' })).toHaveAttribute('href', '/tickets/ticket-1')
     expect(within(tickets).getByText('#INC-000042')).toBeInTheDocument()
+  })
+
+  /** WP-5.3: the interleaved history is on the asset page, under the blast radius. */
+  it('shows the asset timeline', async () => {
+    renderPage()
+
+    const panel = (await screen.findByRole('heading', { name: 'Timeline' })).closest('section')!
+    expect(await within(panel).findByText('Fan speed below threshold')).toBeInTheDocument()
+    expect(within(panel).getByRole('button', { name: 'Alerts' })).toBeInTheDocument()
   })
 
   /**

@@ -358,3 +358,159 @@ public sealed class NoTicketImpactDirectory : ITicketImpactDirectory
         CancellationToken cancellationToken) =>
         Task.FromResult(new ImpactedTicketSet([], 0));
 }
+
+/// <summary>
+/// What has gone wrong on one CI and when — the read Assets makes of Monitoring while assembling a CI's
+/// timeline (WP-5.3).
+/// <para>
+/// A third read of Monitoring rather than a method on <see cref="IAlertCorrelationDirectory"/>, which is
+/// asked what one alert is currently explaining and is deliberately about an outage happening now. This
+/// one is asked about one CI across all of history, cleared alerts included, and it is the cleared ones
+/// that make a timeline worth reading — an alert board shows what is broken, a timeline shows what has
+/// been.
+/// </para>
+/// <para>
+/// Read-only and narrow, per ARCHITECTURE §3. Nothing here acknowledges, clears or suppresses an alert.
+/// </para>
+/// </summary>
+public interface ICiAlertHistoryDirectory
+{
+    /// <summary>
+    /// The alerts raised against <paramref name="ciId"/> inside the window, newest first, capped at
+    /// <paramref name="limit"/>. Both bounds are inclusive and either may be null for "no bound".
+    /// <para>
+    /// Windowed at the source rather than after the merge, so a timeline filtered to last week costs one
+    /// week of alerts rather than the estate's whole history — and so the cap, when it bites, takes the
+    /// oldest of what was asked for rather than an arbitrary slice.
+    /// </para>
+    /// </summary>
+    Task<CiAlertHistory> GetAlertsForCiAsync(
+        Guid ciId,
+        DateTimeOffset? from,
+        DateTimeOffset? to,
+        int limit,
+        CancellationToken cancellationToken);
+}
+
+/// <summary>The alerts to render, and how many the window really holds behind the cap.</summary>
+public sealed record CiAlertHistory(IReadOnlyList<CiAlertHistoryEntry> Alerts, int Total);
+
+/// <summary>
+/// One alert in a CI's history, open or long since recovered.
+/// </summary>
+/// <param name="DeviceAddress">
+/// Which of the CI's monitored devices raised it, by the address it is polled at — a device has no name
+/// of its own, it borrows the CI's. A CI can carry several, and "CPU above 90%" with nothing beside it is
+/// unreadable on a host that is polled twice.
+/// </param>
+/// <param name="ClearedAt">
+/// Null while the alert is still open. Carried beside <c>RaisedAt</c> rather than emitted as a second
+/// event, so one problem is one row on the axis.
+/// </param>
+public sealed record CiAlertHistoryEntry(
+    Guid AlertId,
+    Guid DeviceId,
+    string DeviceAddress,
+    string RuleId,
+    string MetricName,
+    string Severity,
+    string Status,
+    string Summary,
+    string Suppression,
+    DateTimeOffset RaisedAt,
+    DateTimeOffset? ClearedAt,
+    DateTimeOffset? AcknowledgedAt,
+    string? AcknowledgedByName);
+
+/// <summary>
+/// The answer a host with no Monitoring module gives: this CI has never alerted.
+/// <para>
+/// Registered by <c>AddPlatformServices</c> with <c>TryAdd</c>, following
+/// <see cref="NoAlertCorrelationDirectory"/>. The degradation is worth stating plainly because it is the
+/// one direction a timeline cannot signal: an empty answer here is indistinguishable from a quiet CI.
+/// That is acceptable only because the timeline is a read of one host's own modules — a host serving the
+/// CI page has Monitoring in it — and it is the reason this port is a read of history rather than
+/// something the alert board depends on.
+/// </para>
+/// </summary>
+public sealed class NoCiAlertHistoryDirectory : ICiAlertHistoryDirectory
+{
+    public Task<CiAlertHistory> GetAlertsForCiAsync(
+        Guid ciId,
+        DateTimeOffset? from,
+        DateTimeOffset? to,
+        int limit,
+        CancellationToken cancellationToken) =>
+        Task.FromResult(new CiAlertHistory([], 0));
+}
+
+/// <summary>
+/// Every ticket ever raised about one CI — the read Assets makes of Helpdesk for the same timeline.
+/// <para>
+/// The third Helpdesk port, and the reason is the same one that split the second from the first:
+/// <see cref="ITicketLinkDirectory"/> answers "is anything <em>open</em> on this CI" for a delete guard,
+/// <see cref="ITicketImpactDirectory"/> answers the same question about a whole outage with an SLA clock
+/// attached, and both are deliberately about unfinished work. A timeline is about finished work — a
+/// resolved ticket from March is exactly the thing somebody scrolls back to find.
+/// </para>
+/// <para>
+/// Read-only and narrow, per ARCHITECTURE §3.
+/// </para>
+/// </summary>
+public interface ICiTicketHistoryDirectory
+{
+    /// <summary>
+    /// The tickets linked to <paramref name="ciId"/> that were raised inside the window, newest first,
+    /// capped at <paramref name="limit"/>. Every status, because history includes what was closed.
+    /// </summary>
+    Task<CiTicketHistory> GetTicketsForCiAsync(
+        Guid ciId,
+        DateTimeOffset? from,
+        DateTimeOffset? to,
+        int limit,
+        CancellationToken cancellationToken);
+}
+
+/// <summary>The tickets to render, and how many the window really holds behind the cap.</summary>
+public sealed record CiTicketHistory(IReadOnlyList<CiTicketHistoryEntry> Tickets, int Total);
+
+/// <summary>
+/// One ticket in a CI's history.
+/// </summary>
+/// <param name="CreatedAt">
+/// When the ticket was raised, which is the moment it takes on the axis.
+/// </param>
+/// <param name="LinkedAt">
+/// When somebody attached it to this CI, which is a different and later moment for a ticket triaged onto
+/// an asset days after it was reported. Carried so the entry can say so rather than silently claiming the
+/// asset was implicated from the start.
+/// </param>
+public sealed record CiTicketHistoryEntry(
+    Guid TicketId,
+    string Number,
+    string Title,
+    string Status,
+    string Priority,
+    string Type,
+    string? RequesterName,
+    DateTimeOffset CreatedAt,
+    DateTimeOffset LinkedAt);
+
+/// <summary>
+/// The answer a host with no Helpdesk module gives: nothing was ever raised about this CI.
+/// <para>
+/// Registered by <c>AddPlatformServices</c> with <c>TryAdd</c>, following
+/// <see cref="NoTicketImpactDirectory"/>, and carrying the same caveat as
+/// <see cref="NoCiAlertHistoryDirectory"/>.
+/// </para>
+/// </summary>
+public sealed class NoCiTicketHistoryDirectory : ICiTicketHistoryDirectory
+{
+    public Task<CiTicketHistory> GetTicketsForCiAsync(
+        Guid ciId,
+        DateTimeOffset? from,
+        DateTimeOffset? to,
+        int limit,
+        CancellationToken cancellationToken) =>
+        Task.FromResult(new CiTicketHistory([], 0));
+}

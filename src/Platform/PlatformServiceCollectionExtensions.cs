@@ -42,6 +42,7 @@ public static class PlatformServiceCollectionExtensions
             options.UseNpgsql(connectionString);
         });
         services.AddScoped<IAuditService, AuditService>();
+        services.AddScoped<IAuditTrail, AuditTrailReader>();
         services.AddScoped<IDirectoryService, DirectoryService>();
         AddCredentialVault(services);
         services.AddScoped<IConsumerIdempotencyService, ConsumerIdempotencyService>();
@@ -173,5 +174,13 @@ public static class PlatformServiceCollectionExtensions
         // would take with it and reports no tickets — it under-states what is at stake and can never
         // over-state it, which is the safe direction for a number an operator triages on.
         services.TryAddScoped<ITicketImpactDirectory, NoTicketImpactDirectory>();
+
+        // WP-5.3's two, on the same terms — but the direction of the degradation is the opposite one and
+        // is worth naming. A timeline missing a source shows a quiet CI rather than an incomplete answer,
+        // because an empty list of alerts and "no alerts ever" are the same JSON. The trade is accepted
+        // because these are read by the CI page of a host that has all three modules in it; a host wired
+        // without one of them gets a shorter history rather than a failure at start-up.
+        services.TryAddScoped<ICiAlertHistoryDirectory, NoCiAlertHistoryDirectory>();
+        services.TryAddScoped<ICiTicketHistoryDirectory, NoCiTicketHistoryDirectory>();
     }
 }

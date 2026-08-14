@@ -53,6 +53,7 @@ public static class MonitoringServiceCollectionExtensions
         services.AddScoped<IAlertEnrichmentService, AlertEnrichmentService>();
         services.AddScoped<IAlertEngine, AlertEngine>();
         services.AddScoped<IAlertCorrelationDirectory, AlertCorrelationDirectory>();
+        services.AddScoped<ICiAlertHistoryDirectory, CiAlertHistoryDirectory>();
         services.AddScoped<IAlertService, AlertService>();
         services.AddScoped<IStatusBoardService, StatusBoardService>();
         services.AddScoped<IMonitoringLiveUpdateService, MonitoringLiveUpdateService>();
