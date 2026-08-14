@@ -95,6 +95,13 @@ Console.WriteLine($"Asset estate ready. Added {assetsResult.VendorsAdded} vendor
 var softwareResult = await new SoftwareCatalogSeeder(assetsDbContext).SeedAsync(assetsResult.CiIds);
 Console.WriteLine($"Software inventory ready. Added {softwareResult.ProductsAdded} catalogue products, {softwareResult.RulesAdded} normalisation rules, {softwareResult.InstallsAdded} installed software rows, and {softwareResult.LicensePoolsAdded} licence pools.");
 
+// What a scan would have observed about that estate (WP-4.6). It has to come after the CIs for the
+// same reason the software does — every row names one — and it exists at all because a live scan of
+// the Aspire session network finds Docker addresses rather than the estate's, so the drift report
+// would otherwise open empty on every fresh database.
+var discoveryFactsResult = await new DiscoveryFactsSeeder(assetsDbContext).SeedAsync(assetsResult.CiIds);
+Console.WriteLine($"Discovery observations ready. Added {discoveryFactsResult.FactsAdded} CI discovery fact rows.");
+
 var linkResult = await new HelpdeskCiLinkSeeder(helpdeskDbContext).SeedAsync(new CiLinkPlan(
     assetsResult.HardwareCiIds,
     assetsResult.NetworkCiIds,

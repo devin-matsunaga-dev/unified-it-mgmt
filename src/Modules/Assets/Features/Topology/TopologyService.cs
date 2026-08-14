@@ -154,6 +154,23 @@ public sealed class TopologyService(AssetsDbContext dbContext, IConfiguration co
             limitReached);
     }
 
+    public async Task<TopologyReconciliation> ReconcileObservedLinksAsync(CancellationToken cancellationToken)
+    {
+        var assertedPairs = await dbContext.CiRelationships.AsNoTracking()
+            .Select(relationship => new { relationship.SourceCiId, relationship.TargetCiId })
+            .ToListAsync(cancellationToken);
+        var facts = await dbContext.CiDiscoveryFacts.AsNoTracking()
+            .Select(row => new FactsRow(row.CiId, row.Address, row.SysName, row.NeighboursJson, row.LastSeenAt))
+            .ToListAsync(cancellationToken);
+
+        return await ReconcileAsync(
+            facts,
+            assertedPairs
+                .Select(pair => TopologyNeighbourReconciler.Pair(pair.SourceCiId, pair.TargetCiId))
+                .ToHashSet(),
+            cancellationToken);
+    }
+
     private async Task<TopologyReconciliation> ReconcileAsync(
         IReadOnlyList<FactsRow> facts,
         IReadOnlySet<(Guid, Guid)> assertedPairs,

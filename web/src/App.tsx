@@ -7,7 +7,10 @@ import { ForbiddenPage } from './pages/ForbiddenPage'
 import { CiDetailPage } from './features/assets/CiDetailPage'
 import { CiImportWizard } from './features/assets/CiImportWizard'
 import { CiListPage } from './features/assets/CiListPage'
+import { AuditSessionPage } from './features/assets/AuditSessionPage'
+import { AuditSessionsPage } from './features/assets/AuditSessionsPage'
 import { DiscoveryReviewPage } from './features/assets/DiscoveryReviewPage'
+import { DriftReportPage } from './features/assets/DriftReportPage'
 import { ScanPage } from './features/assets/ScanPage'
 import { ContractDetailPage } from './features/contracts/ContractDetailPage'
 import { ContractListPage } from './features/contracts/ContractListPage'
@@ -49,7 +52,10 @@ export function App() {
       <Route path="assets" element={<ProtectedRoute roles={['Admin', 'Technician', 'Manager']}><CiListPage /></ProtectedRoute>} />
       <Route path="assets/import" element={<ProtectedRoute roles={['Admin', 'Technician', 'Manager']}><CiImportWizard /></ProtectedRoute>} />
       <Route path="assets/discovery" element={<ProtectedRoute roles={['Admin', 'Technician', 'Manager']}><DiscoveryReviewPage /></ProtectedRoute>} />
+      <Route path="assets/drift" element={<ProtectedRoute roles={['Admin', 'Technician', 'Manager']}><DriftReportPage /></ProtectedRoute>} />
       <Route path="assets/:id" element={<ProtectedRoute roles={['Admin', 'Technician', 'Manager']}><CiDetailPage /></ProtectedRoute>} />
+      <Route path="audits" element={<ProtectedRoute roles={['Admin', 'Technician', 'Manager']}><AuditSessionsPage /></ProtectedRoute>} />
+      <Route path="audits/:id" element={<ProtectedRoute roles={['Admin', 'Technician', 'Manager']}><AuditSessionPage /></ProtectedRoute>} />
       <Route path="topology" element={<ProtectedRoute roles={['Admin', 'Technician', 'Manager']}><TopologyPage /></ProtectedRoute>} />
       <Route path="software" element={<ProtectedRoute roles={['Admin', 'Technician', 'Manager']}><SoftwarePage /></ProtectedRoute>} />
       <Route path="software/import" element={<ProtectedRoute roles={['Admin', 'Technician', 'Manager']}><SoftwareImportPage /></ProtectedRoute>} />

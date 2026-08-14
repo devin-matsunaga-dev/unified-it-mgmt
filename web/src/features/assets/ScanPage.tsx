@@ -65,6 +65,11 @@ export function ScanPage() {
         Point a phone camera at a label&apos;s QR to open its asset page. Use the box below for a handheld
         scanner, or to look an asset up by its printed asset tag or serial number.
       </p>
+      {/* Counting a site is the same gesture aimed at a list, so the two belong beside each other. */}
+      <p className="mt-2 text-sm text-slate-500">
+        Counting a whole site? <Link to="/audits" className="font-medium text-blue-600 hover:underline">Start a physical audit</Link> and
+        every scan is confirmed against what the CMDB expects to be there.
+      </p>
     </div>
 
     <form className="rounded-xl border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-slate-900"
