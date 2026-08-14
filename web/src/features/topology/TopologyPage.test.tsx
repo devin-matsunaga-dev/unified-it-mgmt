@@ -106,7 +106,7 @@ const board: StatusBoard = {
   total: 1,
   page: 1,
   pageSize: 200,
-  counts: { devices: 1, ok: 1, warning: 0, critical: 0, unknown: 0, disabled: 0, openAlerts: 0 },
+  counts: { devices: 1, ok: 1, warning: 0, critical: 0, unknown: 0, disabled: 0 },
 }
 
 function renderPage() {
