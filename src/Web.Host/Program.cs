@@ -119,6 +119,7 @@ app.MapHealthChecks("/health");
 app.MapAuthenticationEndpoints();
 app.MapPlatformEndpoints();
 app.MapDirectoryEndpoints();
+app.MapSearchEndpoints();
 app.MapNotificationEndpoints();
 app.MapCredentialEndpoints();
 app.MapSystemPingEndpoints();

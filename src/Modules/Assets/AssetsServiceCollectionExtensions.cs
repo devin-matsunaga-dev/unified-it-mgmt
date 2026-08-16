@@ -14,10 +14,12 @@ using Modules.Assets.Features.Labels;
 using Modules.Assets.Features.Lifecycle;
 using Modules.Assets.Features.PhysicalAudits;
 using Modules.Assets.Features.Relationships;
+using Modules.Assets.Features.Search;
 using Modules.Assets.Features.Software;
 using Modules.Assets.Features.Timeline;
 using Modules.Assets.Features.Topology;
 using Platform.Integration;
+using Platform.Search;
 using Quartz;
 
 namespace Modules.Assets;
@@ -35,6 +37,9 @@ public static class AssetsServiceCollectionExtensions
             options.UseNpgsql(connectionString);
         });
         services.AddScoped<ICiService, CiService>();
+        // WP-5.4. Assets answers about its own CIs; the merge happens in Platform, which cannot
+        // see this module at all.
+        services.AddScoped<ISearchSource, CiSearchSource>();
         services.AddScoped<ICiDirectory, CiDirectory>();
         services.AddScoped<ICiLifecycleService, CiLifecycleService>();
         services.AddScoped<ICiRelationshipService, CiRelationshipService>();

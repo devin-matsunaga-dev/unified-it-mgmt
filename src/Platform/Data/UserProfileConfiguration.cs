@@ -24,5 +24,14 @@ public sealed class UserProfileConfiguration : IEntityTypeConfiguration<UserProf
             .OnDelete(DeleteBehavior.Restrict);
         builder.HasOne(user => user.Department).WithMany().HasForeignKey(user => user.DepartmentId)
             .OnDelete(DeleteBehavior.Restrict);
+
+        // WP-5.4. Display name first because that is what somebody types; username and email are here so
+        // that "enduser3" and "enduser3@example.test" both find the person, which is how an operator
+        // arrives from a ticket's requester id rather than from a name.
+        builder.HasGeneratedTsVectorColumn(
+                user => user.SearchVector,
+                "english",
+                user => new { user.DisplayName, user.Username, user.Email })
+            .HasIndex(user => user.SearchVector).HasMethod("GIN");
     }
 }

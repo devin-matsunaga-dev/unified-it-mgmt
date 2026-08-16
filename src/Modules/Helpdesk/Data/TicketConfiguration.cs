@@ -29,9 +29,29 @@ public sealed class TicketConfiguration : IEntityTypeConfiguration<Ticket>
             .OnDelete(DeleteBehavior.Restrict);
         builder.HasIndex(ticket => ticket.AssignedTechnicianId);
         builder.HasIndex(ticket => ticket.CategoryId);
-        builder.HasGeneratedTsVectorColumn(
-                ticket => ticket.SearchVector, "english", ticket => new { ticket.Title, ticket.Description })
-            .HasIndex(ticket => ticket.SearchVector).HasMethod("GIN");
+        // WP-1.10 generated this over title and description alone. WP-5.4 widened it and weighted it, and
+        // both halves are deliberate:
+        //
+        //  * The requester's name is in it because "requester name finds tickets" is WP-5.4's own
+        //    verification step, and because there is only one answer to "what is a ticket searchable by" —
+        //    a global search box that matched a name and a ticket list that did not would be one platform
+        //    disagreeing with itself about the same word. The ticket list gains the same reach as a result.
+        //  * setweight is what makes ts_rank prefer a title match to a passing mention in a description.
+        //    Without it the ticket about the thing outranks the ticket the search was for as often as not.
+        //
+        // Written out rather than declared with HasGeneratedTsVectorColumn because that helper cannot
+        // weight. The dictionary is named explicitly so the expression is IMMUTABLE, which Postgres
+        // requires of a generated column — the one-argument to_tsvector reads a session setting and is not.
+        builder.Property(ticket => ticket.SearchVector)
+            .HasColumnType("tsvector")
+            .HasComputedColumnSql(
+                """
+                setweight(to_tsvector('english', coalesce(title, '')), 'A')
+                || setweight(to_tsvector('english', coalesce(requester_display_name, '')), 'B')
+                || setweight(to_tsvector('english', coalesce(description, '')), 'C')
+                """,
+                stored: true);
+        builder.HasIndex(ticket => ticket.SearchVector).HasMethod("GIN");
         builder.Ignore(ticket => ticket.Number);
     }
 }

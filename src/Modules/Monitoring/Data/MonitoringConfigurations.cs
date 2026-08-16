@@ -19,6 +19,14 @@ public sealed class MonitoredDeviceConfiguration : IEntityTypeConfiguration<Moni
         // alert-to-CI correlation would have to pick one.
         builder.HasIndex(device => device.CiId).IsUnique();
         builder.HasIndex(device => new { device.PollerGroup, device.IsEnabled });
+
+        // WP-5.4. Unweighted, unlike tickets and CIs: a device has no title and no prose, only three short
+        // facts about itself, and pretending one of them outranks the others would be an invention.
+        builder.HasGeneratedTsVectorColumn(
+                device => device.SearchVector,
+                "english",
+                device => new { device.Address, device.PollerGroup, device.Notes })
+            .HasIndex(device => device.SearchVector).HasMethod("GIN");
     }
 }
 
@@ -83,6 +91,14 @@ public sealed class AlertConfiguration : IEntityTypeConfiguration<Alert>
         // alert board asks once per root-cause row it renders.
         builder.HasIndex(alert => alert.RootCauseAlertId)
             .HasFilter("root_cause_alert_id IS NOT NULL");
+
+        // WP-5.4. The summary is the sentence a person remembers ("CPU above 90%"); the rule id and the
+        // metric name are the strings they copy out of a ticket or a chart and paste into a search box.
+        builder.HasGeneratedTsVectorColumn(
+                alert => alert.SearchVector,
+                "english",
+                alert => new { alert.Summary, alert.RuleId, alert.MetricName })
+            .HasIndex(alert => alert.SearchVector).HasMethod("GIN");
 
         // SetNull rather than Cascade or Restrict, and the choice is forced by the cascade below.
         // Alerts go when their device goes, so deleting the switch deletes the cause while its

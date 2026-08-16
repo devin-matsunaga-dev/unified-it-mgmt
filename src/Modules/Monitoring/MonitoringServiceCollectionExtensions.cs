@@ -14,7 +14,9 @@ using Modules.Monitoring.Features.Interfaces;
 using Modules.Monitoring.Features.MaintenanceWindows;
 using Modules.Monitoring.Features.Metrics;
 using Modules.Monitoring.Features.PollerConfig;
+using Modules.Monitoring.Features.Search;
 using Platform.Integration;
+using Platform.Search;
 using Quartz;
 
 namespace Modules.Monitoring;
@@ -55,6 +57,10 @@ public static class MonitoringServiceCollectionExtensions
         services.AddScoped<IAlertCorrelationDirectory, AlertCorrelationDirectory>();
         services.AddScoped<ICiAlertHistoryDirectory, CiAlertHistoryDirectory>();
         services.AddScoped<IAlertService, AlertService>();
+        // WP-5.4. Two sources from one module: a device and what is wrong with it are different
+        // questions and land in different groups.
+        services.AddScoped<ISearchSource, DeviceSearchSource>();
+        services.AddScoped<ISearchSource, AlertSearchSource>();
         services.AddScoped<IStatusBoardService, StatusBoardService>();
         services.AddScoped<IMonitoringLiveUpdateService, MonitoringLiveUpdateService>();
         services.AddScoped<IAlertNotificationService, AlertNotificationService>();

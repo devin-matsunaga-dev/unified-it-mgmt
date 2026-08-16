@@ -7,6 +7,7 @@ using Microsoft.EntityFrameworkCore;
 using Modules.Helpdesk.Data;
 using Platform.Auditing;
 using Platform.Notifications;
+using Platform.Search;
 using Modules.Helpdesk.Features.Sla;
 using Modules.Helpdesk.Features.Categories;
 
@@ -19,8 +20,12 @@ public sealed class TicketService(
     ISlaService slaService,
     INotificationService notificationService) : ITicketService
 {
-    /// <summary>The text-search dictionary the generated tsvector columns are built with.</summary>
-    internal const string SearchConfiguration = "english";
+    /// <summary>
+    /// The text-search dictionary the generated tsvector columns are built with. One definition for the
+    /// whole solution since WP-5.4 — a column generated with one dictionary and queried with another
+    /// silently stops matching anything that stems.
+    /// </summary>
+    internal const string SearchConfiguration = SearchTerm.Configuration;
 
     public async Task<TicketWriteResult> CreateAsync(
         CreateTicketRequest request,

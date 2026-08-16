@@ -13,7 +13,9 @@ using Modules.Helpdesk.Features.Interactions;
 using Modules.Helpdesk.Features.Sla;
 using Modules.Helpdesk.Features.Email;
 using Modules.Helpdesk.Features.TicketCis;
+using Modules.Helpdesk.Features.Search;
 using Platform.Integration;
+using Platform.Search;
 using Quartz;
 
 namespace Modules.Helpdesk;
@@ -31,6 +33,9 @@ public static class HelpdeskServiceCollectionExtensions
             options.UseNpgsql(connectionString);
         });
         services.AddScoped<ITicketService, TicketService>();
+        // WP-5.4. Registered here rather than in Platform because the query is over Helpdesk's own
+        // schema; the service that merges the five holds no reference to any module.
+        services.AddScoped<ISearchSource, TicketSearchSource>();
         services.AddScoped<ICategoryService, CategoryService>();
         services.AddScoped<IAssignmentService, AssignmentService>();
         services.AddScoped<ITicketCiLinkService, TicketCiLinkService>();

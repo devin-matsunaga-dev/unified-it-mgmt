@@ -1,4 +1,4 @@
-import { AppWindow, Bell, Boxes, ClipboardCheck, Radar, FileText, ChevronRight, CircleHelp, Contact, Gauge, GitCompareArrows, Headphones, LogOut, Mail, Menu, MonitorCog, ScanLine, Search, Settings, ShieldCheck, Users, Waypoints, X } from 'lucide-react'
+import { AppWindow, Bell, Boxes, ClipboardCheck, Radar, FileText, ChevronRight, CircleHelp, Contact, Gauge, GitCompareArrows, Headphones, LogOut, Mail, Menu, MonitorCog, ScanLine, Settings, ShieldCheck, Users, Waypoints, X } from 'lucide-react'
 import { useEffect, useRef, useState, type ComponentType } from 'react'
 import { NavLink, Outlet, useLocation } from 'react-router-dom'
 import { useAuth } from '../auth/AuthProvider'
@@ -6,6 +6,7 @@ import type { AppRole } from '../auth/auth'
 import { cn } from '../lib/utils'
 import { ThemeToggle } from '../components/ThemeToggle'
 import { Button } from '../components/ui/Button'
+import { GlobalSearch } from '../features/search/GlobalSearch'
 
 type NavItem = { label: string; to: string; icon: ComponentType<{ size?: number }>; roles?: AppRole[] }
 const navigation: NavItem[] = [
@@ -86,7 +87,7 @@ export function AppShell() {
     <main className="min-h-screen lg:ml-[232px]">
       <header className="flex min-h-20 items-center gap-3 border-b border-slate-200 bg-white px-6 dark:border-slate-800 dark:bg-slate-900 lg:px-7">
         <div className="ml-12 lg:ml-0"><h1 className="text-xl font-bold sm:text-2xl">{pageContext.title}</h1><p className="hidden text-sm text-slate-500 sm:block">{pageContext.subtitle}</p></div>
-        <div className="ml-auto hidden h-10 max-w-sm flex-1 items-center gap-2 rounded-lg border border-slate-200 px-3 text-slate-500 md:flex dark:border-slate-700"><Search size={18} /><input aria-label="Global search" className="w-full bg-transparent text-sm outline-none" placeholder="Search..." /></div>
+        <GlobalSearch />
         <ThemeToggle /><Button variant="ghost" className="relative size-10 p-0" aria-label="Notifications"><Bell size={20} /><span className="absolute right-1 top-1 grid size-4 place-items-center rounded-full bg-blue-600 text-[10px] text-white">3</span></Button><Button variant="ghost" className="hidden size-10 p-0 sm:inline-flex" aria-label="Help"><CircleHelp size={20} /></Button>
       </header>
       <div className="p-4 sm:p-6"><Outlet /></div>

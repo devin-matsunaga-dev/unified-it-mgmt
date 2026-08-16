@@ -38,6 +38,32 @@ public sealed class ConfigurationItemConfiguration : IEntityTypeConfiguration<Co
             .HasForeignKey(ci => ci.ContractId)
             .OnDelete(DeleteBehavior.Restrict);
 
+        // WP-5.4. Written out as SQL rather than declared with HasGeneratedTsVectorColumn, which the rest of
+        // the solution uses, for two reasons that both come from this table:
+        //
+        //  * TPH. A hostname and a management IP are exactly what somebody searches a server or a switch by,
+        //    and they are properties of derived types — which the fluent helper cannot reach from the base
+        //    type's configuration, even though TPH has already put all of them in this one table.
+        //  * Weighting. A CI has a name and it has a paragraph about it; matching the name is a better
+        //    answer, and setweight is what tells ts_rank so. Without it "core switch" ranks a CI whose
+        //    description mentions the core switch level with the core switch itself.
+        //
+        // The expression must be IMMUTABLE for Postgres to accept it as a generated column, which is why the
+        // dictionary is named explicitly: the one-argument to_tsvector reads a session setting and is only
+        // STABLE. Nothing here is user input — this is a schema definition, not a query (ARCHITECTURE §7.5).
+        builder.Property(ci => ci.SearchVector)
+            .HasColumnType("tsvector")
+            .HasComputedColumnSql(
+                """
+                setweight(to_tsvector('english', coalesce(name, '') || ' ' || coalesce(asset_tag, '')
+                    || ' ' || coalesce(serial_number, '')), 'A')
+                || setweight(to_tsvector('english', coalesce(server_hostname, '') || ' '
+                    || coalesce(virtual_hostname, '') || ' ' || coalesce(management_ip, '')), 'B')
+                || setweight(to_tsvector('english', coalesce(description, '')), 'C')
+                """,
+                stored: true);
+        builder.HasIndex(ci => ci.SearchVector).HasMethod("GIN");
+
         builder.HasIndex("CiType", "Name");
         builder.HasIndex(ci => ci.ContractId);
         builder.HasIndex(ci => ci.WarrantyExpiresAt);

@@ -15,6 +15,7 @@ using Platform.Integration;
 using Platform.Notifications;
 using Platform.Scheduling;
 using Platform.Messaging;
+using Platform.Search;
 using Platform.Vault;
 
 using MassTransit;
@@ -44,6 +45,13 @@ public static class PlatformServiceCollectionExtensions
         services.AddScoped<IAuditService, AuditService>();
         services.AddScoped<IAuditTrail, AuditTrailReader>();
         services.AddScoped<IDirectoryService, DirectoryService>();
+
+        // WP-5.4. The service holds no reference to any module: it is handed whatever ISearchSource
+        // implementations the host has registered, and each module registers its own beside its services.
+        // A host missing a module therefore searches the sources it has rather than failing to start —
+        // and, unlike a port's no-op fallback, it reports the missing kind as absent instead of empty.
+        services.AddScoped<ISearchService, SearchService>();
+        services.AddScoped<ISearchSource, UserSearchSource>();
         AddCredentialVault(services);
         services.AddScoped<IConsumerIdempotencyService, ConsumerIdempotencyService>();
         services.AddScoped<ISystemPingPublisher, SystemPingPublisher>();
