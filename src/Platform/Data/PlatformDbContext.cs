@@ -16,6 +16,7 @@ public sealed class PlatformDbContext(DbContextOptions<PlatformDbContext> option
     public DbSet<NotificationRoutingRule> NotificationRoutingRules => Set<NotificationRoutingRule>();
     public DbSet<UserNotificationPreference> UserNotificationPreferences => Set<UserNotificationPreference>();
     public DbSet<NotificationDelivery> NotificationDeliveries => Set<NotificationDelivery>();
+    public DbSet<DashboardView> DashboardViews => Set<DashboardView>();
     public DbSet<Credential> Credentials => Set<Credential>();
     public DbSet<CredentialGrant> CredentialGrants => Set<CredentialGrant>();
     public DbSet<CredentialGrantItem> CredentialGrantItems => Set<CredentialGrantItem>();

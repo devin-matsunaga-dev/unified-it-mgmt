@@ -15,9 +15,9 @@ const ticket: Ticket = { id: 'ticket-1', number: 'INC-000001', title: 'VPN unava
 
 const savedView: TicketView = { id: 'view-1', name: 'Unassigned high priority', ownerId: 'tech-1', ownerName: 'Technician One', isShared: true, isMine: false, filter: { priorities: ['High'], unassigned: true }, createdAt: '2026-08-07T00:00:00Z', updatedAt: '2026-08-07T00:00:00Z' }
 
-function renderPage() {
+function renderPage(entry = '/tickets') {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })
-  return render(<MemoryRouter><QueryClientProvider client={client}><TicketListPage /></QueryClientProvider></MemoryRouter>)
+  return render(<MemoryRouter initialEntries={[entry]}><QueryClientProvider client={client}><TicketListPage /></QueryClientProvider></MemoryRouter>)
 }
 
 describe('TicketListPage', () => {
@@ -62,6 +62,27 @@ describe('TicketListPage', () => {
     vi.mocked(helpdeskApi.listTickets).mockResolvedValue({ items: [ticket], total: 1, page: 1, pageSize: 200 })
     await userEvent.click(screen.getByRole('button', { name: 'Try again' }))
     expect(await screen.findByText('VPN unavailable')).toBeInTheDocument()
+  })
+
+  /**
+   * The receiving half of a WP-5.5 dashboard deep link: a widget's Critical band opens this list already
+   * narrowed. Asserted on what reaches the API, because a filter the table applied but the query did not
+   * would show one page of the right rows and the wrong total.
+   */
+  it('opens narrowed to the priority a deep link names', async () => {
+    vi.mocked(helpdeskApi.listTickets).mockResolvedValue({ items: [ticket], total: 1, page: 1, pageSize: 200 })
+    renderPage('/tickets?priority=Critical')
+    await waitFor(() => expect(helpdeskApi.listTickets)
+      .toHaveBeenCalledWith(expect.objectContaining({ priorities: ['Critical'] })))
+  })
+
+  it('ignores a deep link asking for a priority that does not exist', async () => {
+    // A link that narrowed the list to nothing looks exactly like a broken screen, so an unrecognised
+    // value is dropped rather than sent.
+    vi.mocked(helpdeskApi.listTickets).mockResolvedValue({ items: [ticket], total: 1, page: 1, pageSize: 200 })
+    renderPage('/tickets?priority=Apocalyptic')
+    await waitFor(() => expect(helpdeskApi.listTickets).toHaveBeenCalled())
+    expect(vi.mocked(helpdeskApi.listTickets).mock.calls[0][0]).not.toHaveProperty('priorities')
   })
 
   it('blocks an invalid quick-create submission at the edge', async () => {

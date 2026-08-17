@@ -77,9 +77,9 @@ const report: SoftwareCompliance = {
   ],
 }
 
-function renderPage() {
+function renderPage(entry = '/software') {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })
-  return render(<MemoryRouter><QueryClientProvider client={client}><SoftwarePage /></QueryClientProvider></MemoryRouter>)
+  return render(<MemoryRouter initialEntries={[entry]}><QueryClientProvider client={client}><SoftwarePage /></QueryClientProvider></MemoryRouter>)
 }
 
 describe('SoftwarePage', () => {
@@ -87,6 +87,22 @@ describe('SoftwarePage', () => {
     vi.clearAllMocks()
     vi.mocked(softwareApi.getCompliance).mockResolvedValue(report)
     vi.mocked(softwareApi.listUnrecognised).mockResolvedValue([])
+  })
+
+  /**
+   * The receiving half of a WP-5.5 dashboard deep link: the widget's Over-deployed band opens this report
+   * on that state. Asserted on what reaches the API, because the filter is applied by the server.
+   */
+  it('opens filtered to the compliance state a deep link names', async () => {
+    renderPage('/software?compliance=OverDeployed')
+
+    await waitFor(() => expect(softwareApi.getCompliance).toHaveBeenCalledWith('OverDeployed', undefined))
+  })
+
+  it('ignores a deep link asking for a compliance state that does not exist', async () => {
+    renderPage('/software?compliance=Bankrupt')
+
+    await waitFor(() => expect(softwareApi.getCompliance).toHaveBeenCalledWith(undefined, undefined))
   })
 
   it('states the shortfall in words rather than a signed number', async () => {

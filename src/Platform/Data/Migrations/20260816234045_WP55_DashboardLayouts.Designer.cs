@@ -2,6 +2,7 @@
 using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 using NpgsqlTypes;
@@ -12,9 +13,11 @@ using Platform.Data;
 namespace Platform.Data.Migrations
 {
     [DbContext(typeof(PlatformDbContext))]
-    partial class PlatformDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260816234045_WP55_DashboardLayouts")]
+    partial class WP55_DashboardLayouts
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -479,54 +482,6 @@ namespace Platform.Data.Migrations
                     b.ToTable("credential_grant_items", "platform");
                 });
 
-            modelBuilder.Entity("Platform.Data.DashboardView", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .HasColumnType("uuid")
-                        .HasColumnName("id");
-
-                    b.Property<DateTimeOffset>("CreatedAt")
-                        .HasColumnType("timestamp with time zone")
-                        .HasColumnName("created_at");
-
-                    b.Property<bool>("IsActive")
-                        .HasColumnType("boolean")
-                        .HasColumnName("is_active");
-
-                    b.Property<string>("Name")
-                        .IsRequired()
-                        .HasMaxLength(60)
-                        .HasColumnType("character varying(60)")
-                        .HasColumnName("name");
-
-                    b.Property<string>("OwnerId")
-                        .IsRequired()
-                        .HasMaxLength(200)
-                        .HasColumnType("character varying(200)")
-                        .HasColumnName("owner_id");
-
-                    b.Property<string>("PlacementsJson")
-                        .IsRequired()
-                        .HasColumnType("jsonb")
-                        .HasColumnName("placements_json");
-
-                    b.Property<DateTimeOffset>("UpdatedAt")
-                        .HasColumnType("timestamp with time zone")
-                        .HasColumnName("updated_at");
-
-                    b.HasKey("Id")
-                        .HasName("pk_dashboard_views");
-
-                    b.HasIndex("OwnerId", "IsActive")
-                        .HasDatabaseName("ix_dashboard_views_owner_id_is_active");
-
-                    b.HasIndex("OwnerId", "Name")
-                        .IsUnique()
-                        .HasDatabaseName("ix_dashboard_views_owner_id_name");
-
-                    b.ToTable("dashboard_views", "platform");
-                });
-
             modelBuilder.Entity("Platform.Data.DataProtectionKey", b =>
                 {
                     b.Property<int>("Id")
@@ -848,6 +803,41 @@ namespace Platform.Data.Migrations
                         .HasDatabaseName("ix_notification_routing_rules_name");
 
                     b.ToTable("notification_routing_rules", "platform");
+                });
+
+            modelBuilder.Entity("Platform.Data.SavedDashboardLayout", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<string>("OwnerId")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)")
+                        .HasColumnName("owner_id");
+
+                    b.Property<string>("PlacementsJson")
+                        .IsRequired()
+                        .HasColumnType("jsonb")
+                        .HasColumnName("placements_json");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.HasKey("Id")
+                        .HasName("pk_dashboard_layouts");
+
+                    b.HasIndex("OwnerId")
+                        .IsUnique()
+                        .HasDatabaseName("ix_dashboard_layouts_owner_id");
+
+                    b.ToTable("dashboard_layouts", "platform");
                 });
 
             modelBuilder.Entity("Platform.Data.Site", b =>

@@ -34,8 +34,12 @@ export function searchGroupLabel(type: SearchResultType) {
  *
  * These are the agent routes, which is correct because the bar lives in the agent shell: a user with only
  * the EndUser role never reaches `AppShell` at all (`HomeRoute` sends them to the portal).
+ *
+ * It takes only the kind and the id — everything it has ever needed — so that WP-5.5's widgets can link at
+ * a record through this same function rather than keeping a second copy of the map. A widget and the search
+ * box disagreeing about where an alert opens is exactly what that copy would eventually cause.
  */
-export function searchResultHref(hit: SearchHit) {
+export function searchResultHref(hit: Pick<SearchHit, 'type' | 'id'>) {
   switch (hit.type) {
     case 'Ticket':
       return `/tickets/${hit.id}`

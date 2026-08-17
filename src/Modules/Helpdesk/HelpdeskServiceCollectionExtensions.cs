@@ -8,12 +8,14 @@ using Modules.Helpdesk.Features.Tickets;
 using Modules.Helpdesk.Features.Assignments;
 using Modules.Helpdesk.Features.CannedResponses;
 using Modules.Helpdesk.Features.Categories;
+using Modules.Helpdesk.Features.Dashboards;
 using Modules.Helpdesk.Features.Views;
 using Modules.Helpdesk.Features.Interactions;
 using Modules.Helpdesk.Features.Sla;
 using Modules.Helpdesk.Features.Email;
 using Modules.Helpdesk.Features.TicketCis;
 using Modules.Helpdesk.Features.Search;
+using Platform.Dashboards;
 using Platform.Integration;
 using Platform.Search;
 using Quartz;
@@ -36,6 +38,10 @@ public static class HelpdeskServiceCollectionExtensions
         // WP-5.4. Registered here rather than in Platform because the query is over Helpdesk's own
         // schema; the service that merges the five holds no reference to any module.
         services.AddScoped<ISearchSource, TicketSearchSource>();
+        // WP-5.5. Two widgets over Helpdesk's own schema; the dashboard that shows them beside four
+        // other modules' numbers references none of them.
+        services.AddScoped<IDashboardWidget, SlaHealthWidget>();
+        services.AddScoped<IDashboardWidget, OpenByPriorityWidget>();
         services.AddScoped<ICategoryService, CategoryService>();
         services.AddScoped<IAssignmentService, AssignmentService>();
         services.AddScoped<ITicketCiLinkService, TicketCiLinkService>();

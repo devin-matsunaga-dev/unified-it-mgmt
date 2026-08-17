@@ -54,10 +54,10 @@ function board(items: DeviceStatusTile[]): StatusBoard {
   }
 }
 
-function renderBoard() {
+function renderBoard(entry = '/monitoring') {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   return render(<QueryClientProvider client={client}>
-    <MemoryRouter><StatusBoardPage /></MemoryRouter>
+    <MemoryRouter initialEntries={[entry]}><StatusBoardPage /></MemoryRouter>
   </QueryClientProvider>)
 }
 
@@ -67,6 +67,31 @@ afterEach(() => {
 })
 
 describe('StatusBoardPage', () => {
+  /**
+   * The receiving half of a WP-5.5 dashboard deep link: the Critical band on the network-status widget
+   * opens this board already narrowed to the devices it counted.
+   */
+  it('opens filtered to the status a deep link names', async () => {
+    vi.mocked(monitoringApi.statusBoard).mockResolvedValue(board([
+      tile({ deviceId: 'device-1', ciName: 'dc1-core-sw-01', status: 'Critical', severity: 'Critical' }),
+      tile({ deviceId: 'device-2', ciName: 'dc1-core-sw-02', status: 'Ok' }),
+    ]))
+    renderBoard('/monitoring?status=Critical')
+
+    expect(await screen.findByText('dc1-core-sw-01')).toBeInTheDocument()
+    expect(screen.queryByText('dc1-core-sw-02')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Critical/ })).toHaveAttribute('aria-pressed', 'true')
+  })
+
+  it('ignores a deep link asking for a status that does not exist', async () => {
+    vi.mocked(monitoringApi.statusBoard).mockResolvedValue(board([
+      tile({ deviceId: 'device-1', ciName: 'dc1-core-sw-01', status: 'Ok' }),
+    ]))
+    renderBoard('/monitoring?status=OnFire')
+
+    expect(await screen.findByText('dc1-core-sw-01')).toBeInTheDocument()
+  })
+
   it('draws a tile per device with the worst thing wrong with it', async () => {
     vi.mocked(monitoringApi.statusBoard).mockResolvedValue(board([
       tile(),

@@ -9,6 +9,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
 using Platform.Auditing;
+using Platform.Dashboards;
 using Platform.Data;
 using Platform.Directory;
 using Platform.Integration;
@@ -52,6 +53,12 @@ public static class PlatformServiceCollectionExtensions
         // and, unlike a port's no-op fallback, it reports the missing kind as absent instead of empty.
         services.AddScoped<ISearchService, SearchService>();
         services.AddScoped<ISearchSource, UserSearchSource>();
+
+        // WP-5.5, the same shape as the search sources above and for the same reason: the dashboard
+        // service is handed whatever IDashboardWidget implementations the host has registered and holds
+        // no reference to any module. Adding a widget is a registration beside its own module's services.
+        services.AddScoped<IDashboardService, DashboardService>();
+        services.AddScoped<IDashboardViewStore, DashboardViewStore>();
         AddCredentialVault(services);
         services.AddScoped<IConsumerIdempotencyService, ConsumerIdempotencyService>();
         services.AddScoped<ISystemPingPublisher, SystemPingPublisher>();

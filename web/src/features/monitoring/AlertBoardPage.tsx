@@ -13,6 +13,12 @@ import { MonitoringTabs } from './MonitoringTabs'
 import { SeverityPill, formatAge, formatLocal, severityTone } from './severity'
 import { useMonitoringHub } from './useMonitoringHub'
 
+/**
+ * The severities a deep link may name, mapped onto the board's own filters. One direction only: the buttons
+ * below stay the reader's, and rewriting the URL as they press them would turn a filter into history.
+ */
+const severityFilters: Record<string, string> = { Critical: 'critical' }
+
 const filters: { key: string; label: string; filter: AlertFilter }[] = [
   { key: 'open', label: 'Open', filter: { status: 'Open' } },
   { key: 'unacknowledged', label: 'Unacknowledged', filter: { status: 'Open', acknowledged: false } },
@@ -26,10 +32,13 @@ const filters: { key: string; label: string; filter: AlertFilter }[] = [
  */
 export function AlertBoardPage() {
   const queryClient = useQueryClient()
-  const [selected, setSelected] = useState('open')
   // The drawer's identity lives in the URL rather than in state, because a WP-3.10 notification links
   // straight to `?alertId=…` — the deep link and a click on a row have to arrive at the same place.
   const [search, setSearch] = useSearchParams()
+  // The board's own filter is seeded from the URL once, so a WP-5.5 dashboard link lands on the filter it
+  // named. The severity travels in the domain's spelling and this is where it becomes one of these keys.
+  const [selected, setSelected] = useState(() =>
+    filters.find((entry) => entry.key === severityFilters[search.get('severity') ?? ''])?.key ?? 'open')
   const alertId = search.get('alertId')
   const openAlert = useCallback((id: string | null) => {
     setSearch((current) => {

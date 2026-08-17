@@ -15,6 +15,7 @@ using Modules.Monitoring.Features.MaintenanceWindows;
 using Modules.Monitoring.Features.Metrics;
 using Modules.Monitoring.Features.PollerConfig;
 using Modules.Monitoring.Features.Search;
+using Platform.Dashboards;
 using Platform.Integration;
 using Platform.Search;
 using Quartz;
@@ -62,6 +63,11 @@ public static class MonitoringServiceCollectionExtensions
         services.AddScoped<ISearchSource, DeviceSearchSource>();
         services.AddScoped<ISearchSource, AlertSearchSource>();
         services.AddScoped<IStatusBoardService, StatusBoardService>();
+        // WP-5.5. Two widgets from one module, registered here for the same reason the search sources
+        // are: the queries are over Monitoring's own schema, and the dashboard service that composes
+        // them holds no reference to this module.
+        services.AddScoped<IDashboardWidget, NetworkStatusWidget>();
+        services.AddScoped<IDashboardWidget, RecentRootCausesWidget>();
         services.AddScoped<IMonitoringLiveUpdateService, MonitoringLiveUpdateService>();
         services.AddScoped<IAlertNotificationService, AlertNotificationService>();
 

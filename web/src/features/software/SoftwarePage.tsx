@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { AppWindow, BellRing, KeyRound, RefreshCw, Search, Upload } from 'lucide-react'
 import { useEffect, useState, type ReactNode } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { toast } from 'sonner'
 import { ApiError } from '../../api/client'
 import { contractStatusLabel, contractStatusTone } from '../../api/contracts'
@@ -28,9 +28,12 @@ const states: { value: SoftwareComplianceState; label: string }[] = [
 export function SoftwarePage() {
   const navigate = useNavigate()
   const queryClient = useQueryClient()
+  const [params] = useSearchParams()
   const [search, setSearch] = useState('')
   const [debounced, setDebounced] = useState('')
-  const [state, setState] = useState<SoftwareComplianceState | ''>('')
+  // Seeded from the URL once, so a WP-5.5 dashboard band opens this report on the state it counted.
+  const [state, setState] = useState<SoftwareComplianceState | ''>(
+    () => states.find((option) => option.value === params.get('compliance'))?.value ?? '')
 
   useEffect(() => {
     const timer = window.setTimeout(() => setDebounced(search), 200)

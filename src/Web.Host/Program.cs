@@ -120,6 +120,7 @@ app.MapAuthenticationEndpoints();
 app.MapPlatformEndpoints();
 app.MapDirectoryEndpoints();
 app.MapSearchEndpoints();
+app.MapUnifiedDashboardEndpoints();
 app.MapNotificationEndpoints();
 app.MapCredentialEndpoints();
 app.MapSystemPingEndpoints();

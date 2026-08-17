@@ -114,6 +114,26 @@ afterEach(() => {
 })
 
 describe('AlertBoardPage', () => {
+  /**
+   * The receiving half of a WP-5.5 dashboard deep link: the recent-root-causes card links here, and a
+   * severity in the domain's spelling becomes one of this board's own filters.
+   */
+  it('opens on the critical filter when a deep link names that severity', async () => {
+    vi.mocked(monitoringApi.listAlerts).mockResolvedValue(page([alert()]))
+
+    renderBoard('/monitoring/alerts?severity=Critical')
+
+    expect(await screen.findByRole('button', { name: 'Critical' })).toHaveAttribute('aria-pressed', 'true')
+  })
+
+  it('opens on the default filter when the severity is not one it knows', async () => {
+    vi.mocked(monitoringApi.listAlerts).mockResolvedValue(page([alert()]))
+
+    renderBoard('/monitoring/alerts?severity=Catastrophic')
+
+    expect(await screen.findByRole('button', { name: 'Open' })).toHaveAttribute('aria-pressed', 'true')
+  })
+
   it('shows an alert with the CMDB context WP-3.7 attaches to it', async () => {
     vi.mocked(monitoringApi.listAlerts).mockResolvedValue(page([alert()]))
 

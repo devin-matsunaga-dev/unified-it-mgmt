@@ -1,6 +1,6 @@
 import { Navigate } from 'react-router-dom'
 import { useAuth } from '../auth/AuthProvider'
-import { DashboardPage } from './DashboardPage'
+import { DashboardPage } from '../features/dashboard/DashboardPage'
 
 const agentRoles = ['Admin', 'Technician', 'Manager'] as const
 

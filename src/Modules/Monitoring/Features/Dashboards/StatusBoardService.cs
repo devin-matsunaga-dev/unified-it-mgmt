@@ -12,6 +12,16 @@ public interface IStatusBoardService
 
     /// <summary>One device's tile, for a live update. Null when the device has been deleted.</summary>
     Task<DeviceStatusTile?> GetTileAsync(Guid deviceId, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// The estate-wide tally on its own, without building a single tile — what the board's KPI row shows.
+    /// <para>
+    /// Public since WP-5.5, so the network-status widget reads the same tally the board does. A second
+    /// count written beside it would eventually disagree with the board about how many devices are down,
+    /// and both numbers are one click apart.
+    /// </para>
+    /// </summary>
+    Task<StatusBoardCounts> CountAsync(CancellationToken cancellationToken);
 }
 
 /// <summary>
@@ -160,7 +170,7 @@ public sealed class StatusBoardService(
     /// same query has to run the roll-up over all of them — which is why it reads only the two columns
     /// the roll-up needs rather than building tiles nobody will see.
     /// </summary>
-    private async Task<StatusBoardCounts> CountAsync(CancellationToken cancellationToken)
+    public async Task<StatusBoardCounts> CountAsync(CancellationToken cancellationToken)
     {
         var devices = await dbContext.MonitoredDevices.AsNoTracking()
             .Select(device => new { device.Id, device.IsEnabled })

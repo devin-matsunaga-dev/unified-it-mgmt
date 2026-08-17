@@ -2,7 +2,7 @@ import { flexRender, getCoreRowModel, getSortedRowModel, useReactTable, type Col
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { ArrowDown, ArrowUp, ArrowUpDown, ChevronLeft, ChevronRight, Columns3, Plus, Search } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { toast } from 'sonner'
 import { ApiError } from '../../api/client'
 import { helpdeskApi, type CreateTicketInput, type SaveTicketViewInput, type Ticket, type TicketFilter, type TicketPriority, type TicketView } from '../../api/helpdesk'
@@ -14,6 +14,22 @@ import { SavedViews } from './SavedViews'
 import { emptyFilter, normalizeFilter } from './ticketFilters'
 
 const savedVisibilityKey = 'tickets.column-visibility'
+
+/**
+ * The filter a deep link asks for. `?priority=` and `?status=` may both repeat, which is how one link
+ * arrives from a dashboard band and another from a saved bookmark; anything unrecognised is ignored rather
+ * than emptying the list, because a link that narrowed to nothing looks exactly like a broken screen.
+ */
+function filterFromQuery(params: URLSearchParams): TicketFilter {
+  const priorities = params.getAll('priority')
+    .filter((value): value is TicketPriority => ticketPriorities.includes(value as TicketPriority))
+  const statuses = params.getAll('status')
+    .filter((value) => (ticketStatuses as readonly string[]).includes(value))
+  const filter: TicketFilter = {}
+  if (priorities.length) filter.priorities = priorities
+  if (statuses.length) filter.statuses = statuses
+  return filter
+}
 const columns: ColumnDef<Ticket>[] = [
   { accessorKey: 'number', header: 'ID', cell: ({ row }) => <Link className="font-mono text-xs text-blue-600 hover:underline" to={`/tickets/${row.original.id}`}>#{row.original.number}</Link> },
   { accessorKey: 'title', header: 'Title', cell: ({ row }) => <Link className="font-medium text-slate-900 hover:text-blue-600 dark:text-slate-100" to={`/tickets/${row.original.id}`}>{row.original.title}</Link> },
@@ -28,10 +44,14 @@ const columns: ColumnDef<Ticket>[] = [
 export function TicketListPage() {
   const navigate = useNavigate()
   const queryClient = useQueryClient()
+  const [params] = useSearchParams()
   const [createOpen, setCreateOpen] = useState(false)
   const [sorting, setSorting] = useState<SortingState>([{ id: 'updatedAt', desc: true }])
   const [search, setSearch] = useState('')
-  const [filter, setFilter] = useState<TicketFilter>(emptyFilter)
+  // Seeded from the URL once, so a WP-5.5 dashboard widget can open this list already narrowed. Read on
+  // the first render rather than kept in sync: the filter controls below are the reader's, and a URL that
+  // kept re-applying itself would undo the first thing they changed.
+  const [filter, setFilter] = useState<TicketFilter>(() => filterFromQuery(params))
   const [activeViewId, setActiveViewId] = useState<string | null>(null)
   const [columnMenu, setColumnMenu] = useState(false)
   const [visibility, setVisibility] = useState<VisibilityState>(() => {

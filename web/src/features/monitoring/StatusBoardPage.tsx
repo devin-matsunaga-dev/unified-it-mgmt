@@ -1,7 +1,7 @@
 import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Activity, CircleAlert, CircleHelp, PowerOff, Search, ShieldCheck, TriangleAlert } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 import { monitoringApi, type DeviceStatus, type DeviceStatusTile } from '../../api/monitoring'
 import { cn } from '../../lib/utils'
 import { LiveIndicator } from './LiveIndicator'
@@ -11,6 +11,9 @@ import { useMonitoringHub } from './useMonitoringHub'
 
 /** The board asks for a full page of tiles; the footer says so when the estate is bigger. */
 const boardPageSize = 200
+
+/** What `?status=` may name. Anything else is ignored rather than filtering the board down to nothing. */
+const deviceStatuses: DeviceStatus[] = ['Ok', 'Warning', 'Critical', 'Unknown', 'Disabled']
 
 const tiles: { key: DeviceStatus | 'devices'; label: string; icon: typeof Activity; tone: string }[] = [
   { key: 'devices', label: 'Monitored devices', icon: Activity, tone: 'bg-slate-100 text-slate-600 dark:bg-slate-500/15 dark:text-slate-400' },
@@ -26,9 +29,13 @@ const tiles: { key: DeviceStatus | 'devices'; label: string; icon: typeof Activi
  */
 export function StatusBoardPage() {
   const queryClient = useQueryClient()
+  const [params] = useSearchParams()
   const [search, setSearch] = useState('')
   const [applied, setApplied] = useState('')
-  const [statusFilter, setStatusFilter] = useState<DeviceStatus | null>(null)
+  // Seeded from the URL once, so a WP-5.5 dashboard band opens this board already narrowed to what it
+  // counted. The tiles below stay the reader's; a URL that re-applied itself would fight them.
+  const [statusFilter, setStatusFilter] = useState<DeviceStatus | null>(
+    () => deviceStatuses.find((status) => status === params.get('status')) ?? null)
 
   useEffect(() => {
     const timer = window.setTimeout(() => setApplied(search), 200)
