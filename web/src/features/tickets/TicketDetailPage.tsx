@@ -8,6 +8,7 @@ import { Button } from '../../components/ui/Button'
 import { cn } from '../../lib/utils'
 import { CannedResponsePicker } from './CannedResponsePicker'
 import { LinkedAssetsCard } from './LinkedAssetsCard'
+import { RelatedProblemsCard } from './RelatedProblemsCard'
 import { PriorityPill, StatusPill, displayStatus, formatLocal, formatRemaining, slaIcon, ticketStatuses } from './ticketUi'
 
 const workflow = ticketStatuses
@@ -56,6 +57,9 @@ export function TicketDetailPage() {
     </header>
     <div className="grid gap-6 xl:grid-cols-[minmax(0,2fr)_minmax(300px,1fr)]">
       <div className="space-y-6">
+        {/* WP-5.7: above the description, because "this is not an isolated fault, and here is the
+            workaround" changes what the technician does next before they have read anything else. */}
+        <RelatedProblemsCard ticketId={id} />
         <section className="rounded-xl border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-slate-900"><h2 className="font-semibold">Description</h2><p className="mt-3 whitespace-pre-wrap text-sm leading-6 text-slate-600 dark:text-slate-300">{item.description}</p></section>
         <section className="rounded-xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900"><div className="border-b border-slate-200 p-5 dark:border-slate-800"><h2 className="font-semibold">Activity</h2><p className="mt-1 text-sm text-slate-500">Comments, internal notes, status changes, and assignments.</p></div>
           <div className="p-5"><form onSubmit={(event) => { event.preventDefault(); if (comment.trim()) addComment.mutate() }}><CannedResponsePicker ticketId={id} value={comment} onChange={setComment} /><textarea aria-label="Comment" className="input min-h-24 resize-y" placeholder={internal ? 'Add an internal note…' : 'Write a public reply…'} value={comment} onChange={(event) => setComment(event.target.value)} /><div className="mt-3 flex flex-wrap items-center gap-3"><label className="flex items-center gap-2 text-sm text-slate-600 dark:text-slate-300"><input type="checkbox" checked={internal} onChange={(event) => setInternal(event.target.checked)} />Internal note</label>{addComment.error && <span role="alert" className="text-sm text-red-600">{addComment.error.message}</span>}<Button className="ml-auto" type="submit" disabled={!comment.trim() || addComment.isPending}><Send size={16} />{internal ? 'Add note' : 'Reply'}</Button></div></form></div>

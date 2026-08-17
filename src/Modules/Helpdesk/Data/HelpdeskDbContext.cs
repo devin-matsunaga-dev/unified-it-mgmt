@@ -27,6 +27,9 @@ public sealed class HelpdeskDbContext(DbContextOptions<HelpdeskDbContext> option
     public DbSet<TicketView> TicketViews => Set<TicketView>();
     public DbSet<CannedResponse> CannedResponses => Set<CannedResponse>();
     public DbSet<AlertTicket> AlertTickets => Set<AlertTicket>();
+    public DbSet<Problem> Problems => Set<Problem>();
+    public DbSet<ProblemIncident> ProblemIncidents => Set<ProblemIncident>();
+    public DbSet<ProblemSuggestion> ProblemSuggestions => Set<ProblemSuggestion>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

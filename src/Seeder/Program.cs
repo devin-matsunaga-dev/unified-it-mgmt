@@ -108,6 +108,14 @@ var linkResult = await new HelpdeskCiLinkSeeder(helpdeskDbContext).SeedAsync(new
     assetsResult.ServiceCiIds));
 Console.WriteLine($"Ticket asset links ready. Added {linkResult.LinksAdded} ticket to CI links.");
 
+// WP-5.7. A deliberate recurrence on one network device, so the nightly detector has something true to
+// find on a fresh database. Five incidents is exactly the default threshold: if either number moves, the
+// demo goes quiet rather than quietly disagreeing with itself.
+var recurrenceResult = await new ProblemRecurrenceSeeder(helpdeskDbContext).SeedAsync(assetsResult.NetworkCiIds);
+Console.WriteLine(recurrenceResult.CiId is null
+    ? "Problem recurrence skipped: the estate has no network devices to concentrate incidents on."
+    : $"Problem recurrence ready. Added {recurrenceResult.TicketsAdded} incidents and {recurrenceResult.LinksAdded} CI links on {recurrenceResult.CiId}.");
+
 // Monitored devices last: they name CIs the estate has just written, and Monitoring may not
 // reference Assets, so the ids arrive as an argument the same way the ticket links' did.
 var monitoringOptions = new DbContextOptionsBuilder<MonitoringDbContext>()

@@ -11,6 +11,7 @@ using Modules.Helpdesk.Features.Categories;
 using Modules.Helpdesk.Features.Dashboards;
 using Modules.Helpdesk.Features.Views;
 using Modules.Helpdesk.Features.Interactions;
+using Modules.Helpdesk.Features.Problems;
 using Modules.Helpdesk.Features.Sla;
 using Modules.Helpdesk.Features.Email;
 using Modules.Helpdesk.Features.TicketCis;
@@ -52,6 +53,23 @@ public static class HelpdeskServiceCollectionExtensions
         services.AddScoped<ICannedResponseService, CannedResponseService>();
         services.AddScoped<IInteractionService, InteractionService>();
         services.AddScoped<ISlaService, SlaService>();
+        // WP-5.7. Registered concretely as well as behind its interface because the suggestion service
+        // reuses its mapping, its subject lookup and its "which of these incidents are still free"
+        // read — one definition of what a problem looks like on the wire, rather than two that drift.
+        services.AddScoped<ProblemService>();
+        services.AddScoped<IProblemService>(provider => provider.GetRequiredService<ProblemService>());
+        services.AddScoped<IProblemSuggestionService, ProblemSuggestionService>();
+        services.AddOptions<ProblemDetectionOptions>()
+            .Bind(configuration.GetSection(ProblemDetectionOptions.SectionName))
+            .Validate(options => options.MinimumIncidents >= 2,
+                $"{ProblemDetectionOptions.SectionName}:MinimumIncidents must be at least 2 — one incident is not a recurrence.")
+            .Validate(options => options.WindowDays >= 1,
+                $"{ProblemDetectionOptions.SectionName}:WindowDays must be at least 1.")
+            .Validate(options => options.DismissalCooldownDays >= 0,
+                $"{ProblemDetectionOptions.SectionName}:DismissalCooldownDays cannot be negative.")
+            .Validate(options => options.MaxSuggestionsPerRun >= 1,
+                $"{ProblemDetectionOptions.SectionName}:MaxSuggestionsPerRun must be at least 1 — a pass that may raise nothing is the same as Enabled: false.")
+            .ValidateOnStart();
         services.AddScoped<IEmailIngestionService, EmailIngestionService>();
         services.AddScoped<IEmailMailbox, MailKitEmailMailbox>();
         services.AddScoped<IAlertAutomationGuard, RedisAlertAutomationGuard>();
@@ -82,6 +100,15 @@ public static class HelpdeskServiceCollectionExtensions
             quartz.AddJob<EmailIngestionJob>(builder => builder.WithIdentity(emailJobKey));
             quartz.AddTrigger(builder => builder.ForJob(emailJobKey).WithIdentity("email-ingestion-every-minute")
                 .StartNow().WithSimpleSchedule(schedule => schedule.WithIntervalInMinutes(1).RepeatForever()));
+
+            // WP-5.7. Daily from host start-up rather than at a fixed hour, matching the contract expiry
+            // and licence compliance passes: the pass is idempotent — a second run finds its own
+            // suggestions open and raises nothing — so an extra run costs one query and a recurrence is
+            // visible without waiting for the small hours.
+            var problemDetectionKey = new JobKey("problem-detection");
+            quartz.AddJob<ProblemDetectionJob>(builder => builder.WithIdentity(problemDetectionKey));
+            quartz.AddTrigger(builder => builder.ForJob(problemDetectionKey).WithIdentity("problem-detection-daily")
+                .StartNow().WithSimpleSchedule(schedule => schedule.WithIntervalInHours(24).RepeatForever()));
         });
 
         return services;

@@ -1,4 +1,4 @@
-import { AppWindow, Bell, Boxes, ClipboardCheck, Radar, FileText, ChevronRight, CircleHelp, Contact, Gauge, GitCompareArrows, Headphones, LogOut, Mail, Menu, MonitorCog, ScanLine, Settings, ShieldCheck, Users, Waypoints, X } from 'lucide-react'
+import { AppWindow, Bell, Boxes, ClipboardCheck, Radar, FileText, ChevronRight, CircleHelp, Contact, Gauge, GitCompareArrows, Headphones, LogOut, Mail, Menu, MonitorCog, ScanLine, Settings, ShieldCheck, ShieldQuestion, Users, Waypoints, X } from 'lucide-react'
 import { useEffect, useRef, useState, type ComponentType } from 'react'
 import { NavLink, Outlet, useLocation } from 'react-router-dom'
 import { useAuth } from '../auth/AuthProvider'
@@ -12,6 +12,7 @@ type NavItem = { label: string; to: string; icon: ComponentType<{ size?: number 
 const navigation: NavItem[] = [
   { label: 'Overview', to: '/', icon: Gauge },
   { label: 'Tickets', to: '/tickets', icon: Headphones },
+  { label: 'Problems', to: '/problems', icon: ShieldQuestion, roles: ['Admin', 'Technician', 'Manager'] },
   { label: 'Assets', to: '/assets', icon: Boxes, roles: ['Admin', 'Technician', 'Manager'] },
   { label: 'Discovery', to: '/assets/discovery', icon: Radar, roles: ['Admin', 'Technician', 'Manager'] },
   { label: 'Drift', to: '/assets/drift', icon: GitCompareArrows, roles: ['Admin', 'Technician', 'Manager'] },
@@ -37,6 +38,8 @@ export function AppShell() {
   const email = user?.profile.email
   const pageContext = pathname.startsWith('/tickets')
     ? { title: 'Tickets', subtitle: 'Manage requests across the service desk.' }
+    : pathname.startsWith('/problems')
+      ? { title: 'Problems', subtitle: 'The causes behind repeated incidents, and their known errors.' }
     : pathname.startsWith('/monitoring')
       ? { title: 'Monitoring', subtitle: 'Live device status and alerts across the estate.' }
       : { title: 'Overview', subtitle: 'Your unified IT environment at a glance.' }

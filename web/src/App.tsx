@@ -26,6 +26,8 @@ import { SoftwarePage } from './features/software/SoftwarePage'
 import { SoftwareProductPage } from './features/software/SoftwareProductPage'
 import { TopologyPage } from './features/topology/TopologyPage'
 import { HomeRoute } from './pages/HomeRoute'
+import { ProblemListPage } from './features/problems/ProblemListPage'
+import { ProblemDetailPage } from './features/problems/ProblemDetailPage'
 import { LoginPage } from './pages/LoginPage'
 import { PlaceholderPage } from './pages/PlaceholderPage'
 import { MyRequestsPage } from './features/portal/MyRequestsPage'
@@ -49,6 +51,8 @@ export function App() {
       <Route index element={<HomeRoute />} />
       <Route path="tickets" element={<ProtectedRoute roles={['Admin', 'Technician', 'Manager']}><TicketListPage /></ProtectedRoute>} />
       <Route path="tickets/:id" element={<ProtectedRoute roles={['Admin', 'Technician', 'Manager']}><TicketDetailPage /></ProtectedRoute>} />
+      <Route path="problems" element={<ProtectedRoute roles={['Admin', 'Technician', 'Manager']}><ProblemListPage /></ProtectedRoute>} />
+      <Route path="problems/:id" element={<ProtectedRoute roles={['Admin', 'Technician', 'Manager']}><ProblemDetailPage /></ProtectedRoute>} />
       <Route path="assets" element={<ProtectedRoute roles={['Admin', 'Technician', 'Manager']}><CiListPage /></ProtectedRoute>} />
       <Route path="assets/import" element={<ProtectedRoute roles={['Admin', 'Technician', 'Manager']}><CiImportWizard /></ProtectedRoute>} />
       <Route path="assets/discovery" element={<ProtectedRoute roles={['Admin', 'Technician', 'Manager']}><DiscoveryReviewPage /></ProtectedRoute>} />

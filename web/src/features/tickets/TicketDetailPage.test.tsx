@@ -12,6 +12,13 @@ vi.mock('../../api/helpdesk', async (original) => {
   return { ...actual, helpdeskApi: Object.fromEntries(Object.entries(actual.helpdeskApi).map(([name, value]) => [name, typeof value === 'function' ? vi.fn() : value])) }
 })
 
+// WP-5.7 put a problems card on this screen. Mocked to nothing rather than left to hit the real client,
+// so a ticket that belongs to no problem is a stated fact of this fixture rather than a failed request.
+vi.mock('../../api/problems', async (original) => {
+  const actual = await original<typeof import('../../api/problems')>()
+  return { ...actual, problemsApi: { ...actual.problemsApi, listForTicket: vi.fn().mockResolvedValue([]) } }
+})
+
 vi.mock('../../api/assets', async (original) => {
   const actual = await original<typeof import('../../api/assets')>()
   return { ...actual, assetsApi: { ...actual.assetsApi, listCis: vi.fn() } }
