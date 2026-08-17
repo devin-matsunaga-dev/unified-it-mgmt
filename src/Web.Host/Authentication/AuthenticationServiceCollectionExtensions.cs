@@ -72,6 +72,14 @@ public static class AuthenticationServiceCollectionExtensions
                 PlatformRoles.Admin,
                 PlatformRoles.Technician,
                 PlatformRoles.Manager))
+            // WP-5.6. Narrower than CanManageMonitoring on purpose, and the omission is the decision:
+            // a Manager may configure what is watched but may not restart a service on it, because
+            // running a runbook is an action on a machine rather than a change to a configuration.
+            // EndUser is nowhere near it, and the Poller and Discovery service accounts are excluded
+            // for the reason ARCHITECTURE §6 gives — an agent must not hold an operator's rights.
+            .AddPolicy(AuthorizationPolicies.CanRunRunbooks, policy => policy.RequireRole(
+                PlatformRoles.Admin,
+                PlatformRoles.Technician))
             // The poller's own credential, and nothing else — not even Admin. A poller reads its
             // configuration with the identity it polls under, and the endpoints behind this policy
             // are the only ones it can reach; an operator inspecting pollers uses GET /api/pollers,

@@ -289,6 +289,15 @@ builder.AddDockerfile("poller", "../../services/poller")
     .WithEnvironment("POLLER_GROUP", "default")
     .WithEnvironment("POLLER_AGENT_VERSION", "0.1.0")
     .WithEnvironment("POLLER_INTERVAL_SECONDS", "15")
+    // WP-5.6. The poller runs as a non-root user in a container with no init system, so the real
+    // template — `systemctl restart {service}` — cannot work here and would make every seeded
+    // remediation a failure. This stands in for it exactly as `snmpsim` stands in for a switch: the
+    // dispatch, the argv construction, the timeout, the result on the ticket and the audit row are
+    // all the real ones, and only the thing being restarted is simulated. The unit name still comes
+    // from the runbook's validated parameter, so a value that would be unsafe is refused here too.
+    .WithEnvironment(
+        "POLLER_RUNBOOK_RESTART_SERVICE_COMMAND",
+        "/bin/echo Restarted {service} (simulated: this poller has no init system).")
     .WithEnvironment("POLLER_API_BASE_URL", webHost.GetEndpoint("http"))
     // The public authority, not the container's route to it: the token's issuer is stamped from
     // KC_HOSTNAME above, and this is the address the poller dials to ask for one.

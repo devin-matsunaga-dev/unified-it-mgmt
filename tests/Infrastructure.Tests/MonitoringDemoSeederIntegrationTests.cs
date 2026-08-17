@@ -3,8 +3,10 @@ using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 
 using Modules.Monitoring.Data;
+using Modules.Monitoring.Features.Alerting;
 using Modules.Monitoring.Features.Discovery;
 using Modules.Monitoring.Features.PollerConfig;
+using Modules.Monitoring.Features.Runbooks;
 using Modules.Monitoring.Seeding;
 
 namespace Infrastructure.Tests;
@@ -529,6 +531,63 @@ public sealed class MonitoringDemoSeederIntegrationTests(InfrastructureFixture i
         CheckType type) =>
         JsonSerializer.Deserialize<Dictionary<string, string>>(
             device.Checks.Single(check => check.Type == type).ParametersJson)!;
+
+    /// <summary>
+    /// WP-5.6's seeded runbook, and the property that matters far more than its presence: the trigger
+    /// is scoped to one device. An estate-wide trigger on <c>check.success</c> would arm
+    /// auto-remediation against everything the moment somebody ran <c>aspire run</c> — including the
+    /// deliberately unreachable device, which fails permanently by design.
+    /// </summary>
+    [Fact]
+    public async Task Seed_WritesTheAllowlistedRunbookWithATriggerScopedToOneDevice()
+    {
+        await using var dbContext = await NewDatabaseAsync();
+
+        var result = await new MonitoringDemoSeeder(dbContext).SeedAsync(Plan());
+
+        Assert.Equal(1, result.RunbooksAdded);
+        Assert.Equal(1, result.RunbookTriggersAdded);
+        var runbook = await dbContext.Runbooks.SingleAsync();
+        Assert.Equal(RunbookCatalog.RestartService, runbook.Key);
+        Assert.True(runbook.IsEnabled);
+
+        var trigger = await dbContext.RunbookTriggers.SingleAsync();
+        Assert.Equal(AlertRules.AvailabilityMetric, trigger.MetricName);
+        Assert.Equal(AlertSeverity.Critical, trigger.MinimumSeverity);
+        Assert.Equal(MonitoringDemoSeeder.HttpTargetDeviceId, trigger.DeviceId);
+    }
+
+    /// <summary>
+    /// Its parameters would survive the schema its own API applies — the same guard the scan profiles
+    /// get, and here it is a security property: a seeded row is not a way past the allowlist.
+    /// </summary>
+    [Fact]
+    public async Task Seed_TheRunbookTrigger_PassesTheParameterSchemaItsOwnApiWouldApply()
+    {
+        await using var dbContext = await NewDatabaseAsync();
+        await new MonitoringDemoSeeder(dbContext).SeedAsync(Plan());
+
+        var trigger = await dbContext.RunbookTriggers.SingleAsync();
+        var definition = RunbookCatalog.Find(RunbookCatalog.RestartService)!;
+        var binding = RunbookParameterRules.Bind(
+            definition,
+            JsonSerializer.Deserialize<Dictionary<string, string>>(trigger.ParametersJson)!);
+
+        Assert.True(binding.IsValid);
+    }
+
+    [Fact]
+    public async Task Seed_RunTwice_AddsNoSecondRunbook()
+    {
+        await using var dbContext = await NewDatabaseAsync();
+        var seeder = new MonitoringDemoSeeder(dbContext);
+        await seeder.SeedAsync(Plan());
+
+        var again = await seeder.SeedAsync(Plan());
+
+        Assert.Equal(0, again.RunbooksAdded);
+        Assert.Equal(1, await dbContext.Runbooks.CountAsync());
+    }
 
     /// <summary>
     /// A device is a CI plus an address. Without CIs there is nothing to monitor, and inventing ids

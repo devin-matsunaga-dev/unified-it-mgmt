@@ -8,6 +8,21 @@ public static class AuthorizationPolicies
     public const string CanManageMonitoring = "CanManageMonitoring";
 
     /// <summary>
+    /// Running an auto-remediation runbook, and reading what has been run (WP-5.6).
+    /// <para>
+    /// Its own policy rather than <see cref="CanManageMonitoring"/>, because executing something on a
+    /// machine is a different act from configuring what is watched — and narrower than it: a Manager
+    /// may edit a check but may not restart a service. Administering the allowlist itself is narrower
+    /// still and sits on <see cref="AdminOnly"/>.
+    /// </para>
+    /// <para>
+    /// Disjoint from <see cref="CanPoll"/> in both directions, which ARCHITECTURE §6 requires: an
+    /// operator cannot collect an execution off the agent channel, and an agent cannot ask for one.
+    /// </para>
+    /// </summary>
+    public const string CanRunRunbooks = "CanRunRunbooks";
+
+    /// <summary>
     /// A polling agent reading its own configuration. Deliberately disjoint from every operator
     /// policy: a poller must not need an agent's rights, and an agent has no business registering
     /// one.

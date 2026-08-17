@@ -14,6 +14,7 @@ using Modules.Monitoring.Features.Interfaces;
 using Modules.Monitoring.Features.MaintenanceWindows;
 using Modules.Monitoring.Features.Metrics;
 using Modules.Monitoring.Features.PollerConfig;
+using Modules.Monitoring.Features.Runbooks;
 using Modules.Monitoring.Features.Search;
 using Platform.Dashboards;
 using Platform.Integration;
@@ -68,6 +69,14 @@ public static class MonitoringServiceCollectionExtensions
         // them holds no reference to this module.
         services.AddScoped<IDashboardWidget, NetworkStatusWidget>();
         services.AddScoped<IDashboardWidget, RecentRootCausesWidget>();
+        // WP-5.6. Four services rather than one, following the audiences: the registry is administered,
+        // executions are requested and read, the channel is an agent's, and completion is shared by the
+        // channel and the sweeper so a timed-out run escalates exactly like a failed one.
+        services.AddScoped<IRunbookRegistryService, RunbookRegistryService>();
+        services.AddScoped<IRunbookExecutionService, RunbookExecutionService>();
+        services.AddScoped<IRunbookCompletionService, RunbookCompletionService>();
+        services.AddScoped<IRunbookDispatchService, RunbookDispatchService>();
+        services.AddScoped<IRunbookTimeoutSweeper, RunbookTimeoutSweeper>();
         services.AddScoped<IMonitoringLiveUpdateService, MonitoringLiveUpdateService>();
         services.AddScoped<IAlertNotificationService, AlertNotificationService>();
 
@@ -104,8 +113,28 @@ public static class MonitoringServiceCollectionExtensions
                 $"{PollerHeartbeatOptions.SectionName}:EvaluationIntervalSeconds must be at least 1.")
             .ValidateOnStart();
 
+        services.AddOptions<RunbookOptions>()
+            .Bind(configuration.GetSection(RunbookOptions.SectionName))
+            .Validate(options => options.DispatchBatchSize >= 1,
+                $"{RunbookOptions.SectionName}:DispatchBatchSize must be at least 1.")
+            .Validate(options => options.DefaultTimeoutSeconds >= 1,
+                $"{RunbookOptions.SectionName}:DefaultTimeoutSeconds must be at least 1.")
+            .Validate(options => options.MaximumTimeoutSeconds >= options.DefaultTimeoutSeconds,
+                $"{RunbookOptions.SectionName}:MaximumTimeoutSeconds must be at least DefaultTimeoutSeconds.")
+            .Validate(options => options.DefaultMaxExecutionsPerWindow >= 1,
+                $"{RunbookOptions.SectionName}:DefaultMaxExecutionsPerWindow must be at least 1 — disable a runbook to stop it running.")
+            .Validate(options => options.DefaultRateLimitWindowMinutes >= 1,
+                $"{RunbookOptions.SectionName}:DefaultRateLimitWindowMinutes must be at least 1.")
+            .Validate(options => options.MaximumOutputCharacters >= 1,
+                $"{RunbookOptions.SectionName}:MaximumOutputCharacters must be at least 1.")
+            .Validate(options => options.SweepIntervalSeconds >= 1,
+                $"{RunbookOptions.SectionName}:SweepIntervalSeconds must be at least 1.")
+            .ValidateOnStart();
+
         var heartbeat = configuration.GetSection(PollerHeartbeatOptions.SectionName)
             .Get<PollerHeartbeatOptions>() ?? new PollerHeartbeatOptions();
+        var runbooks = configuration.GetSection(RunbookOptions.SectionName)
+            .Get<RunbookOptions>() ?? new RunbookOptions();
         services.AddQuartz(quartz =>
         {
             // Frequent and cheap: one indexed query over a handful of rows. The interval is the
@@ -116,6 +145,15 @@ public static class MonitoringServiceCollectionExtensions
             quartz.AddTrigger(builder => builder.ForJob(jobKey).WithIdentity("poller-heartbeat-evaluation")
                 .StartNow().WithSimpleSchedule(schedule => schedule
                     .WithIntervalInSeconds(heartbeat.EvaluationIntervalSeconds).RepeatForever()));
+
+            // WP-5.6. Frequent and usually empty: one indexed query over rows that exist only while a
+            // remediation is in flight. The interval is how late a timeout can be noticed, not how long
+            // a runbook may run — that is the runbook's own deadline, stamped when it was handed over.
+            var runbookJobKey = new JobKey("runbook-timeouts");
+            quartz.AddJob<RunbookTimeoutJob>(builder => builder.WithIdentity(runbookJobKey));
+            quartz.AddTrigger(builder => builder.ForJob(runbookJobKey).WithIdentity("runbook-timeout-sweep")
+                .StartNow().WithSimpleSchedule(schedule => schedule
+                    .WithIntervalInSeconds(runbooks.SweepIntervalSeconds).RepeatForever()));
         });
 
         return services;
@@ -139,5 +177,8 @@ public static class MonitoringServiceCollectionExtensions
         bus.AddConsumer<AlertClearedNotificationConsumer>();
         // Assets publishes it, Monitoring acts on it: the approval half of WP-4.2's review queue.
         bus.AddConsumer<DiscoveredDeviceApprovedConsumer>();
+        // WP-5.6, on its own endpoint beside the ticket and notification consumers of the same event:
+        // deciding to remediate must not be able to slow down, or fail, recording the alert.
+        bus.AddConsumer<AlertRunbookConsumer>();
     }
 }

@@ -357,3 +357,99 @@ public sealed class AlertTicketPolicyTests
         DateTimeOffset.UtcNow.AddSeconds(-durationSeconds),
         durationSeconds);
 }
+
+/// <summary>
+/// WP-5.6's half: what an auto-remediation run reads like on the ticket for its alert.
+/// </summary>
+public sealed class RunbookTicketNoteTests
+{
+    [Fact]
+    public void RunbookNote_ForASuccessfulRun_SaysSoAndQuotesTheOutput()
+    {
+        var note = AlertTicketPolicy.RunbookNote(Completed("Succeeded", exitCode: 0,
+            output: "Restarted nginx."));
+
+        Assert.Contains("ran successfully", note, StringComparison.Ordinal);
+        Assert.Contains("Restarted nginx.", note, StringComparison.Ordinal);
+        Assert.Contains("restart-service (version 3)", note, StringComparison.Ordinal);
+        // Nothing about escalation on a run that worked: the sentence below is what a technician
+        // reads to decide whether to touch anything, and it must not appear when there is nothing to do.
+        Assert.DoesNotContain("Nothing was retried", note, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void RunbookNote_ForAFailure_SaysPlainlyThatNothingWillTryAgain()
+    {
+        var note = AlertTicketPolicy.RunbookNote(Completed("Failed", exitCode: 1,
+            error: "Unit nginx.service not found."));
+
+        Assert.Contains("did not succeed (Failed)", note, StringComparison.Ordinal);
+        Assert.Contains("Nothing was retried and nothing will be", note, StringComparison.Ordinal);
+        Assert.Contains("Unit nginx.service not found.", note, StringComparison.Ordinal);
+        Assert.Contains("Exit code: 1", note, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// A timeout carries no exit code — nobody ever heard back. The note must not print one anyway,
+    /// because "Exit code: 0" on a run nothing reported is a lie a reader would act on.
+    /// </summary>
+    [Fact]
+    public void RunbookNote_ForATimeout_PrintsNoExitCode()
+    {
+        var note = AlertTicketPolicy.RunbookNote(Completed("TimedOut", exitCode: null,
+            error: "No result was reported before the deadline."));
+
+        Assert.DoesNotContain("Exit code", note, StringComparison.Ordinal);
+        Assert.Contains("(TimedOut)", note, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ComposeRunbookEscalation_ForAFailure_IsHighOnBothAxesAndSaysItDoesNotSelfResolve()
+    {
+        var draft = AlertTicketPolicy.ComposeRunbookEscalation(
+            Completed("Failed", exitCode: 1, error: "Permission denied."));
+
+        Assert.Equal(TicketLevel.High, draft.Urgency);
+        Assert.Equal(TicketLevel.High, draft.Impact);
+        Assert.StartsWith("[Remediation failed]", draft.Title, StringComparison.Ordinal);
+        Assert.Contains("It does not resolve itself.", draft.Description, StringComparison.Ordinal);
+        Assert.Contains("Permission denied.", draft.Description, StringComparison.Ordinal);
+    }
+
+    /// <summary>A run somebody started by hand has no alert, and the ticket says so rather than printing an empty id.</summary>
+    [Fact]
+    public void ComposeRunbookEscalation_ForAManualRun_SaysThereWasNoAlert()
+    {
+        var draft = AlertTicketPolicy.ComposeRunbookEscalation(
+            Completed("Failed", exitCode: 1, isManual: true));
+
+        Assert.Contains("Alert: none — this was run by hand", draft.Description, StringComparison.Ordinal);
+    }
+
+    private static RunbookExecutionCompleted Completed(
+        string outcome,
+        int? exitCode,
+        string? output = null,
+        string? error = null,
+        bool isManual = false) => new(
+        Guid.CreateVersion7(),
+        DateTimeOffset.UtcNow,
+        Guid.CreateVersion7(),
+        Guid.CreateVersion7(),
+        "restart-service",
+        "Restart a service",
+        3,
+        isManual ? null : Guid.CreateVersion7(),
+        Guid.CreateVersion7(),
+        Guid.CreateVersion7(),
+        isManual ? null : "check:0199-abc:availability",
+        outcome,
+        exitCode,
+        output,
+        error,
+        "system:monitoring",
+        "poller-1",
+        DateTimeOffset.UtcNow.AddSeconds(-12),
+        DateTimeOffset.UtcNow,
+        12);
+}

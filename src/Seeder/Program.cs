@@ -173,4 +173,5 @@ var monitoringResult = await new MonitoringDemoSeeder(monitoringDbContext).SeedA
             : 80));
 Console.WriteLine($"Monitored devices ready. Added {monitoringResult.DevicesAdded} devices and {monitoringResult.ChecksAdded} checks.");
 Console.WriteLine($"Scan profiles ready. Added {monitoringResult.ScanProfilesAdded} profiles.");
+Console.WriteLine($"Runbooks ready. Added {monitoringResult.RunbooksAdded} runbook(s) and {monitoringResult.RunbookTriggersAdded} trigger(s).");
 return 0;

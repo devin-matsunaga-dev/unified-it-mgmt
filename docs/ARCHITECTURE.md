@@ -39,7 +39,7 @@ Correlation engine starts as a consumer inside `Modules.Monitoring`; it may be e
 - **In-process:** direct service interfaces (no MediatR ceremony unless already established).
 - **Cross-service / async:** MassTransit over RabbitMQ. ALL publishes go through the **EF transactional outbox** — never publish directly from application code.
 - **Consumers must be idempotent.** Use the Platform dedupe helper with a deterministic key (e.g. `alert:{deviceId}:{ruleId}`).
-- Python services: `aio-pika`. Pollers have **publish-only** credentials plus one read-only config queue. Pollers never consume commands.
+- Python services: `aio-pika`. Pollers have **publish-only** credentials plus one read-only config queue. Pollers never consume commands — including auto-remediation: a poller **fetches** the executions waiting for its group over its own HTTP identity and posts the result back (WP-5.6). There is no command queue aimed at an agent.
 - **Real-time to browser:** SignalR hubs in `Web.Host`, Redis backplane.
 
 ## 5. Data stores
@@ -59,6 +59,7 @@ Dependency graph = `assets.ci_relationships` table + recursive CTEs. No graph da
 - OIDC via Keycloak in dev; **must swap to Entra ID by configuration only** — never reference Keycloak-specific claims in module code; map claims in one Platform location.
 - Roles: `Admin`, `Technician`, `Manager`, `EndUser`. Authorize with policy names (e.g. `CanManageTickets`), not raw role strings, at API endpoints.
 - **Service-account roles** are separate and are never granted to a person: `Poller` (WP-3.2) and `Discovery` (WP-4.1). Each is held by exactly one Keycloak client-credentials client, each has its own policy (`CanPoll`, `CanDiscover`), and both are **disjoint from every operator policy and from each other** — an agent must not need an agent's rights, an operator must not be able to redeem a credential grant, and a scanner must not be able to reach the vault at all.
+- **Running a runbook is its own operator policy**, `CanRunRunbooks` (WP-5.6) — narrower than `CanManageMonitoring`, because executing something on a machine is a different act from configuring what is watched, and narrower still is administering the allowlist itself, which is `AdminOnly`. The execution channel stays on `CanPoll`, and the two are disjoint in both directions: an operator cannot collect an execution and an agent cannot request one.
 - EndUsers see only their own tickets/assets — enforced in queries, not just UI.
 
 ## 7. Invariants (never break these)
@@ -66,7 +67,7 @@ Dependency graph = `assets.ci_relationships` table + recursive CTEs. No graph da
 1. Every write endpoint produces an **audit** entry (who, what, before/after, correlation id).
 2. Every event publish goes through the **outbox**; every consumer is **idempotent**.
 3. **Credential vault** material is write-only: no API ever returns secret values; secrets are encrypted at rest; every access is audited.
-4. Automation is bounded: alert→ticket has dedupe + rate limit + circuit breaker; runbooks are server-side allowlisted (no free-text execution path exists anywhere).
+4. Automation is bounded: alert→ticket has dedupe + rate limit + circuit breaker; runbooks are server-side allowlisted (no free-text execution path exists anywhere). **Allowlisted means compiled in**: the runbook catalogue is code, the database holds only registrations of its keys, and the *implementations* live in the agent — a dispatch carries a key, a version and schema-validated parameters, never a command, a script or a path. The agent enforces the same list and refuses a key it does not implement. A runbook is given no credential material. Executions are rate-limited per runbook from durable rows, deduped per alert by a unique index, timed out on both sides, and **never retried** — a failure escalates to a human.
 5. All input validated at the API edge; EF parameterization only (no raw interpolated SQL).
 6. One dead device/target never blocks a polling cycle.
 7. Migrations are append-only — never edit an applied migration.

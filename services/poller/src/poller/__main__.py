@@ -19,6 +19,7 @@ from .checks.tcp import TcpCheck
 from .checks.tls import TlsCheck
 from .logging import configure_logging
 from .polling import PollingEngine
+from .runbooks import RunbookRunner
 from .settings import Settings
 
 logger = logging.getLogger("poller")
@@ -69,6 +70,9 @@ async def main() -> None:
                 telemetry_publisher=ExchangePublisher(connection, settings.telemetry_exchange),
                 reachability_publisher=ExchangePublisher(
                     connection, settings.reachability_exchange),
+                # WP-5.6. The runner holds the allowlist; the platform only ever sends a key, so
+                # nothing the API returns can add to what this process is able to do.
+                runbooks=RunbookRunner(settings),
             )
             await agent.run_forever(stop)
 

@@ -22,6 +22,12 @@ public interface IAlertTicketAutomation
     Task RaiseAsync(AlertRaised alert, CancellationToken cancellationToken);
 
     Task ClearAsync(AlertCleared alert, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Puts the result of an auto-remediation run onto the ticket for its alert, and opens one when it
+    /// failed and there is none (WP-5.6).
+    /// </summary>
+    Task RecordRunbookResultAsync(RunbookExecutionCompleted execution, CancellationToken cancellationToken);
 }
 
 /// <summary>
@@ -220,6 +226,154 @@ public sealed class AlertTicketAutomation(
         }
 
         await SaveAsync(entry, before, "Cleared", cancellationToken);
+    }
+
+    /// <summary>
+    /// The WP-5.6 half: Monitoring ran something on a machine, and this is where the result becomes
+    /// something a person will see.
+    /// <para>
+    /// It lives here, on the Helpdesk side of an event, because Monitoring may not write a ticket — and
+    /// because Helpdesk already holds the only thing that can find the right one: the
+    /// <c>alert:{deviceId}:{ruleId}</c> dedupe row this class writes when the alert is first ticketed.
+    /// </para>
+    /// <para>
+    /// A success is recorded and nothing more. A failure always ends with a human-facing ticket: the
+    /// alert's own if there is one, a new one if there is not — including for a run somebody started by
+    /// hand, because the result arrives long after their request returned and there is otherwise
+    /// nothing to notice it.
+    /// </para>
+    /// </summary>
+    public async Task RecordRunbookResultAsync(
+        RunbookExecutionCompleted execution,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(execution);
+        var succeeded = execution.Outcome.Equals("Succeeded", StringComparison.OrdinalIgnoreCase);
+
+        if (!options.Value.Enabled)
+        {
+            // The alert→ticket switch governs this too. With it off there is no ticket to annotate, and
+            // opening one for a failed runbook would be the automation writing tickets while turned off.
+            logger.LogInformation(
+                "Runbook {RunbookKey} finished as {Outcome}; alert→ticket automation is disabled, so nothing was written to a ticket.",
+                execution.RunbookKey, execution.Outcome);
+            return;
+        }
+
+        var ticket = await FindAlertTicketAsync(execution, cancellationToken);
+        if (ticket is not null)
+        {
+            // Left even on a finished ticket, following the clear path above: "the automation tried this
+            // and here is what happened" belongs on the ticket whether or not somebody has closed it.
+            await CommentAsync(ticket.Id, AlertTicketPolicy.RunbookNote(execution), cancellationToken);
+            logger.LogInformation(
+                "Runbook {RunbookKey} finished as {Outcome}; recorded on {TicketNumber}.",
+                execution.RunbookKey, execution.Outcome, ticket.Number);
+            return;
+        }
+
+        if (succeeded)
+        {
+            logger.LogInformation(
+                "Runbook {RunbookKey} succeeded on device {DeviceId} with no ticket open for it; nothing was opened.",
+                execution.RunbookKey, execution.DeviceId);
+            return;
+        }
+
+        await EscalateRunbookAsync(execution, cancellationToken);
+    }
+
+    /// <summary>
+    /// The ticket this execution's alert opened, or null — for a manual run, for an alert whose ticket
+    /// was suppressed, or for one the automation never saw.
+    /// </summary>
+    private async Task<Ticket?> FindAlertTicketAsync(
+        RunbookExecutionCompleted execution,
+        CancellationToken cancellationToken)
+    {
+        if (execution.AlertId is null || string.IsNullOrWhiteSpace(execution.RuleId))
+        {
+            return null;
+        }
+
+        var key = AlertTicketPolicy.DedupeKey(execution.DeviceId, execution.RuleId);
+        var entry = await dbContext.AlertTickets.AsNoTracking()
+            .SingleOrDefaultAsync(item => item.DedupeKey == key, cancellationToken);
+        return entry is null ? null : await LoadTicketAsync(entry.TicketId, cancellationToken);
+    }
+
+    /// <summary>
+    /// A failed remediation with nowhere to report itself gets a ticket of its own.
+    /// <para>
+    /// It deliberately does not claim the alert's dedupe row. That row is the alert's, and taking it
+    /// would mean the alert itself — still unresolved, still failing — could never open the ticket it
+    /// is entitled to.
+    /// </para>
+    /// </summary>
+    private async Task EscalateRunbookAsync(
+        RunbookExecutionCompleted execution,
+        CancellationToken cancellationToken)
+    {
+        var draft = AlertTicketPolicy.ComposeRunbookEscalation(execution);
+        var created = await ticketService.CreateAsync(
+            new CreateTicketRequest(
+                draft.Title,
+                draft.Description,
+                TicketType.Incident,
+                draft.Urgency,
+                draft.Impact,
+                RequesterId: null,
+                QueueId: await ResolveQueueIdAsync(cancellationToken)),
+            SystemActor,
+            cancellationToken);
+        if (created.Outcome != TicketWriteOutcome.Success || created.Ticket is null)
+        {
+            // Loud, because this is the escalation path failing. The execution row and the audit entry
+            // still hold the result, and the monitoring side has already routed a notification about it.
+            logger.LogError(
+                "Runbook {RunbookKey} failed and its escalation ticket could not be opened: {Outcome}.",
+                execution.RunbookKey, created.Outcome);
+            return;
+        }
+
+        await LinkCiIfKnownAsync(created.Ticket.Id, execution.CiId, execution.RunbookKey, cancellationToken);
+        logger.LogWarning(
+            "Runbook {RunbookKey} {Outcome} on device {DeviceId} with no ticket to record it on; opened {TicketNumber}.",
+            execution.RunbookKey, execution.Outcome, execution.DeviceId, created.Ticket.Number);
+    }
+
+    /// <summary>
+    /// Links the CI if the CMDB still has it, and never fails the ticket for it — the same rule
+    /// <see cref="LinkCiAsync"/> follows, for the same reason.
+    /// </summary>
+    private async Task LinkCiIfKnownAsync(
+        Guid ticketId,
+        Guid ciId,
+        string context,
+        CancellationToken cancellationToken)
+    {
+        if (ciId == Guid.Empty)
+        {
+            return;
+        }
+
+        var ci = (await ciDirectory.GetSummariesAsync([ciId], cancellationToken)).SingleOrDefault();
+        if (ci is null)
+        {
+            logger.LogInformation(
+                "Runbook {RunbookKey} names CI {CiId}, which is not in the CMDB; its ticket was not linked.",
+                context, ciId);
+            return;
+        }
+
+        var result = await ciLinkService.LinkAsync(
+            ticketId, new LinkTicketCiRequest(ciId), SystemActor, cancellationToken);
+        if (result.Outcome is not TicketCiLinkOutcome.Success)
+        {
+            logger.LogWarning(
+                "Runbook {RunbookKey} could not link CI {CiId} to its ticket: {Outcome}.",
+                context, ciId, result.Outcome);
+        }
     }
 
     /// <summary>

@@ -15,6 +15,9 @@ public sealed class MonitoringDbContext(DbContextOptions<MonitoringDbContext> op
     public DbSet<DeviceInterface> DeviceInterfaces => Set<DeviceInterface>();
     public DbSet<Alert> Alerts => Set<Alert>();
     public DbSet<ScanProfile> ScanProfiles => Set<ScanProfile>();
+    public DbSet<Runbook> Runbooks => Set<Runbook>();
+    public DbSet<RunbookTrigger> RunbookTriggers => Set<RunbookTrigger>();
+    public DbSet<RunbookExecution> RunbookExecutions => Set<RunbookExecution>();
 
     /// <summary>Result shape of a bucketed metric query; never mapped to a table.</summary>
     public DbSet<MetricBucket> MetricBuckets => Set<MetricBucket>();

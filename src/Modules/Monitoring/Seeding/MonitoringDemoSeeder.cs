@@ -3,7 +3,9 @@ using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 
 using Modules.Monitoring.Data;
+using Modules.Monitoring.Features.Alerting;
 using Modules.Monitoring.Features.PollerConfig;
+using Modules.Monitoring.Features.Runbooks;
 
 namespace Modules.Monitoring.Seeding;
 
@@ -78,7 +80,12 @@ public sealed record MonitoringSeedPlan(
     string LocalScanRange = "local",
     string EmptyScanRange = "192.0.2.0/29");
 
-public sealed record MonitoringSeedResult(int DevicesAdded, int ChecksAdded, int ScanProfilesAdded = 0);
+public sealed record MonitoringSeedResult(
+    int DevicesAdded,
+    int ChecksAdded,
+    int ScanProfilesAdded = 0,
+    int RunbooksAdded = 0,
+    int RunbookTriggersAdded = 0);
 
 /// <summary>
 /// Three monitored devices, so a fresh <c>aspire run</c> has something to poll.
@@ -105,6 +112,13 @@ public sealed class MonitoringDemoSeeder(MonitoringDbContext dbContext)
     /// </summary>
     public const string UnreachableAddress = "192.0.2.1";
 
+    /// <summary>
+    /// The seeded mock HTTP target (WP-3.12). Named rather than repeated, because WP-5.6's seeded
+    /// runbook trigger is scoped to this device and the two have to be the same device or the trigger
+    /// silently matches nothing.
+    /// </summary>
+    public static readonly Guid HttpTargetDeviceId = Guid.Parse("0199c0de-3300-7000-8000-000000000006");
+
     /// <summary>The simulator profile each SNMP device reads, as a community string.</summary>
     public const string HealthyCommunity = "healthy";
     public const string DegradedCommunity = "degraded";
@@ -118,12 +132,13 @@ public sealed class MonitoringDemoSeeder(MonitoringDbContext dbContext)
         // Guarded on its own presence rather than folded into the device check below, so that a
         // database seeded before WP-4.1 — which has devices and no scan profiles — still gets them.
         var scanProfilesAdded = await SeedScanProfilesAsync(plan, cancellationToken);
+        var (runbooksAdded, triggersAdded) = await SeedRunbooksAsync(cancellationToken);
 
         if (await dbContext.MonitoredDevices.AnyAsync(cancellationToken))
         {
             // Idempotent by presence, like every other seeder here: a re-run against a database that
             // already has devices must add nothing rather than a second copy of each.
-            return new MonitoringSeedResult(0, 0, scanProfilesAdded);
+            return new MonitoringSeedResult(0, 0, scanProfilesAdded, runbooksAdded, triggersAdded);
         }
 
         var now = DateTimeOffset.UtcNow;
@@ -153,7 +168,83 @@ public sealed class MonitoringDemoSeeder(MonitoringDbContext dbContext)
         await transaction.CommitAsync(cancellationToken);
 
         return new MonitoringSeedResult(
-            devices.Count, devices.Sum(device => device.Checks.Count), scanProfilesAdded);
+            devices.Count,
+            devices.Sum(device => device.Checks.Count),
+            scanProfilesAdded,
+            runbooksAdded,
+            triggersAdded);
+    }
+
+    /// <summary>
+    /// WP-5.6's one allowlisted runbook, registered, plus a trigger narrow enough to be safe on a
+    /// fresh install.
+    /// <para>
+    /// The trigger is scoped to the seeded mock HTTP target and to that alone. An estate-wide trigger
+    /// on <c>check.success</c> would arm auto-remediation against every device the moment somebody ran
+    /// <c>aspire run</c> — including the deliberately unreachable one, which fails permanently by
+    /// design. Seeding the wide version would be seeding the mistake this feature is most likely to
+    /// make.
+    /// </para>
+    /// <para>
+    /// Nothing here can create a runbook the catalogue does not name: the key is
+    /// <see cref="RunbookCatalog.RestartService"/> itself, so a seeded row cannot be a way past the
+    /// allowlist any more than an API call can.
+    /// </para>
+    /// </summary>
+    private async Task<(int Runbooks, int Triggers)> SeedRunbooksAsync(CancellationToken cancellationToken)
+    {
+        if (await dbContext.Runbooks.AnyAsync(cancellationToken))
+        {
+            return (0, 0);
+        }
+
+        var definition = RunbookCatalog.Find(RunbookCatalog.RestartService);
+        if (definition is null)
+        {
+            return (0, 0);
+        }
+
+        var now = DateTimeOffset.UtcNow;
+        var runbook = new Runbook
+        {
+            Id = Guid.Parse("0199c0de-5600-7000-8000-000000000001"),
+            Key = definition.Key,
+            Name = definition.Name,
+            Description = definition.Description,
+            Version = 1,
+            TimeoutSeconds = definition.DefaultTimeoutSeconds,
+            // Deliberately tighter than the configured default. A seeded estate is one nobody is
+            // watching yet, and three attempts an hour is enough to demonstrate the feature and not
+            // enough to be a nuisance if a seeded check starts flapping.
+            MaxExecutionsPerWindow = 3,
+            RateLimitWindowMinutes = 60,
+            IsEnabled = true,
+            CreatedBy = Actor,
+            CreatedAt = now,
+            UpdatedBy = Actor,
+            UpdatedAt = now,
+        };
+        dbContext.Runbooks.Add(runbook);
+
+        dbContext.RunbookTriggers.Add(new RunbookTrigger
+        {
+            Id = Guid.Parse("0199c0de-5600-7000-8000-000000000002"),
+            RunbookId = runbook.Id,
+            MetricName = AlertRules.AvailabilityMetric,
+            MinimumSeverity = AlertSeverity.Critical,
+            // The mock HTTP target from WP-3.12, and nothing else.
+            DeviceId = HttpTargetDeviceId,
+            ParametersJson = JsonSerializer.Serialize(
+                new Dictionary<string, string> { ["service"] = "nginx" }),
+            IsEnabled = true,
+            CreatedBy = Actor,
+            CreatedAt = now,
+            UpdatedBy = Actor,
+            UpdatedAt = now,
+        });
+
+        await dbContext.SaveChangesAsync(cancellationToken);
+        return (1, 1);
     }
 
     /// <summary>
@@ -380,7 +471,7 @@ public sealed class MonitoringDemoSeeder(MonitoringDbContext dbContext)
         }
 
         yield return Device(
-            Guid.Parse("0199c0de-3300-7000-8000-000000000006"),
+            HttpTargetDeviceId,
             plan.CiIds[5],
             plan,
             now,

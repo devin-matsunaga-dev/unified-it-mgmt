@@ -256,6 +256,92 @@ public static class AlertTicketPolicy
     public static string SupersedesNote(string previousTicketNumber) =>
         $"The previous ticket for this alert, {previousTicketNumber}, was already finished; this recurrence was recorded here.";
 
+    /// <summary>
+    /// What an auto-remediation run leaves on the ticket (WP-5.6). Internal, like every other note this
+    /// automation writes: it is between the platform and whoever is holding the ticket, and a requester
+    /// mailed the stdout of a service restart learns nothing from it.
+    /// <para>
+    /// The output is quoted verbatim and last. It has already been truncated by the server that stored
+    /// it, and rewriting an agent's output — trimming it, summarising it, reformatting it — is how the
+    /// one line that explains a failure gets lost.
+    /// </para>
+    /// </summary>
+    public static string RunbookNote(RunbookExecutionCompleted execution)
+    {
+        ArgumentNullException.ThrowIfNull(execution);
+        var succeeded = execution.Outcome.Equals("Succeeded", StringComparison.OrdinalIgnoreCase);
+        var lines = new List<string>(10)
+        {
+            succeeded
+                ? $"Automated remediation '{execution.RunbookName}' ran successfully."
+                : $"Automated remediation '{execution.RunbookName}' did not succeed ({execution.Outcome}).",
+            string.Empty,
+            $"Runbook: {execution.RunbookKey} (version {execution.RunbookVersion})",
+            $"Requested by: {execution.RequestedBy}",
+            $"Ran on: {execution.PollerName ?? "no poller claimed it"}",
+            $"Finished: {Instant(execution.CompletedAt)} after {Duration(execution.DurationSeconds)}",
+        };
+
+        if (execution.ExitCode is { } exitCode)
+        {
+            lines.Add($"Exit code: {exitCode}");
+        }
+
+        if (!succeeded)
+        {
+            // Said explicitly, because "it failed" and "it will try again shortly" are the two things a
+            // technician has to tell apart before deciding whether to touch anything.
+            lines.Add(string.Empty);
+            lines.Add("Nothing was retried and nothing will be: this ticket is the escalation.");
+        }
+
+        if (!string.IsNullOrWhiteSpace(execution.Error))
+        {
+            lines.Add(string.Empty);
+            lines.Add("Error");
+            lines.Add(execution.Error.TrimEnd());
+        }
+
+        if (!string.IsNullOrWhiteSpace(execution.Output))
+        {
+            lines.Add(string.Empty);
+            lines.Add("Output");
+            lines.Add(execution.Output.TrimEnd());
+        }
+
+        return string.Join(Environment.NewLine, lines);
+    }
+
+    /// <summary>
+    /// The ticket a failed remediation opens when the alert never had one — the automation was off,
+    /// suppressed, or the alert cleared before it was ticketed.
+    /// <para>
+    /// Opened only on failure. A remediation that worked and had no ticket needs none: it is recorded
+    /// on the execution row and in the audit trail, and a ticket saying "something was fixed
+    /// automatically, no action required" is a ticket somebody has to close.
+    /// </para>
+    /// </summary>
+    public static AlertTicketDraft ComposeRunbookEscalation(RunbookExecutionCompleted execution)
+    {
+        ArgumentNullException.ThrowIfNull(execution);
+        var title = Truncate(
+            $"[Remediation failed] {execution.RunbookName} on device {execution.DeviceId}", 200);
+        var description = string.Join(Environment.NewLine,
+            $"An automated remediation failed and there was no open ticket to record it on.",
+            string.Empty,
+            RunbookNote(execution),
+            string.Empty,
+            $"Device: {execution.DeviceId}",
+            $"CI: {execution.CiId}",
+            execution.AlertId is { } alertId ? $"Alert: {alertId}" : "Alert: none — this was run by hand",
+            execution.RuleId is { } ruleId ? $"Rule: {ruleId}" : "Rule: none",
+            string.Empty,
+            "Opened automatically because the remediation escalated. It does not resolve itself.");
+        // High on both, whatever the alert's severity was. Something ran on a machine and failed, and
+        // nobody is watching it — that is the definition of the case this ticket exists for.
+        return new AlertTicketDraft(title, Truncate(description, 10_000), TicketLevel.High, TicketLevel.High);
+    }
+
     /// <summary>Left on the alert row's ticket when the automation refused to open one.</summary>
     public static string SuppressedNote(AlertRaised alert, string reason) =>
         $"A raise of {alert.RuleId} at {Instant(alert.RaisedAt)} opened no ticket: {reason}.";

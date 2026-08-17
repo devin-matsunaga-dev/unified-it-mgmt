@@ -294,3 +294,79 @@ public sealed class MonitoringConfigChangeConfiguration : IEntityTypeConfigurati
         builder.HasIndex(change => change.PollerGroup);
     }
 }
+
+public sealed class RunbookConfiguration : IEntityTypeConfiguration<Runbook>
+{
+    public void Configure(EntityTypeBuilder<Runbook> builder)
+    {
+        builder.ToTable("runbooks", "monitoring");
+        builder.HasKey(runbook => runbook.Id);
+        builder.Property(runbook => runbook.Key).HasMaxLength(100).IsRequired();
+        builder.Property(runbook => runbook.Name).HasMaxLength(200).IsRequired();
+        builder.Property(runbook => runbook.Description).HasMaxLength(2_000);
+        builder.Property(runbook => runbook.CreatedBy).HasMaxLength(200).IsRequired();
+        builder.Property(runbook => runbook.UpdatedBy).HasMaxLength(200).IsRequired();
+
+        // One registration per catalogue key. Two rows for `restart-service` would be two rate limits
+        // over the same allowlisted action, which is a bound anybody could walk around by registering
+        // the same thing twice.
+        builder.HasIndex(runbook => runbook.Key).IsUnique();
+    }
+}
+
+public sealed class RunbookTriggerConfiguration : IEntityTypeConfiguration<RunbookTrigger>
+{
+    public void Configure(EntityTypeBuilder<RunbookTrigger> builder)
+    {
+        builder.ToTable("runbook_triggers", "monitoring");
+        builder.HasKey(trigger => trigger.Id);
+        builder.Property(trigger => trigger.MetricName).HasMaxLength(100).IsRequired();
+        builder.Property(trigger => trigger.MinimumSeverity).HasConversion<string>().HasMaxLength(20).IsRequired();
+        builder.Property(trigger => trigger.ParametersJson).HasColumnType("jsonb").IsRequired();
+        builder.Property(trigger => trigger.CreatedBy).HasMaxLength(200).IsRequired();
+        builder.Property(trigger => trigger.UpdatedBy).HasMaxLength(200).IsRequired();
+
+        builder.HasOne(trigger => trigger.Runbook)
+            .WithMany(runbook => runbook.Triggers)
+            .HasForeignKey(trigger => trigger.RunbookId)
+            .OnDelete(DeleteBehavior.Cascade);
+
+        // The consumer's only query: which triggers a raised alert matches.
+        builder.HasIndex(trigger => new { trigger.MetricName, trigger.IsEnabled });
+    }
+}
+
+public sealed class RunbookExecutionConfiguration : IEntityTypeConfiguration<RunbookExecution>
+{
+    public void Configure(EntityTypeBuilder<RunbookExecution> builder)
+    {
+        builder.ToTable("runbook_executions", "monitoring");
+        builder.HasKey(execution => execution.Id);
+        builder.Property(execution => execution.RunbookKey).HasMaxLength(100).IsRequired();
+        builder.Property(execution => execution.RuleId).HasMaxLength(200);
+        builder.Property(execution => execution.ParametersJson).HasColumnType("jsonb").IsRequired();
+        builder.Property(execution => execution.Status).HasConversion<string>().HasMaxLength(20).IsRequired();
+        builder.Property(execution => execution.RequestedBy).HasMaxLength(200).IsRequired();
+        builder.Property(execution => execution.PollerName).HasMaxLength(100);
+        builder.Property(execution => execution.Output).HasMaxLength(16_000);
+        builder.Property(execution => execution.Error).HasMaxLength(4_000);
+
+        // Restrict, not cascade: deleting a runbook must not silently delete the record of everything
+        // it ever did on the estate. The service refuses the delete while executions exist and says so.
+        builder.HasOne(execution => execution.Runbook)
+            .WithMany()
+            .HasForeignKey(execution => execution.RunbookId)
+            .OnDelete(DeleteBehavior.Restrict);
+
+        // "One execution per alert per runbook", as a constraint rather than a hope about ordering —
+        // the same call WP-3.6 made for its dedupe row. A redelivered AlertRaised, or an escalation
+        // carrying the same alert id, loses this insert and runs nothing.
+        builder.HasIndex(execution => new { execution.RunbookId, execution.AlertId })
+            .IsUnique()
+            .HasFilter("alert_id IS NOT NULL");
+
+        // What the poller claims, and what the sweeper looks for.
+        builder.HasIndex(execution => new { execution.Status, execution.RequestedAt });
+        builder.HasIndex(execution => execution.DeviceId);
+    }
+}

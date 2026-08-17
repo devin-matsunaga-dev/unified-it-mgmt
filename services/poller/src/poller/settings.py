@@ -10,6 +10,11 @@ DEFAULT_HEARTBEAT_EXCHANGE = "Contracts.Events:PollerHeartbeat"
 DEFAULT_TELEMETRY_EXCHANGE = "Contracts.Events:DeviceTelemetryReported"
 DEFAULT_REACHABILITY_EXCHANGE = "Contracts.Events:DeviceReachabilityChanged"
 
+#: How `restart-service` restarts something on a real host. Overridden per deployment — under
+#: `aspire run` the poller is a container with no init system, so AppHost points it at a stand-in
+#: the same way `snmpsim` stands in for a switch.
+DEFAULT_RESTART_SERVICE_COMMAND = "systemctl restart {service}"
+
 
 class MissingSettingError(RuntimeError):
     """A required environment variable was absent or empty."""
@@ -44,6 +49,8 @@ class Settings:
     http_timeout_seconds: float
     max_concurrent_checks: int
     icmp_privileged: bool
+    runbooks_enabled: bool
+    runbook_restart_service_command: str
 
     @classmethod
     def from_env(cls, environ: Mapping[str, str] | None = None) -> Settings:
@@ -77,6 +84,20 @@ class Settings:
             # behaves the way `ping` does; AppHost sets it false.
             icmp_privileged=(env.get("POLLER_ICMP_PRIVILEGED") or "true").strip().casefold()
             not in ("false", "0", "no"),
+            # WP-5.6. Default on, because a poller that silently declines to remediate looks exactly
+            # like one whose executions are never claimed. Turning it off is how a deployment says
+            # "this agent polls and does not act" — a poller-side switch distinct from the
+            # platform's own kill switch, so either side alone can stop remediation.
+            runbooks_enabled=(env.get("POLLER_RUNBOOKS_ENABLED") or "true").strip().casefold()
+            not in ("false", "0", "no"),
+            # The one place a runbook's command lives, and it is deployment configuration rather
+            # than anything that travels over the wire. The parameter substituted into it is checked
+            # by the server against the runbook's schema, and again by the agent before it becomes
+            # an argv element; the template is never taken from a request.
+            runbook_restart_service_command=(
+                env.get("POLLER_RUNBOOK_RESTART_SERVICE_COMMAND")
+                or DEFAULT_RESTART_SERVICE_COMMAND
+            ),
         )
 
 

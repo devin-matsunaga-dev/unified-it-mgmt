@@ -409,6 +409,118 @@ public sealed class AlertTicketAutomationIntegrationTests : IAsyncLifetime
         Assert.Null((await EntryAsync(rule)).AutoResolvedAt);
     }
 
+    // ---- WP-5.6: an auto-remediation result reaching the ticket ----
+
+    /// <summary>
+    /// The WP's first verification step on the Helpdesk side: the runbook's output lands on the ticket
+    /// the alert opened, as an internal note.
+    /// </summary>
+    [Fact]
+    public async Task RunbookResult_ForARuleWithATicket_IsRecordedOnIt()
+    {
+        var rule = NewRule();
+        await RaiseAsync(rule);
+        var ticketId = (await EntryAsync(rule)).TicketId!.Value;
+
+        await RecordRunbookAsync(rule, "Succeeded", exitCode: 0, output: "Restarted nginx.");
+
+        var comment = Assert.Single(
+            await CommentsAsync(ticketId),
+            item => item.Body.Contains("ran successfully", StringComparison.Ordinal));
+        Assert.Contains("Restarted nginx.", comment.Body, StringComparison.Ordinal);
+        Assert.True(comment.IsInternal);
+        // The ticket is not touched otherwise: a remediation that worked is not a resolution, and
+        // only the alert clearing resolves this ticket (WP-3.6).
+        Assert.Equal("New", (await TicketAsync(ticketId)).Status.Name);
+    }
+
+    /// <summary>
+    /// The WP's third verification step: a failure escalates and says, on the ticket, that nothing
+    /// will try again — which is the sentence a technician reads before deciding whether to wait.
+    /// </summary>
+    [Fact]
+    public async Task RunbookResult_AFailureOnARuleWithATicket_SaysNothingWillRetry()
+    {
+        var rule = NewRule();
+        await RaiseAsync(rule);
+        var ticketId = (await EntryAsync(rule)).TicketId!.Value;
+
+        await RecordRunbookAsync(rule, "Failed", exitCode: 1, error: "Unit nginx.service not found.");
+
+        Assert.Contains(
+            await CommentsAsync(ticketId),
+            comment => comment.Body.Contains("Nothing was retried and nothing will be", StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// The escalation with nowhere to land. The alert was never ticketed — suppressed, or automation
+    /// off at the time — so the failure opens a ticket of its own rather than disappearing.
+    /// </summary>
+    [Fact]
+    public async Task RunbookResult_AFailureWithNoTicket_OpensOneAtHighPriority()
+    {
+        var rule = NewRule();
+
+        await RecordRunbookAsync(rule, "Failed", exitCode: 1, error: "Permission denied.");
+
+        await using var scope = _application.Services.CreateAsyncScope();
+        var ticket = await scope.ServiceProvider.GetRequiredService<HelpdeskDbContext>()
+            .Tickets.Include(item => item.Status)
+            .SingleAsync(item => item.Description.Contains(rule.RuleId)
+                && item.Title.StartsWith("[Remediation failed]"));
+        Assert.Contains("Permission denied.", ticket.Description, StringComparison.Ordinal);
+        Assert.Equal(TicketLevel.High, ticket.Urgency);
+    }
+
+    /// <summary>
+    /// The other half of that rule, and the one that keeps the ticket queue habitable: a remediation
+    /// that <em>worked</em> and had no ticket opens none. The execution row and the audit entry are
+    /// its record, and a ticket saying "nothing needs doing" is one somebody has to close.
+    /// </summary>
+    [Fact]
+    public async Task RunbookResult_ASuccessWithNoTicket_OpensNothing()
+    {
+        var rule = NewRule();
+
+        await RecordRunbookAsync(rule, "Succeeded", exitCode: 0, output: "Restarted nginx.");
+
+        await using var scope = _application.Services.CreateAsyncScope();
+        Assert.Empty(await scope.ServiceProvider.GetRequiredService<HelpdeskDbContext>()
+            .Tickets.Where(item => item.Description.Contains(rule.RuleId)).ToListAsync());
+    }
+
+    /// <summary>
+    /// A failed run somebody started by hand still escalates. Their request returned long before the
+    /// result arrived, so there is otherwise nothing at all to notice it.
+    /// </summary>
+    [Fact]
+    public async Task RunbookResult_AFailedManualRun_StillOpensATicket()
+    {
+        var rule = NewRule();
+
+        await RecordRunbookAsync(rule, "Failed", exitCode: 1, error: "No such unit.", isManual: true);
+
+        await using var scope = _application.Services.CreateAsyncScope();
+        // Matched on the device rather than on the title alone: a manual run's ticket names no rule,
+        // and the whole collection shares one database — so anything less specific than a per-test id
+        // finds every previous run's ticket too. The trap WP-3.4's notes record.
+        var ticket = await scope.ServiceProvider.GetRequiredService<HelpdeskDbContext>()
+            .Tickets.SingleAsync(item => item.Title.StartsWith("[Remediation failed]")
+                && item.Description.Contains(rule.DeviceId.ToString()));
+        Assert.Contains("run by hand", ticket.Description, StringComparison.Ordinal);
+        Assert.Contains("No such unit.", ticket.Description, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task RunbookResult_WithNoExecution_Throws()
+    {
+        await using var scope = _application.Services.CreateAsyncScope();
+        var automation = scope.ServiceProvider.GetRequiredService<IAlertTicketAutomation>();
+
+        await Assert.ThrowsAsync<ArgumentNullException>(() =>
+            automation.RecordRunbookResultAsync(null!, CancellationToken.None));
+    }
+
     [Fact]
     public async Task Raise_WithNoAlert_Throws()
     {
@@ -496,6 +608,29 @@ public sealed class AlertTicketAutomationIntegrationTests : IAsyncLifetime
                 "cpu.utilisation_percent", 97.5, 90, "CPU utilisation is above the critical threshold.",
                 DateTimeOffset.UtcNow, 3),
             CancellationToken.None);
+    }
+
+    private async Task RecordRunbookAsync(
+        RuleFixture rule,
+        string outcome,
+        int? exitCode,
+        string? output = null,
+        string? error = null,
+        bool isManual = false)
+    {
+        await using var scope = _application.Services.CreateAsyncScope();
+        await scope.ServiceProvider.GetRequiredService<IAlertTicketAutomation>()
+            .RecordRunbookResultAsync(
+                new RunbookExecutionCompleted(
+                    Guid.CreateVersion7(), DateTimeOffset.UtcNow, Guid.CreateVersion7(),
+                    Guid.CreateVersion7(), "restart-service", "Restart a service", 1,
+                    isManual ? null : Guid.CreateVersion7(),
+                    rule.DeviceId, rule.CiId,
+                    isManual ? null : rule.RuleId,
+                    outcome, exitCode, output, error,
+                    isManual ? "technician1" : "system:monitoring", "poller-1",
+                    DateTimeOffset.UtcNow.AddSeconds(-8), DateTimeOffset.UtcNow, 8),
+                CancellationToken.None);
     }
 
     private async Task ClearAsync(RuleFixture rule)

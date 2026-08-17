@@ -97,5 +97,7 @@ public static class HelpdeskServiceCollectionExtensions
         ArgumentNullException.ThrowIfNull(bus);
         bus.AddConsumer<AlertRaisedConsumer>();
         bus.AddConsumer<AlertClearedConsumer>();
+        // WP-5.6: the result of a remediation Monitoring ran, landing on the ticket for its alert.
+        bus.AddConsumer<RunbookExecutionCompletedConsumer>();
     }
 }

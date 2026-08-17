@@ -66,3 +66,36 @@ public sealed class AlertClearedConsumer(
         }
     }
 }
+
+/// <summary>
+/// WP-5.6's result, written onto the ticket. Monitoring ran the runbook and knows what it printed;
+/// Helpdesk owns tickets and holds the dedupe row that says which ticket the alert opened, so the fact
+/// travels as an event rather than as a port — ARCHITECTURE §3 says a port is a read surface and never
+/// a write path.
+/// <para>
+/// Deduped like every other consumer here. It matters more than usual: this one can <em>open</em> a
+/// ticket when a remediation failed with nothing to record it on, and a redelivered message would open
+/// a second.
+/// </para>
+/// </summary>
+public sealed class RunbookExecutionCompletedConsumer(
+    IConsumerIdempotencyService idempotencyService,
+    IAlertTicketAutomation automation,
+    ILogger<RunbookExecutionCompletedConsumer> logger) : IConsumer<RunbookExecutionCompleted>
+{
+    public async Task Consume(ConsumeContext<RunbookExecutionCompleted> context)
+    {
+        var execution = context.Message;
+        var accepted = await idempotencyService.ExecuteOnceAsync(
+            $"runbook-result:{execution.EventId}",
+            cancellationToken => automation.RecordRunbookResultAsync(execution, cancellationToken),
+            context.CancellationToken);
+
+        if (!accepted)
+        {
+            logger.LogDebug(
+                "RunbookExecutionCompleted {EventId} for execution {ExecutionId} was already handled; skipped.",
+                execution.EventId, execution.ExecutionId);
+        }
+    }
+}

@@ -13,6 +13,7 @@ from .api import ConfigVersionRejectedError, PollerNotRegisteredError
 from .bus import HEARTBEAT_MESSAGE_URN, NullPublisher, Publisher, build_envelope
 from .config import ConfigState
 from .polling import CheckResult, PollingEngine, ReachabilityChange
+from .runbooks import RunbookRequest, RunbookRunner
 from .scheduler import CheckScheduler
 from .settings import Settings
 from .telemetry import (
@@ -38,6 +39,12 @@ class ApiClient(Protocol):
     async def request_credential_grant(self) -> dict[str, Any]: ...
 
     async def redeem_credential_grant(self, grant_id: str, token: str) -> dict[str, Any]: ...
+
+    async def fetch_runbook_executions(self) -> dict[str, Any]: ...
+
+    async def report_runbook_result(
+        self, execution_id: str, result: dict[str, Any]
+    ) -> dict[str, Any] | None: ...
 
 
 class PollerAgent:
@@ -65,6 +72,7 @@ class PollerAgent:
         telemetry_publisher: Publisher | None = None,
         reachability_publisher: Publisher | None = None,
         credentials: CredentialStore | None = None,
+        runbooks: RunbookRunner | None = None,
     ) -> None:
         self._settings = settings
         self._api = api
@@ -78,6 +86,9 @@ class PollerAgent:
         self._telemetry = telemetry_publisher or NullPublisher()
         self._reachability = reachability_publisher or NullPublisher()
         self._credentials = credentials if credentials is not None else CredentialStore()
+        # No runner means a poller that never remediates. That is what every test written before
+        # WP-5.6 exercises, and `__main__` always wires a real one.
+        self._runbooks = runbooks
         self._registered = False
         self._cycle_number = 0
 
@@ -99,6 +110,7 @@ class PollerAgent:
         await self._refresh_config()
         await self._refresh_credentials()
         await self._poll_devices()
+        await self._run_runbooks()
         await self._publish_heartbeat()
 
     async def run_forever(self, stop: asyncio.Event | None = None) -> None:
@@ -260,6 +272,73 @@ class PollerAgent:
         await self._publish_telemetry(outcome.results)
         for change in outcome.changes:
             await self._publish_reachability(change)
+
+    async def _run_runbooks(self) -> None:
+        """
+        Collects whatever remediation the platform has waiting, runs it, and reports each result.
+
+        After polling, not before: a cycle's first duty is to measure the estate, and a remediation
+        that took its whole timeout would otherwise delay every reading behind it. Nothing here
+        raises — a failed fetch means this cycle remediates nothing and the next one asks again,
+        which is the same rule the configuration and credential refreshes follow.
+
+        A result that cannot be reported is *not* retried by re-running the runbook. The platform's
+        own deadline will finish the execution and escalate it, and running a service restart twice
+        because an HTTP POST failed is precisely the retry storm the WP forbids.
+        """
+        if self._runbooks is None or not self._settings.runbooks_enabled:
+            return
+
+        try:
+            payload = await self._api.fetch_runbook_executions()
+        except PollerNotRegisteredError:
+            # Handled by the config refresh, which runs first and has already asked to re-register.
+            return
+        except Exception:
+            logger.exception(
+                "Runbook fetch failed; nothing was remediated this cycle.",
+                extra=self._context(),
+            )
+            return
+
+        raw = payload.get("executions") or []
+        if not raw:
+            return
+
+        logger.info(
+            "Runbooks claimed.", extra=self._context() | {"runbooks": len(raw)})
+
+        for entry in raw:
+            try:
+                request = RunbookRequest.parse(entry)
+            except (KeyError, TypeError, ValueError):
+                # A dispatch this agent cannot even read. Skipped rather than guessed at: the
+                # platform's deadline finishes it and a human is told, which is the right outcome
+                # for a server and an agent that disagree about the shape of an instruction.
+                logger.exception(
+                    "A dispatched runbook could not be read; it was left alone.",
+                    extra=self._context(),
+                )
+                continue
+
+            result = await self._runbooks.run(request)
+            logger.info(
+                "Runbook finished.",
+                extra=self._context()
+                | {
+                    "execution": result.execution_id,
+                    "runbook": request.key,
+                    "outcome": result.outcome,
+                    "exit_code": result.exit_code,
+                },
+            )
+            try:
+                await self._api.report_runbook_result(result.execution_id, result.as_payload())
+            except Exception:
+                logger.exception(
+                    "A runbook result could not be reported; the platform will time it out.",
+                    extra=self._context() | {"execution": result.execution_id},
+                )
 
     async def _publish_telemetry(self, results: Sequence[CheckResult]) -> None:
         event_id = str(uuid.uuid4())

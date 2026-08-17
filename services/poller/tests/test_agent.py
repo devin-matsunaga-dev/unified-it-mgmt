@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Mapping
+from dataclasses import replace
 from typing import Any
 
 import pytest
@@ -11,6 +12,7 @@ from poller.api import ConfigVersionRejectedError, PollerNotRegisteredError
 from poller.bus import HEARTBEAT_MESSAGE_URN
 from poller.checks import CheckOutcome, Metric
 from poller.polling import PollingEngine
+from poller.runbooks import RunbookRunner
 from poller.scheduler import CheckScheduler
 from poller.settings import Settings
 from tests.test_config import delta, snapshot
@@ -31,6 +33,8 @@ SETTINGS = Settings(
     http_timeout_seconds=10.0,
     max_concurrent_checks=50,
     icmp_privileged=True,
+    runbooks_enabled=True,
+    runbook_restart_service_command="/bin/echo restarted {service}",
 )
 
 
@@ -42,6 +46,7 @@ class FakeApi:
         responses: list[dict[str, Any] | Exception],
         scope: list[dict[str, Any]] | None = None,
         released: list[dict[str, Any]] | None = None,
+        runbooks: list[list[dict[str, Any]] | Exception] | None = None,
     ) -> None:
         self.responses = responses
         self.requested_versions: list[int | None] = []
@@ -53,6 +58,14 @@ class FakeApi:
         self.scope_fetches = 0
         self.grants_requested = 0
         self.redemptions: list[tuple[str, str]] = []
+        # WP-5.6. Empty by default, so every test written before runbooks existed still describes a
+        # cycle that fetches nothing to remediate.
+        self.runbooks: list[list[dict[str, Any]] | Exception] = (
+            [] if runbooks is None else list(runbooks)
+        )
+        self.runbook_fetches = 0
+        self.reported: list[tuple[str, dict[str, Any]]] = []
+        self.reports_fail = False
 
     async def register(self) -> dict[str, Any]:
         self.registrations += 1
@@ -85,6 +98,25 @@ class FakeApi:
     async def redeem_credential_grant(self, grant_id: str, token: str) -> dict[str, Any]:
         self.redemptions.append((grant_id, token))
         return {"credentials": self.released}
+
+    async def fetch_runbook_executions(self) -> dict[str, Any]:
+        self.runbook_fetches += 1
+        answer = self.runbooks.pop(0) if self.runbooks else []
+        if isinstance(answer, Exception):
+            raise answer
+        return {
+            "pollerName": SETTINGS.name,
+            "pollerGroup": SETTINGS.poller_group,
+            "executions": answer,
+        }
+
+    async def report_runbook_result(
+        self, execution_id: str, result: dict[str, Any]
+    ) -> dict[str, Any] | None:
+        if self.reports_fail:
+            raise RuntimeError("the API is restarting")
+        self.reported.append((execution_id, result))
+        return {"id": execution_id}
 
 
 class FailingRegistrationApi(FakeApi):
@@ -605,3 +637,126 @@ async def test_run_cycle_with_nothing_to_authenticate_never_asks_for_a_grant() -
 
     assert api.scope_fetches == 1
     assert api.grants_requested == 0
+
+
+# ---- WP-5.6: auto-remediation in the cycle ----
+
+
+def dispatched(execution_id: str = "e1", key: str = "restart-service") -> dict[str, Any]:
+    return {
+        "executionId": execution_id,
+        "runbookKey": key,
+        "runbookVersion": 1,
+        "deviceId": "d1",
+        "ciId": "c1",
+        "address": "http-target",
+        "parameters": {"service": "nginx"},
+        "timeoutSeconds": 10,
+        "deadlineAt": "2026-08-17T00:01:00+00:00",
+    }
+
+
+def remediating_agent(api: FakeApi) -> PollerAgent:
+    return PollerAgent(
+        SETTINGS, api, FakePublisher(), runbooks=RunbookRunner(SETTINGS))
+
+
+async def test_run_cycle_with_a_dispatched_runbook_runs_it_and_reports_the_result() -> None:
+    api = FakeApi([snapshot()], runbooks=[[dispatched()]])
+    agent = remediating_agent(api)
+
+    await agent.run_cycle()
+
+    execution_id, result = api.reported[0]
+    assert execution_id == "e1"
+    assert result["outcome"] == "Succeeded"
+    assert result["output"] == "restarted nginx"
+
+
+async def test_run_cycle_with_nothing_dispatched_reports_nothing() -> None:
+    api = FakeApi([snapshot()], runbooks=[[]])
+    agent = remediating_agent(api)
+
+    await agent.run_cycle()
+
+    assert api.runbook_fetches == 1
+    assert api.reported == []
+
+
+async def test_run_cycle_with_no_runner_never_asks_for_work() -> None:
+    """
+    A poller wired without a runner is the shape every test written before WP-5.6 describes, and it
+    must not start asking a platform that may not have the endpoint.
+    """
+    api = FakeApi([snapshot()])
+    agent = PollerAgent(SETTINGS, api, FakePublisher())
+
+    await agent.run_cycle()
+
+    assert api.runbook_fetches == 0
+
+
+async def test_run_cycle_with_remediation_switched_off_never_asks_for_work() -> None:
+    api = FakeApi([snapshot()])
+    settings = replace(SETTINGS, runbooks_enabled=False)
+    agent = PollerAgent(settings, api, FakePublisher(), runbooks=RunbookRunner(settings))
+
+    await agent.run_cycle()
+
+    assert api.runbook_fetches == 0
+
+
+async def test_run_cycle_when_the_runbook_fetch_fails_still_heartbeats() -> None:
+    """
+    The rule every other step in this cycle follows: one dependency failing costs its own step and
+    nothing else. A poller that stopped reporting itself alive because remediation was unreachable
+    would be reported dead by the platform.
+    """
+    api = FakeApi([snapshot()], runbooks=[RuntimeError("the API is restarting")])
+    heartbeat = FakePublisher()
+    agent = PollerAgent(SETTINGS, api, heartbeat, runbooks=RunbookRunner(SETTINGS))
+
+    await agent.run_cycle()
+
+    assert api.reported == []
+    assert len(heartbeat.published) == 1
+
+
+async def test_run_cycle_when_a_result_cannot_be_reported_does_not_run_it_again() -> None:
+    """
+    The "no retry storm" rule at its sharpest. The report failed, so the platform will time this
+    execution out and escalate it — re-running a service restart because an HTTP POST failed is
+    exactly what the WP forbids.
+    """
+    api = FakeApi([snapshot(version=1), delta(version=2)], runbooks=[[dispatched()], []])
+    api.reports_fail = True
+    heartbeat = FakePublisher()
+    agent = PollerAgent(SETTINGS, api, heartbeat, runbooks=RunbookRunner(SETTINGS))
+
+    await agent.run_cycle()
+    api.reports_fail = False
+    await agent.run_cycle()
+
+    assert api.reported == []
+    assert len(heartbeat.published) == 2
+
+
+async def test_run_cycle_with_a_runbook_this_agent_does_not_know_reports_the_refusal() -> None:
+    api = FakeApi([snapshot()], runbooks=[[dispatched(key="delete-everything")]])
+    agent = remediating_agent(api)
+
+    await agent.run_cycle()
+
+    _, result = api.reported[0]
+    assert result["outcome"] == "Failed"
+    assert "does not implement" in result["error"]
+
+
+async def test_run_cycle_with_an_unreadable_dispatch_leaves_it_alone_and_carries_on() -> None:
+    """A dispatch missing its id is skipped rather than guessed at; the next one still runs."""
+    api = FakeApi([snapshot()], runbooks=[[{"runbookKey": "restart-service"}, dispatched("e2")]])
+    agent = remediating_agent(api)
+
+    await agent.run_cycle()
+
+    assert [execution for execution, _ in api.reported] == ["e2"]

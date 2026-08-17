@@ -1,4 +1,4 @@
-"""The poller's client for its own two endpoints on the platform API."""
+"""The poller's client for the endpoints on the platform API that are its own."""
 
 from __future__ import annotations
 
@@ -142,6 +142,48 @@ class PlatformApiClient:
         )
         if response.status_code == httpx.codes.NOT_FOUND:
             raise PollerNotRegisteredError(f"Poller {self._settings.name} is not registered.")
+        response.raise_for_status()
+        return dict(response.json())
+
+    async def fetch_runbook_executions(self) -> dict[str, Any]:
+        """
+        Collects the remediations waiting for this poller's group, if any.
+
+        A *fetch*, deliberately, and it is the whole reason there is no queue: ARCHITECTURE §4 gives
+        this process publish-only bus credentials and says pollers never consume commands. So the
+        platform decides what should run and this asks for it, on the same cycle and under the same
+        service account as the configuration read beside it.
+
+        Claiming is the server's business — a row handed over here is already marked as this
+        poller's, so two pollers sharing a group cannot both run the same remediation.
+        """
+        response = await self._http.get(
+            f"{self._settings.api_base_url}/api/pollers/{self._settings.name}/runbook-executions",
+            headers=await self._auth_header(),
+        )
+        if response.status_code == httpx.codes.NOT_FOUND:
+            raise PollerNotRegisteredError(f"Poller {self._settings.name} is not registered.")
+        response.raise_for_status()
+        return dict(response.json())
+
+    async def report_runbook_result(
+        self, execution_id: str, result: dict[str, Any]
+    ) -> dict[str, Any] | None:
+        """
+        Reports what a runbook did.
+
+        A 409 is not an error: it means the platform already recorded a terminal state for this
+        execution — its own timeout swept it while the runbook was still running. The first terminal
+        state is the true one, so this returns None and the agent stops asking rather than arguing.
+        """
+        response = await self._http.post(
+            f"{self._settings.api_base_url}/api/pollers/{self._settings.name}"
+            f"/runbook-executions/{execution_id}/results",
+            json=result,
+            headers=await self._auth_header(),
+        )
+        if response.status_code == httpx.codes.CONFLICT:
+            return None
         response.raise_for_status()
         return dict(response.json())
 
