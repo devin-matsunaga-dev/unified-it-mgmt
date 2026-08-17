@@ -30,6 +30,8 @@ public sealed class AssetsDbContext(DbContextOptions<AssetsDbContext> options) :
     public DbSet<SoftwareNormalisationRule> SoftwareNormalisationRules => Set<SoftwareNormalisationRule>();
     public DbSet<InstalledSoftware> InstalledSoftware => Set<InstalledSoftware>();
     public DbSet<LicensePool> LicensePools => Set<LicensePool>();
+    public DbSet<ChangeRequest> ChangeRequests => Set<ChangeRequest>();
+    public DbSet<ChangeRequestCi> ChangeRequestCis => Set<ChangeRequestCi>();
 
     /// <summary>Result shape of the recursive-CTE traversals; never mapped to a table.</summary>
     public DbSet<CiGraphHop> CiGraphHops => Set<CiGraphHop>();

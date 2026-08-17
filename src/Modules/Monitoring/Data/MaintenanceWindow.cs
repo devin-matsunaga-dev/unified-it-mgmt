@@ -25,6 +25,19 @@ public sealed class MaintenanceWindow
 
     public bool IsActive { get; set; } = true;
 
+    /// <summary>
+    /// The Assets change request whose approval opened this window, or null for one an operator created
+    /// directly (WP-5.8).
+    /// <para>
+    /// An id and nothing else — no name, no schedule copied across. Monitoring may not query
+    /// <c>assets.change_requests</c> and no foreign key can span the two schemas, so this is a trace back
+    /// to a record rather than a relationship the database enforces. It carries a filtered unique index,
+    /// which is what makes the sync idempotent: one window per change, however many times the approval is
+    /// delivered.
+    /// </para>
+    /// </summary>
+    public Guid? ChangeRequestId { get; set; }
+
     public required string CreatedBy { get; set; }
 
     public DateTimeOffset CreatedAt { get; set; }

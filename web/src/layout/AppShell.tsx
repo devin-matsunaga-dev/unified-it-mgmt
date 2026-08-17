@@ -1,4 +1,4 @@
-import { AppWindow, Bell, Boxes, ClipboardCheck, Radar, FileText, ChevronRight, CircleHelp, Contact, Gauge, GitCompareArrows, Headphones, LogOut, Mail, Menu, MonitorCog, ScanLine, Settings, ShieldCheck, ShieldQuestion, Users, Waypoints, X } from 'lucide-react'
+import { AppWindow, Bell, Boxes, CalendarClock, ClipboardCheck, Radar, FileText, ChevronRight, CircleHelp, Contact, Gauge, GitCompareArrows, Headphones, LogOut, Mail, Menu, MonitorCog, ScanLine, Settings, ShieldCheck, ShieldQuestion, Users, Waypoints, X } from 'lucide-react'
 import { useEffect, useRef, useState, type ComponentType } from 'react'
 import { NavLink, Outlet, useLocation } from 'react-router-dom'
 import { useAuth } from '../auth/AuthProvider'
@@ -20,6 +20,7 @@ const navigation: NavItem[] = [
   { label: 'Software', to: '/software', icon: AppWindow, roles: ['Admin', 'Technician', 'Manager'] },
   { label: 'Contracts', to: '/contracts', icon: FileText, roles: ['Admin', 'Technician', 'Manager'] },
   { label: 'Scan', to: '/scan', icon: ScanLine, roles: ['Admin', 'Technician', 'Manager'] },
+  { label: 'Changes', to: '/changes', icon: CalendarClock, roles: ['Admin', 'Technician', 'Manager'] },
   { label: 'Audits', to: '/audits', icon: ClipboardCheck, roles: ['Admin', 'Technician', 'Manager'] },
   { label: 'Monitoring', to: '/monitoring', icon: MonitorCog, roles: ['Admin', 'Technician', 'Manager'] },
   { label: 'People', to: '/people', icon: Contact, roles: ['Admin', 'Technician', 'Manager'] },

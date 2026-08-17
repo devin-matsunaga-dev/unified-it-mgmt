@@ -23,6 +23,7 @@ using Modules.Assets.Data;
 using Modules.Helpdesk.Data;
 using Modules.Monitoring.Data;
 using Modules.Monitoring.Features.Alerting;
+using Modules.Monitoring.Features.MaintenanceWindows;
 
 using Platform.Data;
 using Platform.Integration;
@@ -248,6 +249,111 @@ public sealed class AlertEngineIntegrationTests : IAsyncLifetime
         await DriveAsync(fixture, [95, 95, 95]);
 
         var alert = Assert.Single(await AlertsAsync(fixture.DeviceId, thresholdRuleOnly: true));
+        Assert.Equal(AlertSuppression.None, alert.Suppression);
+        Assert.Single(await PublishedAsync<AlertRaised>(fixture.DeviceId, alert.RuleId));
+    }
+
+    // ---- WP-5.8: the window an approved change opens ----
+
+    /// <summary>
+    /// The sync half of WP-5.8 against a real database: an approval names CIs, and the window that opens
+    /// covers the monitored devices those CIs are — not the CIs, and not the estate.
+    /// </summary>
+    [Fact]
+    public async Task Sync_ForAnApprovedChange_OpensAWindowScopedToTheDevicesThoseCisAre()
+    {
+        var fixture = await CreateDeviceWithCpuCheckAsync();
+        var changeId = Guid.CreateVersion7();
+
+        await SyncApprovalAsync(changeId, [fixture.CiId]);
+
+        var window = await WindowForChangeAsync(changeId);
+        Assert.NotNull(window);
+        Assert.False(window.AppliesToAllDevices);
+        Assert.Equal(fixture.DeviceId, Assert.Single(window.Devices).DeviceId);
+        Assert.Contains("CHG-", window.Name, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// A redelivered approval opens no second window. The filtered unique index is the guarantee; this
+    /// asserts the service reaches the same answer without relying on a constraint violation to do it.
+    /// </summary>
+    [Fact]
+    public async Task Sync_DeliveredTwice_OpensExactlyOneWindow()
+    {
+        var fixture = await CreateDeviceWithCpuCheckAsync();
+        var changeId = Guid.CreateVersion7();
+
+        await SyncApprovalAsync(changeId, [fixture.CiId]);
+        await SyncApprovalAsync(changeId, [fixture.CiId]);
+
+        await using var scope = _application.Services.CreateAsyncScope();
+        var context = scope.ServiceProvider.GetRequiredService<MonitoringDbContext>();
+        Assert.Equal(1, await context.MaintenanceWindows.CountAsync(w => w.ChangeRequestId == changeId));
+    }
+
+    /// <summary>
+    /// The failure path that matters most, because getting it wrong is silent and estate-wide: a change
+    /// covering CIs nothing polls must open <em>no</em> window, never a window over everything.
+    /// </summary>
+    [Fact]
+    public async Task Sync_ForCisNothingMonitors_OpensNoWindowAtAll()
+    {
+        var ci = await CreateCiAsync();
+        var changeId = Guid.CreateVersion7();
+
+        await SyncApprovalAsync(changeId, [ci.Id]);
+
+        Assert.Null(await WindowForChangeAsync(changeId));
+
+        // And nothing estate-wide was created as a side effect, which is the shape of the mistake.
+        await using var scope = _application.Services.CreateAsyncScope();
+        var context = scope.ServiceProvider.GetRequiredService<MonitoringDbContext>();
+        Assert.False(await context.MaintenanceWindows
+            .AnyAsync(window => window.ChangeRequestId == changeId || window.AppliesToAllDevices));
+    }
+
+    /// <summary>
+    /// The WP's own verification step, driven end to end: approve maintenance on the device, then break
+    /// it. The alert is recorded, and nobody is told — so no ticket is opened either, because WP-3.6's
+    /// automation consumes the event this did not publish.
+    /// </summary>
+    [Fact]
+    public async Task Evaluate_InsideAWindowAnApprovedChangeOpened_RecordsTheAlertAndPublishesNothing()
+    {
+        var fixture = await CreateDeviceWithCpuCheckAsync();
+        await SyncApprovalAsync(Guid.CreateVersion7(), [fixture.CiId]);
+
+        await DriveAsync(fixture, [95, 95, 95, 95]);
+
+        var alert = Assert.Single(await AlertsAsync(fixture.DeviceId, thresholdRuleOnly: true));
+        Assert.Equal(AlertSeverity.Critical, alert.Severity);
+        Assert.Equal(AlertSuppression.Maintenance, alert.Suppression);
+        Assert.Empty(await PublishedAsync<AlertRaised>(fixture.DeviceId, alert.RuleId));
+    }
+
+    /// <summary>
+    /// The half of the WP's verification that says "prove it": once the approved change's window ends,
+    /// the same still-broken device alerts, and it alerts exactly once rather than for every muted cycle
+    /// it sat through. The alert row is the same one throughout — nothing was re-raised.
+    /// </summary>
+    [Fact]
+    public async Task Evaluate_AfterTheApprovedChangesWindowEnds_PublishesTheAlertOnce()
+    {
+        var fixture = await CreateDeviceWithCpuCheckAsync();
+        var changeId = Guid.CreateVersion7();
+        await SyncApprovalAsync(changeId, [fixture.CiId]);
+
+        await DriveAsync(fixture, [95, 95, 95, 95]);
+        var muted = Assert.Single(await AlertsAsync(fixture.DeviceId, thresholdRuleOnly: true));
+        Assert.Empty(await PublishedAsync<AlertRaised>(fixture.DeviceId, muted.RuleId));
+
+        // The slot ends at cycle 5: the four muted readings above are inside it, the two below are not.
+        await EndWindowAtCycleAsync(changeId, atCycle: 5);
+        await DriveBatchAsync([(fixture, 96d)], cycles: 2, startingCycle: 10);
+
+        var alert = Assert.Single(await AlertsAsync(fixture.DeviceId, thresholdRuleOnly: true));
+        Assert.Equal(muted.Id, alert.Id);
         Assert.Equal(AlertSuppression.None, alert.Suppression);
         Assert.Single(await PublishedAsync<AlertRaised>(fixture.DeviceId, alert.RuleId));
     }
@@ -996,6 +1102,69 @@ public sealed class AlertEngineIntegrationTests : IAsyncLifetime
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
     }
 
+    /// <summary>
+    /// The Monitoring half of an approval, invoked directly rather than over the bus (WP-5.8).
+    /// <para>
+    /// That is the whole reason <c>MaintenanceSyncService</c> is split from its consumer, following
+    /// WP-4.2: the consumer's job is idempotency and the service's job is the work. Driving it through
+    /// MassTransit here would test delivery — which this repository already has a known-intermittent
+    /// family of tests for — rather than the thing WP-5.8 is about.
+    /// </para>
+    /// </summary>
+    /// <param name="endsAt">
+    /// Defaults to well past every cycle this suite drives. It is expressed against <see cref="Base"/>
+    /// and not against the wall clock on purpose: the engine compares a window to the <em>telemetry's</em>
+    /// timestamp, and this suite's cycles are deliberately an hour in the past, so a window "starting
+    /// five minutes ago" would cover none of them.
+    /// </param>
+    private async Task SyncApprovalAsync(
+        Guid changeRequestId,
+        IReadOnlyList<Guid> ciIds,
+        DateTimeOffset? endsAt = null)
+    {
+        await using var scope = _application.Services.CreateAsyncScope();
+        await scope.ServiceProvider.GetRequiredService<IMaintenanceSyncService>().SyncAsync(
+            new ChangeRequestApproved(
+                Guid.CreateVersion7(),
+                DateTimeOffset.UtcNow,
+                changeRequestId,
+                $"CHG-{Random.Shared.Next(1, 999_999):000000}",
+                "Firmware upgrade",
+                Base.AddHours(-1),
+                endsAt ?? Base.AddHours(4),
+                ciIds),
+            CancellationToken.None);
+    }
+
+    private async Task<MaintenanceWindow?> WindowForChangeAsync(Guid changeRequestId)
+    {
+        await using var scope = _application.Services.CreateAsyncScope();
+        return await scope.ServiceProvider.GetRequiredService<MonitoringDbContext>()
+            .MaintenanceWindows.AsNoTracking()
+            .Include(window => window.Devices)
+            .SingleOrDefaultAsync(window => window.ChangeRequestId == changeRequestId);
+    }
+
+    /// <summary>
+    /// Ends the window at <paramref name="atCycle"/>, so cycles before it are inside the window and
+    /// cycles after it are outside — which is what the clock does on its own, expressed in the units the
+    /// engine actually compares against.
+    /// <para>
+    /// Written directly rather than through the API because a window is the platform's own record of an
+    /// agreed change and no endpoint shortens one, and because a test that waited out a real maintenance
+    /// slot is a test nobody runs.
+    /// </para>
+    /// </summary>
+    private async Task EndWindowAtCycleAsync(Guid changeRequestId, int atCycle)
+    {
+        await using var scope = _application.Services.CreateAsyncScope();
+        var context = scope.ServiceProvider.GetRequiredService<MonitoringDbContext>();
+        var window = await context.MaintenanceWindows
+            .SingleAsync(item => item.ChangeRequestId == changeRequestId);
+        window.EndsAt = Now(atCycle);
+        await context.SaveChangesAsync();
+    }
+
     private async Task CreateMaintenanceWindowAsync(
         Guid deviceId,
         DateTimeOffset? startsAt = null,
@@ -1086,10 +1255,19 @@ public sealed class AlertEngineIntegrationTests : IAsyncLifetime
         return Assert.IsType<T>(await response.Content.ReadFromJsonAsync<T>());
     }
 
-    private static HttpRequestMessage Authenticated(HttpMethod method, string uri, string role = "Technician")
+    private static HttpRequestMessage Authenticated(
+        HttpMethod method,
+        string uri,
+        string role = "Technician",
+        string? actorId = null)
     {
         var request = new HttpRequestMessage(method, uri);
         request.Headers.Add(AlertAuthenticationHandler.RoleHeader, role);
+        if (actorId is not null)
+        {
+            request.Headers.Add(AlertAuthenticationHandler.ActorHeader, actorId);
+        }
+
         return request;
     }
 
@@ -1198,6 +1376,14 @@ public sealed class AlertEngineIntegrationTests : IAsyncLifetime
         public const string TestScheme = "AlertTest";
         public const string RoleHeader = "X-Test-Role";
 
+        /// <summary>
+        /// Optional, and it exists for exactly one rule: WP-5.8 refuses to let anybody approve their own
+        /// change, so proving that needs two people rather than two roles.
+        /// </summary>
+        public const string ActorHeader = "X-Test-Actor";
+
+        public const string DefaultActorId = "alert-test-user-id";
+
         protected override Task<AuthenticateResult> HandleAuthenticateAsync()
         {
             var role = Request.Headers[RoleHeader].ToString();
@@ -1206,10 +1392,16 @@ public sealed class AlertEngineIntegrationTests : IAsyncLifetime
                 return Task.FromResult(AuthenticateResult.NoResult());
             }
 
+            var actorId = Request.Headers[ActorHeader].ToString();
+            if (string.IsNullOrWhiteSpace(actorId))
+            {
+                actorId = DefaultActorId;
+            }
+
             var identity = new ClaimsIdentity(
                 [
-                    new Claim(ClaimTypes.NameIdentifier, "alert-test-user-id"),
-                    new Claim(ClaimTypes.Name, "alert-test-user"),
+                    new Claim(ClaimTypes.NameIdentifier, actorId),
+                    new Claim(ClaimTypes.Name, actorId),
                     new Claim(ClaimTypes.Role, role),
                 ],
                 TestScheme);

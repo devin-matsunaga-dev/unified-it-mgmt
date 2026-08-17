@@ -244,7 +244,50 @@ function query(params: Record<string, string | number | boolean | undefined>) {
   return rendered ? `?${rendered}` : ''
 }
 
+export type MaintenanceWindowStatus = 'Scheduled' | 'InProgress' | 'Ended'
+
+/**
+ * A period during which a set of devices is expected to be disturbed, and alerts about them are withheld.
+ *
+ * `changeRequestId` is the approved change that opened it, or null for one an operator created directly
+ * (WP-5.8). It is how the change calendar draws a window beside the change it came from without either
+ * module reading the other's schema.
+ */
+export type MaintenanceWindow = {
+  id: string
+  name: string
+  description: string | null
+  startsAt: string
+  endsAt: string
+  appliesToAllDevices: boolean
+  deviceIds: string[]
+  isActive: boolean
+  status: MaintenanceWindowStatus
+  createdBy: string
+  createdAt: string
+  updatedBy: string
+  updatedAt: string
+  changeRequestId: string | null
+}
+
+export type MaintenanceWindowPage = {
+  items: MaintenanceWindow[]
+  total: number
+  page: number
+  pageSize: number
+}
+
 export const monitoringApi = {
+  listMaintenanceWindows: (params: {
+    search?: string
+    deviceId?: string
+    status?: MaintenanceWindowStatus
+    from?: string
+    to?: string
+    page?: number
+    pageSize?: number
+  } = {}) => apiRequest<MaintenanceWindowPage>(`/api/maintenance-windows${query(params)}`),
+
   statusBoard: (params: { search?: string; pollerGroup?: string; page?: number; pageSize?: number } = {}) =>
     apiRequest<StatusBoard>(`/api/monitoring/status-board${query(params)}`),
 

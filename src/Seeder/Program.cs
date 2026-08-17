@@ -102,6 +102,13 @@ Console.WriteLine($"Software inventory ready. Added {softwareResult.ProductsAdde
 var discoveryFactsResult = await new DiscoveryFactsSeeder(assetsDbContext).SeedAsync(assetsResult.CiIds);
 Console.WriteLine($"Discovery observations ready. Added {discoveryFactsResult.FactsAdded} CI discovery fact rows.");
 
+// WP-5.8. A draft change on the switch the demo can stop, so approving one and watching the alerts go
+// quiet needs nothing typed. It stays a draft: approving it is the thing being demonstrated.
+var changeResult = await new ChangeRequestSeeder(assetsDbContext).SeedAsync(assetsResult.CiIds);
+Console.WriteLine(changeResult.CiId is null
+    ? $"Change request skipped: the estate has no '{ChangeRequestSeeder.CiKey}' to raise one against."
+    : $"Change requests ready. Added {changeResult.ChangesAdded} draft change on {changeResult.CiId}.");
+
 var linkResult = await new HelpdeskCiLinkSeeder(helpdeskDbContext).SeedAsync(new CiLinkPlan(
     assetsResult.HardwareCiIds,
     assetsResult.NetworkCiIds,

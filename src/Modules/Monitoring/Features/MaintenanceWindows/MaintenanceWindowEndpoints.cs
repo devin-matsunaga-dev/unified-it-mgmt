@@ -15,9 +15,11 @@ public static class MaintenanceWindowEndpoints
         var group = endpoints.MapGroup("/api/maintenance-windows").RequireAuthorization("CanManageMonitoring");
 
         group.MapGet("/", async (string? search, Guid? deviceId, bool? isActive, MaintenanceWindowStatus? status,
-                int? page, int? pageSize, IMaintenanceWindowService service, CancellationToken cancellationToken) =>
+                DateTimeOffset? from, DateTimeOffset? to, int? page, int? pageSize,
+                IMaintenanceWindowService service, CancellationToken cancellationToken) =>
             Results.Ok(await service.ListAsync(
-                new MaintenanceWindowListRequest(search, deviceId, isActive, status, page ?? 1, pageSize ?? 25),
+                new MaintenanceWindowListRequest(
+                    search, deviceId, isActive, status, from, to, page ?? 1, pageSize ?? 25),
                 cancellationToken)));
 
         group.MapGet("/{id:guid}", async (Guid id, IMaintenanceWindowService service,

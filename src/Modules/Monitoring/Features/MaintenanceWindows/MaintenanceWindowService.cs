@@ -21,6 +21,21 @@ public interface IMaintenanceWindowService
         ClaimsPrincipal actor,
         CancellationToken cancellationToken);
 
+    /// <summary>
+    /// The same creation, stamped with the Assets change request that asked for it (WP-5.8).
+    /// <para>
+    /// One method rather than a second write path, so a window opened by an approval is validated,
+    /// scoped, config-logged and audited exactly like one an operator typed. Answers
+    /// <see cref="MonitoringOutcome.Duplicate"/> when a window for that change already exists, which is
+    /// what makes a redelivered approval a no-op.
+    /// </para>
+    /// </summary>
+    Task<MaintenanceWindowResult> CreateForChangeAsync(
+        Guid changeRequestId,
+        CreateMaintenanceWindowRequest request,
+        ClaimsPrincipal actor,
+        CancellationToken cancellationToken);
+
     Task<MaintenanceWindowResult> UpdateAsync(
         Guid id,
         UpdateMaintenanceWindowRequest request,
@@ -65,6 +80,18 @@ public sealed class MaintenanceWindowService(
                 || window.Devices.Any(scope => scope.DeviceId == deviceId));
         }
 
+        // Overlap rather than containment, so a window that starts before the month the calendar is
+        // showing and ends inside it is drawn in that month instead of in neither.
+        if (request.From is { } from)
+        {
+            query = query.Where(window => window.EndsAt >= from);
+        }
+
+        if (request.To is { } to)
+        {
+            query = query.Where(window => window.StartsAt <= to);
+        }
+
         query = request.Status switch
         {
             MaintenanceWindowStatus.Scheduled => query.Where(window => window.StartsAt > now),
@@ -92,7 +119,34 @@ public sealed class MaintenanceWindowService(
         return window is null ? null : Map(window, DateTimeOffset.UtcNow);
     }
 
-    public async Task<MaintenanceWindowResult> CreateAsync(
+    public Task<MaintenanceWindowResult> CreateAsync(
+        CreateMaintenanceWindowRequest request,
+        ClaimsPrincipal actor,
+        CancellationToken cancellationToken) =>
+        CreateCoreAsync(changeRequestId: null, request, actor, cancellationToken);
+
+    public async Task<MaintenanceWindowResult> CreateForChangeAsync(
+        Guid changeRequestId,
+        CreateMaintenanceWindowRequest request,
+        ClaimsPrincipal actor,
+        CancellationToken cancellationToken)
+    {
+        // The read half of "one window per change". The filtered unique index is the half that holds
+        // under a race; this one is what turns the ordinary redelivery into a quiet no-op rather than a
+        // constraint violation somebody has to read a stack trace to understand.
+        var existing = await dbContext.MaintenanceWindows.AsNoTracking()
+            .Include(window => window.Devices)
+            .SingleOrDefaultAsync(window => window.ChangeRequestId == changeRequestId, cancellationToken);
+        if (existing is not null)
+        {
+            return new(MonitoringOutcome.Duplicate, Map(existing, DateTimeOffset.UtcNow));
+        }
+
+        return await CreateCoreAsync(changeRequestId, request, actor, cancellationToken);
+    }
+
+    private async Task<MaintenanceWindowResult> CreateCoreAsync(
+        Guid? changeRequestId,
         CreateMaintenanceWindowRequest request,
         ClaimsPrincipal actor,
         CancellationToken cancellationToken)
@@ -115,6 +169,7 @@ public sealed class MaintenanceWindowService(
             EndsAt = request.EndsAt,
             AppliesToAllDevices = request.AppliesToAllDevices,
             IsActive = request.IsActive,
+            ChangeRequestId = changeRequestId,
             CreatedBy = actorId,
             CreatedAt = now,
             UpdatedBy = actorId,
@@ -295,7 +350,8 @@ public sealed class MaintenanceWindowService(
         window.CreatedBy,
         window.CreatedAt,
         window.UpdatedBy,
-        window.UpdatedAt);
+        window.UpdatedAt,
+        window.ChangeRequestId);
 
     private static string GetActorId(ClaimsPrincipal actor) =>
         actor.FindFirstValue("sub") ?? actor.FindFirstValue(ClaimTypes.NameIdentifier)

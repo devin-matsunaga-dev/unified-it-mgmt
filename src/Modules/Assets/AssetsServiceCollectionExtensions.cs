@@ -4,6 +4,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Modules.Assets.Data;
 using Modules.Assets.Features.BulkEdit;
+using Modules.Assets.Features.Changes;
 using Modules.Assets.Features.Cis;
 using Modules.Assets.Features.Contracts;
 using Modules.Assets.Features.Discovery;
@@ -39,6 +40,7 @@ public static class AssetsServiceCollectionExtensions
             options.UseNpgsql(connectionString);
         });
         services.AddScoped<ICiService, CiService>();
+        services.AddScoped<IChangeService, ChangeService>();
         // WP-5.4. Assets answers about its own CIs; the merge happens in Platform, which cannot
         // see this module at all.
         services.AddScoped<ISearchSource, CiSearchSource>();

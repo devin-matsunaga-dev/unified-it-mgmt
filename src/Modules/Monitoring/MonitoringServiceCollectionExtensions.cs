@@ -38,6 +38,7 @@ public static class MonitoringServiceCollectionExtensions
         services.AddScoped<IMonitoringConfigLog, MonitoringConfigLog>();
         services.AddScoped<IMonitoredDeviceService, MonitoredDeviceService>();
         services.AddScoped<IMaintenanceWindowService, MaintenanceWindowService>();
+        services.AddScoped<IMaintenanceSyncService, MaintenanceSyncService>();
         services.AddScoped<IPollerService, PollerService>();
         services.AddScoped<IScanProfileService, ScanProfileService>();
         services.AddScoped<IPollerCredentialService, PollerCredentialService>();
@@ -180,5 +181,8 @@ public static class MonitoringServiceCollectionExtensions
         // WP-5.6, on its own endpoint beside the ticket and notification consumers of the same event:
         // deciding to remediate must not be able to slow down, or fail, recording the alert.
         bus.AddConsumer<AlertRunbookConsumer>();
+        // WP-5.8, the same arrangement as the discovery approval above and pointing the same
+        // way: Assets agrees a change, Monitoring opens the window it implies.
+        bus.AddConsumer<ChangeRequestApprovedConsumer>();
     }
 }

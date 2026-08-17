@@ -25,6 +25,8 @@ import { SoftwareImportPage } from './features/software/SoftwareImportPage'
 import { SoftwarePage } from './features/software/SoftwarePage'
 import { SoftwareProductPage } from './features/software/SoftwareProductPage'
 import { TopologyPage } from './features/topology/TopologyPage'
+import { ChangeCalendarPage } from './features/changes/ChangeCalendarPage'
+import { ChangeDetailPage } from './features/changes/ChangeDetailPage'
 import { HomeRoute } from './pages/HomeRoute'
 import { ProblemListPage } from './features/problems/ProblemListPage'
 import { ProblemDetailPage } from './features/problems/ProblemDetailPage'
@@ -58,6 +60,8 @@ export function App() {
       <Route path="assets/discovery" element={<ProtectedRoute roles={['Admin', 'Technician', 'Manager']}><DiscoveryReviewPage /></ProtectedRoute>} />
       <Route path="assets/drift" element={<ProtectedRoute roles={['Admin', 'Technician', 'Manager']}><DriftReportPage /></ProtectedRoute>} />
       <Route path="assets/:id" element={<ProtectedRoute roles={['Admin', 'Technician', 'Manager']}><CiDetailPage /></ProtectedRoute>} />
+      <Route path="changes" element={<ProtectedRoute roles={['Admin', 'Technician', 'Manager']}><ChangeCalendarPage /></ProtectedRoute>} />
+      <Route path="changes/:id" element={<ProtectedRoute roles={['Admin', 'Technician', 'Manager']}><ChangeDetailPage /></ProtectedRoute>} />
       <Route path="audits" element={<ProtectedRoute roles={['Admin', 'Technician', 'Manager']}><AuditSessionsPage /></ProtectedRoute>} />
       <Route path="audits/:id" element={<ProtectedRoute roles={['Admin', 'Technician', 'Manager']}><AuditSessionPage /></ProtectedRoute>} />
       <Route path="topology" element={<ProtectedRoute roles={['Admin', 'Technician', 'Manager']}><TopologyPage /></ProtectedRoute>} />

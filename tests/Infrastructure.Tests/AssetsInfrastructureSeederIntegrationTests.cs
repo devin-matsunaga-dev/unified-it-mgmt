@@ -113,6 +113,35 @@ public sealed class AssetsInfrastructureSeederIntegrationTests : IAsyncLifetime
     /// WP-4.4's fixture rides on this estate: its installs name the seeded laptops by key. Re-running
     /// must add nothing, and the compliance case the WP verifies has to be there afterwards.
     /// </summary>
+    /// <summary>
+    /// WP-5.8's demo fixture: a draft change on the switch the Phase 3 rig can stop, so approving one and
+    /// watching the alerts go quiet needs nothing typed. It stays a draft — approving it is the act being
+    /// demonstrated — and running the seeder again adds no second copy.
+    /// </summary>
+    [Fact]
+    public async Task SeedAsync_ChangeRequest_SeedsOneDraftOnTheDownableSwitchAndOnlyOnce()
+    {
+        await using var scope = _application.Services.CreateAsyncScope();
+        var assets = scope.ServiceProvider.GetRequiredService<AssetsDbContext>();
+
+        var first = await new ChangeRequestSeeder(assets).SeedAsync(_seeded.CiIds);
+        var second = await new ChangeRequestSeeder(assets).SeedAsync(_seeded.CiIds);
+
+        Assert.Equal(0, second.ChangesAdded);
+        Assert.NotNull(first.ChangeId);
+        Assert.Equal(first.ChangeId, second.ChangeId);
+
+        var change = await assets.ChangeRequests
+            .Include(item => item.Cis)
+            .SingleAsync(item => item.Id == first.ChangeId);
+        Assert.Equal(ChangeRequestStatus.Draft, change.Status);
+        Assert.Equal(_seeded.CiIds[ChangeRequestSeeder.CiKey], Assert.Single(change.Cis).CiId);
+
+        // Approvable whenever somebody gets to it: the workflow refuses a slot that has already ended,
+        // and a fixed calendar date would silently drift into the past (WP-2.8).
+        Assert.True(change.PlannedEndAt > DateTimeOffset.UtcNow);
+    }
+
     [Fact]
     public async Task SeedAsync_SoftwareInventory_IsWrittenOnceAndLandsOnTheSeededLaptops()
     {

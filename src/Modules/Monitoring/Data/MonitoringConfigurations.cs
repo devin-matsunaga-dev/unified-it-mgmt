@@ -133,6 +133,14 @@ public sealed class MaintenanceWindowConfiguration : IEntityTypeConfiguration<Ma
 
         builder.HasIndex(window => new { window.StartsAt, window.EndsAt });
         builder.HasIndex(window => window.IsActive);
+
+        // One window per approved change, however many times the approval is delivered (WP-5.8). The
+        // filtered form is how "one X per Y" is made true here for the fourth time — WP-3.6's alert
+        // ticket, WP-5.6's runbook execution, WP-5.7's suggestion — and it has to be filtered because
+        // most windows are typed in by an operator and have no change behind them at all.
+        builder.HasIndex(window => window.ChangeRequestId)
+            .IsUnique()
+            .HasFilter("change_request_id IS NOT NULL");
     }
 }
 

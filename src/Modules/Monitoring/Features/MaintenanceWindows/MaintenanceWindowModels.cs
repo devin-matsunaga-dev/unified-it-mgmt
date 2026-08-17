@@ -20,14 +20,26 @@ public sealed record UpdateMaintenanceWindowRequest(
     IReadOnlyList<Guid>? DeviceIds = null,
     bool IsActive = true);
 
+/// <param name="From">
+/// Lower bound, inclusive. Both bounds are optional and a window is in range when it overlaps the range
+/// at all, matching the change calendar's own rule: a window straddling the first of the month belongs to
+/// both months rather than to neither.
+/// </param>
 public sealed record MaintenanceWindowListRequest(
     string? Search = null,
     Guid? DeviceId = null,
     bool? IsActive = null,
     MaintenanceWindowStatus? Status = null,
+    DateTimeOffset? From = null,
+    DateTimeOffset? To = null,
     int Page = 1,
     int PageSize = 25);
 
+/// <param name="ChangeRequestId">
+/// The approved change that opened this window, or null for one an operator created directly (WP-5.8).
+/// It is what lets the change calendar draw a window next to the change it came from without either
+/// module reading the other's schema.
+/// </param>
 public sealed record MaintenanceWindowResponse(
     Guid Id,
     string Name,
@@ -41,7 +53,8 @@ public sealed record MaintenanceWindowResponse(
     string CreatedBy,
     DateTimeOffset CreatedAt,
     string UpdatedBy,
-    DateTimeOffset UpdatedAt);
+    DateTimeOffset UpdatedAt,
+    Guid? ChangeRequestId = null);
 
 public sealed record MaintenanceWindowPageResponse(
     IReadOnlyList<MaintenanceWindowResponse> Items,

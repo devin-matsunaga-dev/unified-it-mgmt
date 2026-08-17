@@ -293,6 +293,13 @@ public sealed class CiService(
             return CiOutcome.InUse;
         }
 
+        // A CI listed on a change is half of an agreement somebody made about it (WP-5.8). Its foreign
+        // key is Restrict and would refuse the delete anyway; catching it here says what is in the way.
+        if (await dbContext.ChangeRequestCis.AnyAsync(scope => scope.CiId == id, cancellationToken))
+        {
+            return CiOutcome.InUse;
+        }
+
         var now = DateTimeOffset.UtcNow;
         var before = Map(ci);
         await using var transaction = await dbContext.Database.BeginTransactionAsync(cancellationToken);
