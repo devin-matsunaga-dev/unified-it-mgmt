@@ -73,6 +73,7 @@ public sealed class TicketSearchSource(HelpdeskDbContext dbContext) : ISearchSou
             {
                 ticket.Id,
                 ticket.SequenceNumber,
+                ticket.Type,
                 ticket.Title,
                 ticket.RequesterDisplayName,
                 StatusName = ticket.Status.Name,
@@ -85,7 +86,7 @@ public sealed class TicketSearchSource(HelpdeskDbContext dbContext) : ISearchSou
                 row.Id,
                 row.Title,
                 // Formatted here rather than projected, because Ticket.Number is `builder.Ignore`d.
-                $"INC-{row.SequenceNumber:000000}",
+                TicketNumber.Format(row.Type, row.SequenceNumber),
                 row.RequesterDisplayName,
                 row.StatusName))
             .ToList();

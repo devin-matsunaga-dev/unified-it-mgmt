@@ -1,5 +1,7 @@
 using NpgsqlTypes;
 
+using Modules.Helpdesk.Features.Tickets;
+
 namespace Modules.Helpdesk.Data;
 
 public sealed class Ticket
@@ -29,7 +31,7 @@ public sealed class Ticket
     /// <summary>Database-generated full-text index over the title and description.</summary>
     public NpgsqlTsVector SearchVector { get; set; } = null!;
 
-    public string Number => $"INC-{SequenceNumber:000000}";
+    public string Number => TicketNumber.Format(Type, SequenceNumber);
 }
 
 public enum TicketType

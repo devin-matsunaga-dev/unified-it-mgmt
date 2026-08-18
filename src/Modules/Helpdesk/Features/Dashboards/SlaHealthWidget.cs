@@ -9,6 +9,8 @@ using Platform.Actors;
 using Platform.Dashboards;
 using Platform.Integration;
 
+using Modules.Helpdesk.Features.Tickets;
+
 namespace Modules.Helpdesk.Features.Dashboards;
 
 /// <summary>
@@ -54,6 +56,7 @@ public sealed class SlaHealthWidget(HelpdeskDbContext dbContext) : IDashboardWid
             .Select(sla => new Row(
                 sla.Ticket.Id,
                 sla.Ticket.SequenceNumber,
+                sla.Ticket.Type,
                 sla.Ticket.Title,
                 sla.Ticket.Priority,
                 sla.AccumulatedBusinessSeconds,
@@ -86,7 +89,7 @@ public sealed class SlaHealthWidget(HelpdeskDbContext dbContext) : IDashboardWid
             .Take(query.RowLimit)
             .Select(entry => new DashboardRow(
                 entry.Row.Title,
-                $"INC-{entry.Row.SequenceNumber:000000} · {entry.Row.Priority}",
+                $"{TicketNumber.Format(entry.Row.Type, entry.Row.SequenceNumber)} · {entry.Row.Priority}",
                 entry.Exposure.Breached
                     ? $"Breached by {Describe(entry.OverrunSeconds)}"
                     : $"Due in {Describe(entry.Exposure.RemainingSeconds)}",
@@ -176,6 +179,7 @@ public sealed class SlaHealthWidget(HelpdeskDbContext dbContext) : IDashboardWid
     private sealed record Row(
         Guid TicketId,
         long SequenceNumber,
+        TicketType Type,
         string Title,
         TicketPriority Priority,
         double AccumulatedBusinessSeconds,

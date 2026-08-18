@@ -141,7 +141,11 @@ public sealed partial class EmailIngestionService(
 
     [GeneratedRegex(@"ticket-([0-9a-fA-F]{32})@it-platform\.local", RegexOptions.IgnoreCase)]
     private static partial Regex TicketMessageIdRegex();
-    [GeneratedRegex(@"\[INC-(\d{6,})\]", RegexOptions.IgnoreCase)]
+    /// <summary>
+    /// Either prefix, and INC must keep matching forever: threads opened before service requests read
+    /// REQ- carry an INC- token in their subject, and the digits are what actually resolve the ticket.
+    /// </summary>
+    [GeneratedRegex(@"\[(?:INC|REQ)-(\d{6,})\]", RegexOptions.IgnoreCase)]
     private static partial Regex TicketNumberRegex();
     [GeneratedRegex(@"^(?:(?:re|fw|fwd):\s*)+", RegexOptions.IgnoreCase)]
     private static partial Regex ReplyPrefixRegex();

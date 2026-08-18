@@ -5,7 +5,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { toast } from 'sonner'
 import { ApiError } from '../../api/client'
-import { helpdeskApi, type CreateTicketInput, type SaveTicketViewInput, type Ticket, type TicketFilter, type TicketPriority, type TicketView } from '../../api/helpdesk'
+import { helpdeskApi, type CreateTicketInput, type SaveTicketViewInput, type Ticket, type TicketFilter, type TicketPriority, type TicketType, type TicketView } from '../../api/helpdesk'
 import { Button } from '../../components/ui/Button'
 import { flattenCategories } from './categoryFields'
 import { PriorityPill, StatusPill, displayStatus, formatLocal, ticketPriorities, ticketStatuses } from './ticketUi'
@@ -30,6 +30,17 @@ function filterFromQuery(params: URLSearchParams): TicketFilter {
   if (statuses.length) filter.statuses = statuses
   return filter
 }
+/**
+ * The quick switch between the two kinds. Incidents read INC- and service requests REQ-, so this is
+ * the control that stops an alert-raised incident being answered as though somebody asked for it.
+ * `undefined` is "all" — the filter drops empty members, so it has to be absent rather than a value.
+ */
+const ticketKindTabs: { label: string; value: TicketType | undefined }[] = [
+  { label: 'All', value: undefined },
+  { label: 'Incidents', value: 'Incident' },
+  { label: 'Service requests', value: 'ServiceRequest' },
+]
+
 const columns: ColumnDef<Ticket>[] = [
   { accessorKey: 'number', header: 'ID', cell: ({ row }) => <Link className="font-mono text-xs text-blue-600 hover:underline" to={`/tickets/${row.original.id}`}>#{row.original.number}</Link> },
   { accessorKey: 'title', header: 'Title', cell: ({ row }) => <Link className="font-medium text-slate-900 hover:text-blue-600 dark:text-slate-100" to={`/tickets/${row.original.id}`}>{row.original.title}</Link> },
@@ -111,6 +122,14 @@ export function TicketListPage() {
         onUpdate={(view) => updateView.mutate({ id: view.id, input: { name: view.name, isShared: view.isShared, filter: normalizeFilter(filter) } })}
         onDelete={(view) => deleteView.mutate(view)} />
       <div className="flex flex-wrap gap-3 border-b border-slate-200 p-4 dark:border-slate-800">
+        <div className="flex h-10 items-center rounded-lg border border-slate-200 p-0.5 dark:border-slate-700" role="group" aria-label="Filter by kind">
+          {ticketKindTabs.map(({ label, value }) => <button key={label} type="button"
+            aria-pressed={(filter.type ?? undefined) === value}
+            onClick={() => patchFilter({ type: value })}
+            className={`h-9 rounded-md px-3 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${(filter.type ?? undefined) === value ? 'bg-blue-600 text-white' : 'text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800'}`}>
+            {label}
+          </button>)}
+        </div>
         <label className="flex h-10 min-w-60 flex-1 items-center gap-2 rounded-lg border border-slate-200 px-3 text-slate-500 dark:border-slate-700"><Search size={17} /><span className="sr-only">Search tickets</span><input value={search} onChange={(event) => setSearch(event.target.value)} className="w-full bg-transparent text-sm text-slate-900 outline-none dark:text-slate-100" placeholder="Search titles, descriptions, and comments…" /></label>
         <select aria-label="Filter by status" className="input w-auto min-w-36" value={filter.statuses?.[0] ?? ''} onChange={(event) => patchFilter({ statuses: event.target.value ? [event.target.value] : undefined })}><option value="">All statuses</option>{ticketStatuses.map((status) => <option key={status} value={status}>{displayStatus(status)}</option>)}</select>
         <select aria-label="Filter by priority" className="input w-auto min-w-36" value={filter.priorities?.[0] ?? ''} onChange={(event) => patchFilter({ priorities: event.target.value ? [event.target.value as TicketPriority] : undefined })}><option value="">All priorities</option>{ticketPriorities.map((priority) => <option key={priority}>{priority}</option>)}</select>

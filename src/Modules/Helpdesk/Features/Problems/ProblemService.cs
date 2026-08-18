@@ -7,6 +7,8 @@ using Platform.Actors;
 using Platform.Auditing;
 using Platform.Integration;
 
+using Modules.Helpdesk.Features.Tickets;
+
 namespace Modules.Helpdesk.Features.Problems;
 
 public sealed class ProblemService(
@@ -481,6 +483,7 @@ public sealed class ProblemService(
             {
                 link.TicketId,
                 link.Ticket.SequenceNumber,
+                link.Ticket.Type,
                 link.Ticket.Title,
                 Status = link.Ticket.Status.Name,
                 link.Ticket.Priority,
@@ -493,7 +496,7 @@ public sealed class ProblemService(
 
         return [.. rows.Select(row => new ProblemIncidentResponse(
             row.TicketId,
-            $"INC-{row.SequenceNumber:000000}",
+            TicketNumber.Format(row.Type, row.SequenceNumber),
             row.Title,
             row.Status,
             row.Priority,

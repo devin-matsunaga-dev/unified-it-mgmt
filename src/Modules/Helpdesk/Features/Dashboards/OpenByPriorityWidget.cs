@@ -7,6 +7,8 @@ using Modules.Helpdesk.Data;
 using Platform.Actors;
 using Platform.Dashboards;
 
+using Modules.Helpdesk.Features.Tickets;
+
 namespace Modules.Helpdesk.Features.Dashboards;
 
 /// <summary>
@@ -64,6 +66,7 @@ public sealed class OpenByPriorityWidget(HelpdeskDbContext dbContext) : IDashboa
             {
                 ticket.Id,
                 ticket.SequenceNumber,
+                ticket.Type,
                 ticket.Title,
                 ticket.Priority,
                 StatusName = ticket.Status.Name,
@@ -75,7 +78,7 @@ public sealed class OpenByPriorityWidget(HelpdeskDbContext dbContext) : IDashboa
             .Select(ticket => new DashboardRow(
                 ticket.Title,
                 // Formatted here rather than projected, because Ticket.Number is `builder.Ignore`d.
-                $"INC-{ticket.SequenceNumber:000000} · {ticket.StatusName}",
+                $"{TicketNumber.Format(ticket.Type, ticket.SequenceNumber)} · {ticket.StatusName}",
                 ticket.Priority.ToString(),
                 ticket.Priority == TicketPriority.Critical ? DashboardTone.Critical : DashboardTone.Warning,
                 new DashboardLink(DashboardLinkTarget.Ticket, RecordId: ticket.Id),

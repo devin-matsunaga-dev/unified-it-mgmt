@@ -94,3 +94,31 @@ describe('TicketListPage', () => {
     expect(helpdeskApi.createTicket).not.toHaveBeenCalled()
   })
 })
+
+/**
+ * The quick switch between the two kinds. It exists because alert-raised incidents and things people
+ * asked for sit in one list, and the type filter had a server and a serialiser but no control.
+ */
+describe('the incident / service request switch', () => {
+  it('filters the list to one kind and back to all', async () => {
+    vi.mocked(helpdeskApi.listTickets).mockResolvedValue({ items: [ticket], total: 1, page: 1, pageSize: 200 })
+    const user = userEvent.setup()
+
+    renderPage()
+    await screen.findByText('VPN unavailable')
+
+    await user.click(screen.getByRole('button', { name: 'Service requests' }))
+    await waitFor(() => expect(helpdeskApi.listTickets)
+      .toHaveBeenLastCalledWith(expect.objectContaining({ type: 'ServiceRequest' })))
+    expect(screen.getByRole('button', { name: 'Service requests' })).toHaveAttribute('aria-pressed', 'true')
+
+    await user.click(screen.getByRole('button', { name: 'Incidents' }))
+    await waitFor(() => expect(helpdeskApi.listTickets)
+      .toHaveBeenLastCalledWith(expect.objectContaining({ type: 'Incident' })))
+
+    // "All" must clear the member rather than send a value, or the filter never round-trips to empty.
+    await user.click(screen.getByRole('button', { name: 'All' }))
+    await waitFor(() => expect(helpdeskApi.listTickets)
+      .toHaveBeenLastCalledWith(expect.not.objectContaining({ type: expect.anything() })))
+  })
+})
