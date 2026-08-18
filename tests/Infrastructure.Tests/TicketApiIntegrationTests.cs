@@ -1095,6 +1095,54 @@ public sealed class TicketApiIntegrationTests : IAsyncLifetime
         return Assert.IsType<TicketPageDto>(page);
     }
 
+    /**
+     * A shared view used to be deletable only by its owner, so one left behind by somebody who has
+     * moved on could never be removed by anyone. An Admin may now remove anybody's.
+     */
+    [Fact]
+    public async Task DeleteView_SharedAndOwnedByAnother_IsAllowedForAnAdmin()
+    {
+        var created = await CreateViewAsync($"Team view {Guid.NewGuid():N}", isShared: true, userId: "view-owner");
+
+        using var request = Authenticated(
+            HttpMethod.Delete, $"/api/ticket-views/{created.Id}", role: "Admin", userId: "some-admin");
+        using var response = await _client!.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.NoContent, response.StatusCode);
+    }
+
+    /// <summary>FAILURE PATH: everyone else may still remove only their own.</summary>
+    [Fact]
+    public async Task DeleteView_SharedAndOwnedByAnother_IsStillRefusedForATechnician()
+    {
+        var created = await CreateViewAsync($"Team view {Guid.NewGuid():N}", isShared: true, userId: "view-owner");
+
+        using var request = Authenticated(
+            HttpMethod.Delete, $"/api/ticket-views/{created.Id}", userId: "someone-else");
+        using var response = await _client!.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+    }
+
+    /// <summary>The flag the picker reads, so the delete button appears for exactly who may use it.</summary>
+    [Fact]
+    public async Task ListViews_ReportsWhoMayDeleteEachView()
+    {
+        var marker = Guid.NewGuid().ToString("N")[..8];
+        await CreateViewAsync($"Shared {marker}", isShared: true, userId: "view-owner");
+
+        using var asAdmin = Authenticated(HttpMethod.Get, "/api/ticket-views", role: "Admin", userId: "an-admin");
+        using var adminResponse = await _client!.SendAsync(asAdmin);
+        var adminViews = await adminResponse.Content.ReadFromJsonAsync<List<TicketViewDto>>();
+
+        using var asTechnician = Authenticated(HttpMethod.Get, "/api/ticket-views", userId: "a-technician");
+        using var technicianResponse = await _client.SendAsync(asTechnician);
+        var technicianViews = await technicianResponse.Content.ReadFromJsonAsync<List<TicketViewDto>>();
+
+        Assert.True(adminViews!.Single(view => view.Name == $"Shared {marker}").CanDelete);
+        Assert.False(technicianViews!.Single(view => view.Name == $"Shared {marker}").CanDelete);
+    }
+
     private async Task<TicketViewDto> CreateViewAsync(string name, bool isShared, string userId)
     {
         using var request = Authenticated(HttpMethod.Post, "/api/ticket-views", userId: userId);
@@ -1283,7 +1331,7 @@ public sealed class TicketApiIntegrationTests : IAsyncLifetime
     private sealed record TicketViewFilterDto(
         string? Search, IReadOnlyList<string>? Statuses, IReadOnlyList<string>? Priorities, bool Unassigned);
     private sealed record TicketViewDto(
-        Guid Id, string Name, string OwnerId, bool IsShared, bool IsMine, TicketViewFilterDto Filter);
+        Guid Id, string Name, string OwnerId, bool IsShared, bool IsMine, bool CanDelete, TicketViewFilterDto Filter);
     private sealed record CannedResponseDto(Guid Id, string Name, string Body);
     private sealed record RenderedCannedResponseDto(Guid Id, string Name, string Body);
     private sealed record CalendarDto(Guid Id);

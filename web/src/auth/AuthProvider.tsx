@@ -4,7 +4,10 @@ import { apiRequest } from '../api/client'
 import { normalizeRoles, userManager, type AppRole, type CurrentUser } from './auth'
 
 type AuthContextValue = {
+  /** The OIDC session. Its subject is Keycloak's own id and matches nothing the modules stored. */
   user: User | null
+  /** What /api/me answered, including the sign-in name a ticket records as its assignee. */
+  account: CurrentUser | null
   roles: AppRole[]
   isLoading: boolean
   signIn: (returnTo?: string) => Promise<void>
@@ -16,6 +19,11 @@ const AuthContext = createContext<AuthContextValue | null>(null)
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null)
   const [roles, setRoles] = useState<AppRole[]>([])
+  /**
+   * What /api/me answered. Already fetched for the roles; kept because it carries the sign-in name,
+   * which is the identity the helpdesk records against a ticket — the OIDC subject matches nothing.
+   */
+  const [account, setAccount] = useState<CurrentUser | null>(null)
   const [isLoading, setIsLoading] = useState(true)
 
   useEffect(() => {
@@ -25,14 +33,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setUser(nextUser)
       if (!nextUser || nextUser.expired) {
         setRoles([])
+        setAccount(null)
         setIsLoading(false)
         return
       }
       try {
         const currentUser = await apiRequest<CurrentUser>('/api/me')
-        if (active) setRoles(normalizeRoles(currentUser.roles))
+        if (active) {
+          setRoles(normalizeRoles(currentUser.roles))
+          setAccount(currentUser)
+        }
       } catch {
-        if (active) setRoles([])
+        if (active) {
+          setRoles([])
+          setAccount(null)
+        }
       } finally {
         if (active) setIsLoading(false)
       }
@@ -57,7 +72,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     await userManager.signoutRedirect()
   }, [])
 
-  const value = useMemo(() => ({ user, roles, isLoading, signIn, signOut }), [user, roles, isLoading, signIn, signOut])
+  const value = useMemo(
+    () => ({ user, account, roles, isLoading, signIn, signOut }),
+    [user, account, roles, isLoading, signIn, signOut])
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>
 }
 

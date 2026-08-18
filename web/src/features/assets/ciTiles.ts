@@ -1,5 +1,5 @@
 import type { CiFilter } from '../../api/assets'
-import { moveColumn, reconcileLayout, type ColumnLayout } from './columnLayout'
+import { moveColumn, reconcileLayout, type ColumnLayout } from '../../lib/tableLayout'
 
 /**
  * A tile is a saved filter with a name and a live count. That is what the built-in four already

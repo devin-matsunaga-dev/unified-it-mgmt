@@ -16,7 +16,7 @@ import { CiStatsRow } from './CiStatsRow'
 import { toTileFilter } from './ciTiles'
 import { ciSortDescription, nextCiSort, sortCis, type CiSort, type CiSortColumn } from './ciSort'
 import { ciColumn, ciColumnIds } from './ciColumns'
-import { isColumnVisible, moveColumn, readLayout, toggleColumn, visibleColumns, writeLayout } from './columnLayout'
+import { isColumnVisible, moveColumn, readLayout, toggleColumn, visibleColumns, writeLayout } from '../../lib/tableLayout'
 import { ciFilterDefinition, ciFilterIds, clearFilter } from './ciFilters'
 
 /** Namespaced so a later table on another screen cannot collide with this one's arrangement. */

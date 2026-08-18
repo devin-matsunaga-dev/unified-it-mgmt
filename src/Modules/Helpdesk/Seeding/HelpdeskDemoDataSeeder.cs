@@ -64,12 +64,19 @@ public sealed class HelpdeskDemoDataSeeder(HelpdeskDbContext dbContext)
             + "the problem returns and this ticket will be reopened.\n\n{{agent.name}}"),
     ];
 
-    /// <summary>One shared team view so the saved-view picker is populated in a fresh environment.</summary>
+    /// <summary>
+    /// One shared team view, so the picker demonstrates a view somebody else owns and shared.
+    ///
+    /// It is deliberately not one of the app's default views any more. A seeded view belongs to
+    /// whoever seeded it, so the delete button — which only appears on your own — never showed for
+    /// anybody else, and a default nobody can remove is not a default. Those live in the browser
+    /// now; see the web app's ticketViews module.
+    /// </summary>
     private static readonly (Guid Id, string Name, string OwnerId, string OwnerName, TicketListFilter Filter)[] Views =
     [
-        (Guid.Parse("01980000-0000-7000-8000-000000000801"), "Unassigned high priority", "technician1", "Technician One",
+        (Guid.Parse("01980000-0000-7000-8000-000000000801"), "Escalations this week", "technician1", "Technician One",
             new TicketListFilter(
-                Priorities: [TicketPriority.High, TicketPriority.Critical], Unassigned: true)),
+                Priorities: [TicketPriority.Critical], Statuses: ["New", "Triage", "InProgress"])),
     ];
 
     public async Task<HelpdeskSeedResult> SeedAsync(CancellationToken cancellationToken = default)

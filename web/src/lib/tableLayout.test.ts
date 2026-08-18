@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import {
   defaultLayout, isColumnVisible, moveColumn, readLayout, reconcileLayout,
   toggleColumn, visibleColumns, writeLayout,
-} from './columnLayout'
+} from './tableLayout'
 
 const known = ['name', 'type', 'owner', 'site'] as const
 type Id = (typeof known)[number]

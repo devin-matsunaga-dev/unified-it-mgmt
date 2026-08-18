@@ -126,6 +126,8 @@ export type TicketView = {
   ownerName: string
   isShared: boolean
   isMine: boolean
+  /** Whether this user may delete it: their own, or anybody's if they are an Admin. */
+  canDelete: boolean
   filter: TicketFilter
   createdAt: string
   updatedAt: string

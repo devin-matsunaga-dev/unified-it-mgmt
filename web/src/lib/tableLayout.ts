@@ -46,17 +46,27 @@ export function isColumnVisible<Id extends string>(layout: ColumnLayout<Id>, id:
 }
 
 /**
+ * Hiding and showing, with no floor.
+ *
+ * Right wherever the way back does not live among the things being hidden — a view chip row, a tile
+ * row — because the menu that restores them sits outside it.
+ */
+export function toggleItem<Id extends string>(layout: ColumnLayout<Id>, id: Id): ColumnLayout<Id> {
+  return layout.hidden.includes(id)
+    ? { ...layout, hidden: layout.hidden.filter((item) => item !== id) }
+    : { ...layout, hidden: [...layout.hidden, id] }
+}
+
+/**
  * Hiding the last visible column is refused rather than allowed: an empty table is not a view of
  * anything, and the way back would be a menu the operator can no longer see a table beside.
+ *
+ * Only for columns. Anything whose chooser lives elsewhere should use {@link toggleItem}, or the
+ * last one standing becomes stuck — which is exactly what happened to the ticket view chips.
  */
 export function toggleColumn<Id extends string>(layout: ColumnLayout<Id>, id: Id): ColumnLayout<Id> {
-  if (!layout.hidden.includes(id)) {
-    return visibleColumns(layout).length <= 1
-      ? layout
-      : { ...layout, hidden: [...layout.hidden, id] }
-  }
-
-  return { ...layout, hidden: layout.hidden.filter((item) => item !== id) }
+  if (!layout.hidden.includes(id) && visibleColumns(layout).length <= 1) return layout
+  return toggleItem(layout, id)
 }
 
 /**

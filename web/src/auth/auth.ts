@@ -3,8 +3,11 @@ import { UserManager, WebStorageStateStore, type User, type UserManagerSettings 
 export type AppRole = 'Admin' | 'Technician' | 'Manager' | 'EndUser'
 
 export type CurrentUser = {
+  /** The OIDC subject. Keycloak mints its own, so it matches nothing the helpdesk stored. */
   id: string
   name: string
+  /** The sign-in name, which is the identity a ticket records as its assignee. */
+  username: string
   email: string | null
   roles: string[]
 }

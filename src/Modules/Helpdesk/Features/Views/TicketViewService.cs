@@ -31,7 +31,8 @@ public sealed class TicketViewService(HelpdeskDbContext dbContext, IAuditService
             .Where(view => view.OwnerId == actorId || view.IsShared)
             .OrderBy(view => view.Name)
             .ToListAsync(cancellationToken);
-        return [.. views.Select(view => Map(view, actorId))];
+        var actorIsAdmin = IsAdmin(actor);
+        return [.. views.Select(view => Map(view, actorId, actorIsAdmin))];
     }
 
     public async Task<TicketViewResult> CreateAsync(
@@ -131,7 +132,9 @@ public sealed class TicketViewService(HelpdeskDbContext dbContext, IAuditService
             return TicketViewOutcome.NotFound;
         }
 
-        if (view.OwnerId != actorId)
+        // An Admin may remove anybody's, which is what makes a shared view left behind by a leaver
+        // removable at all. Everyone else may remove only their own.
+        if (view.OwnerId != actorId && !IsAdmin(actor))
         {
             return TicketViewOutcome.Forbidden;
         }
@@ -169,6 +172,7 @@ public sealed class TicketViewService(HelpdeskDbContext dbContext, IAuditService
     }
 
     private static bool IsEndUser(ClaimsPrincipal actor) => actor.IsInRole("EndUser");
+    private static bool IsAdmin(ClaimsPrincipal actor) => actor.IsInRole("Admin");
     private static string ActorId(ClaimsPrincipal actor) =>
         actor.FindFirstValue("sub") ?? actor.FindFirstValue(ClaimTypes.NameIdentifier)
         ?? throw new InvalidOperationException("An authenticated actor identifier is required.");
@@ -176,13 +180,14 @@ public sealed class TicketViewService(HelpdeskDbContext dbContext, IAuditService
         actor.FindFirstValue("name") ?? actor.Identity?.Name ?? actor.FindFirstValue("preferred_username")
         ?? ActorId(actor);
 
-    private static TicketViewResponse Map(TicketView view, string actorId) => new(
+    private static TicketViewResponse Map(TicketView view, string actorId, bool actorIsAdmin = false) => new(
         view.Id,
         view.Name,
         view.OwnerId,
         view.OwnerDisplayName ?? view.OwnerId,
         view.IsShared,
         view.OwnerId == actorId,
+        view.OwnerId == actorId || actorIsAdmin,
         Deserialize(view.FilterJson),
         view.CreatedAt,
         view.UpdatedAt);
