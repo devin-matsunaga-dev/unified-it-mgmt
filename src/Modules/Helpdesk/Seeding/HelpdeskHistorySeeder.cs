@@ -38,7 +38,11 @@ public sealed class HelpdeskHistorySeeder(HelpdeskDbContext dbContext)
         DefaultTicketStatuses.ClosedId,
     ];
 
-    /// <summary>Priority-only policies, matching how <see cref="Features.Sla.SlaService"/> looks a policy up.</summary>
+    /// <summary>
+    /// One policy per priority, in priority order, each with no other condition — the catch-all shape
+    /// the matcher now walks. A fresh estate therefore behaves exactly as it did before conditions
+    /// existed, and an administrator adds narrower rules above these.
+    /// </summary>
     private static readonly (int Index, string Name, TicketPriority Priority, int ResponseMinutes, int ResolutionMinutes)[] Policies =
     [
         (1, "Critical priority", TicketPriority.Critical, 15, 240),
@@ -219,8 +223,9 @@ public sealed class HelpdeskHistorySeeder(HelpdeskDbContext dbContext)
                 {
                     Id = policyId,
                     Name = name,
+                    // Ordered by index so the list reads Critical first, as an operator would write it.
+                    SortOrder = index,
                     Priority = priority,
-                    Category = null,
                     ResponseTargetMinutes = responseMinutes,
                     ResolutionTargetMinutes = resolutionMinutes,
                     WarningPercent = 80,
@@ -460,6 +465,11 @@ public sealed class HelpdeskHistorySeeder(HelpdeskDbContext dbContext)
             Id = id,
             TicketId = ticketId,
             PolicyId = policyId,
+            // Snapshotted, as StartAsync does: a seeded ticket must not re-target when a policy is edited.
+            ResponseTargetMinutes = targets.Response,
+            ResolutionTargetMinutes = targets.Resolution,
+            WarningPercent = 80,
+            CalendarId = CalendarId,
             StartedAt = createdAt,
             ActiveSince = running ? now : null,
             AccumulatedBusinessSeconds = elapsed,

@@ -63,12 +63,12 @@ public sealed class SlaHealthWidget(HelpdeskDbContext dbContext) : IDashboardWid
                 sla.ActiveSince,
                 sla.ResolutionCompletedAt,
                 sla.Policy.Name,
-                sla.Policy.ResolutionTargetMinutes,
-                sla.Policy.WarningPercent,
-                sla.Policy.Calendar.TimeZoneId,
-                sla.Policy.Calendar.WorkingDays,
-                sla.Policy.Calendar.StartTime,
-                sla.Policy.Calendar.EndTime))
+                sla.ResolutionTargetMinutes,
+                sla.WarningPercent,
+                sla.Calendar.TimeZoneId,
+                sla.Calendar.WorkingDays,
+                sla.Calendar.StartTime,
+                sla.Calendar.EndTime))
             .ToListAsync(cancellationToken);
 
         var measured = open.Select(row => Measure(row, now)).ToList();

@@ -38,47 +38,225 @@ public sealed class SlaService(
         return response;
     }
 
-    public async Task<SlaPolicyResponse?> CreatePolicyAsync(
-        CreateSlaPolicyRequest request, ClaimsPrincipal actor, CancellationToken cancellationToken)
+    public async Task<SlaPolicyResult> CreatePolicyAsync(
+        SavePolicyRequest request, ClaimsPrincipal actor, CancellationToken cancellationToken)
     {
-        if (!await dbContext.BusinessHoursCalendars.AnyAsync(item => item.Id == request.CalendarId, cancellationToken)) return null;
+        if (await ReferenceProblemAsync(request, cancellationToken) is { } problem) return problem;
+
         var policy = new SlaPolicy
         {
-            Id = Guid.CreateVersion7(), Name = request.Name.Trim(), Priority = request.Priority,
-            Category = string.IsNullOrWhiteSpace(request.Category) ? null : request.Category.Trim(),
-            ResponseTargetMinutes = request.ResponseTargetMinutes,
-            ResolutionTargetMinutes = request.ResolutionTargetMinutes, WarningPercent = request.WarningPercent,
-            CalendarId = request.CalendarId, CreatedAt = DateTimeOffset.UtcNow,
+            Id = Guid.CreateVersion7(),
+            CreatedAt = DateTimeOffset.UtcNow,
         };
+        Apply(policy, request);
         dbContext.SlaPolicies.Add(policy);
         await dbContext.SaveChangesAsync(cancellationToken);
-        var response = Map(policy);
+
+        var response = await ReadPolicyAsync(policy.Id, cancellationToken);
         await auditService.WriteAsync(actor, "Created", "SlaPolicy", policy.Id.ToString(), null, response, cancellationToken);
-        return response;
+        return new(SlaOutcome.Success, response);
     }
 
+    public async Task<SlaPolicyResult> UpdatePolicyAsync(
+        Guid id, SavePolicyRequest request, ClaimsPrincipal actor, CancellationToken cancellationToken)
+    {
+        var policy = await dbContext.SlaPolicies.SingleOrDefaultAsync(item => item.Id == id, cancellationToken);
+        if (policy is null) return new(SlaOutcome.NotFound);
+        if (await ReferenceProblemAsync(request, cancellationToken) is { } problem) return problem;
+
+        var before = await ReadPolicyAsync(id, cancellationToken);
+        Apply(policy, request);
+        await dbContext.SaveChangesAsync(cancellationToken);
+
+        // Tickets already running keep the targets they started with, which is the whole point of
+        // snapshotting them onto TicketSla. This edit reaches new tickets only.
+        var after = await ReadPolicyAsync(id, cancellationToken);
+        await auditService.WriteAsync(actor, "Updated", "SlaPolicy", id.ToString(), before, after, cancellationToken);
+        return new(SlaOutcome.Success, after);
+    }
+
+    public async Task<SlaOutcome> DeletePolicyAsync(Guid id, ClaimsPrincipal actor, CancellationToken cancellationToken)
+    {
+        var policy = await dbContext.SlaPolicies.SingleOrDefaultAsync(item => item.Id == id, cancellationToken);
+        if (policy is null) return SlaOutcome.NotFound;
+
+        // A policy any ticket has run against stays, so the clock on that ticket remains explainable.
+        // Deactivating it is the way to retire one.
+        if (await dbContext.TicketSlas.AnyAsync(item => item.PolicyId == id, cancellationToken))
+        {
+            return SlaOutcome.InUse;
+        }
+
+        var before = await ReadPolicyAsync(id, cancellationToken);
+        dbContext.SlaPolicies.Remove(policy);
+        await dbContext.SaveChangesAsync(cancellationToken);
+        await auditService.WriteAsync(actor, "Deleted", "SlaPolicy", id.ToString(), before, null, cancellationToken);
+        return SlaOutcome.Success;
+    }
+
+    public async Task<IReadOnlyList<SlaPolicyResponse>> ListPoliciesAsync(CancellationToken cancellationToken)
+    {
+        var counts = await TicketCountsAsync(cancellationToken);
+        var policies = await dbContext.SlaPolicies
+            .Include(item => item.Calendar).Include(item => item.Category)
+            .OrderBy(item => item.SortOrder).ThenBy(item => item.CreatedAt)
+            .ToListAsync(cancellationToken);
+        return [.. policies.Select(item => Map(item, counts.GetValueOrDefault(item.Id)))];
+    }
+
+    /// <summary>
+    /// Renumbers the named policies from zero, in the order given. Anything not named keeps its
+    /// place after them, so a partial list cannot silently reshuffle the rest.
+    /// </summary>
+    public async Task ReorderPoliciesAsync(
+        IReadOnlyList<Guid> policyIds, ClaimsPrincipal actor, CancellationToken cancellationToken)
+    {
+        var policies = await dbContext.SlaPolicies.ToDictionaryAsync(item => item.Id, cancellationToken);
+        var order = 0;
+        foreach (var id in policyIds)
+        {
+            if (policies.TryGetValue(id, out var policy)) policy.SortOrder = order++;
+        }
+
+        foreach (var policy in policies.Values.Where(item => !policyIds.Contains(item.Id))
+            .OrderBy(item => item.SortOrder).ThenBy(item => item.CreatedAt))
+        {
+            policy.SortOrder = order++;
+        }
+
+        await dbContext.SaveChangesAsync(cancellationToken);
+        await auditService.WriteAsync(
+            actor, "Reordered", "SlaPolicy", "all", null, new { PolicyIds = policyIds }, cancellationToken);
+    }
+
+    public async Task<IReadOnlyList<BusinessHoursCalendarResponse>> ListCalendarsAsync(CancellationToken cancellationToken)
+    {
+        var usage = await dbContext.SlaPolicies
+            .GroupBy(policy => policy.CalendarId)
+            .Select(group => new { group.Key, Count = group.Count() })
+            .ToListAsync(cancellationToken);
+        var counts = usage.ToDictionary(row => row.Key, row => row.Count);
+        var calendars = await dbContext.BusinessHoursCalendars.OrderBy(item => item.Name)
+            .ToListAsync(cancellationToken);
+        return [.. calendars.Select(item => Map(item) with { PolicyCount = counts.GetValueOrDefault(item.Id) })];
+    }
+
+    public async Task<SlaOutcome> DeleteCalendarAsync(Guid id, ClaimsPrincipal actor, CancellationToken cancellationToken)
+    {
+        var calendar = await dbContext.BusinessHoursCalendars.SingleOrDefaultAsync(item => item.Id == id, cancellationToken);
+        if (calendar is null) return SlaOutcome.NotFound;
+        if (await dbContext.SlaPolicies.AnyAsync(item => item.CalendarId == id, cancellationToken)
+            || await dbContext.TicketSlas.AnyAsync(item => item.CalendarId == id, cancellationToken))
+        {
+            return SlaOutcome.InUse;
+        }
+
+        var before = Map(calendar);
+        dbContext.BusinessHoursCalendars.Remove(calendar);
+        await dbContext.SaveChangesAsync(cancellationToken);
+        await auditService.WriteAsync(actor, "Deleted", "BusinessHoursCalendar", id.ToString(), before, null, cancellationToken);
+        return SlaOutcome.Success;
+    }
+
+    private static void Apply(SlaPolicy policy, SavePolicyRequest request)
+    {
+        policy.Name = request.Name.Trim();
+        policy.SortOrder = request.SortOrder;
+        policy.Priority = request.Priority;
+        policy.TicketType = request.TicketType;
+        policy.CategoryId = request.CategoryId;
+        policy.ResponseTargetMinutes = request.ResponseTargetMinutes;
+        policy.ResolutionTargetMinutes = request.ResolutionTargetMinutes;
+        policy.WarningPercent = request.WarningPercent;
+        policy.CalendarId = request.CalendarId;
+        policy.IsActive = request.IsActive;
+    }
+
+    private async Task<SlaPolicyResult?> ReferenceProblemAsync(
+        SavePolicyRequest request, CancellationToken cancellationToken)
+    {
+        if (!await dbContext.BusinessHoursCalendars.AnyAsync(item => item.Id == request.CalendarId, cancellationToken))
+        {
+            return new(SlaOutcome.CalendarNotFound);
+        }
+
+        if (request.CategoryId is { } categoryId
+            && !await dbContext.TicketCategories.AnyAsync(item => item.Id == categoryId, cancellationToken))
+        {
+            return new(SlaOutcome.CategoryNotFound);
+        }
+
+        return null;
+    }
+
+    private async Task<Dictionary<Guid, int>> TicketCountsAsync(CancellationToken cancellationToken)
+    {
+        var rows = await dbContext.TicketSlas
+            .GroupBy(item => item.PolicyId)
+            .Select(group => new { group.Key, Count = group.Count() })
+            .ToListAsync(cancellationToken);
+        return rows.ToDictionary(row => row.Key, row => row.Count);
+    }
+
+    private async Task<SlaPolicyResponse> ReadPolicyAsync(Guid id, CancellationToken cancellationToken)
+    {
+        var counts = await TicketCountsAsync(cancellationToken);
+        var policy = await dbContext.SlaPolicies.AsNoTracking()
+            .Include(item => item.Calendar).Include(item => item.Category)
+            .SingleAsync(item => item.Id == id, cancellationToken);
+        return Map(policy, counts.GetValueOrDefault(id));
+    }
+
+    /// <summary>
+    /// Attaches the first active policy whose conditions the ticket meets, in the order an
+    /// administrator arranged, and <b>copies its targets onto the ticket</b>.
+    ///
+    /// <para>
+    /// A null condition matches anything, so a policy with none is the catch-all — which is why the
+    /// order matters and why it is a column rather than an accident of creation time. The whole
+    /// active list is read and matched in memory: it is a handful of rows, and expressing "null means
+    /// any" three times over in SQL earns nothing.
+    /// </para>
+    /// </summary>
     public async Task StartAsync(Ticket ticket, DateTimeOffset now, CancellationToken cancellationToken)
     {
-        var policy = await dbContext.SlaPolicies.Include(item => item.Calendar)
-            .Where(item => item.IsActive && item.Priority == ticket.Priority && item.Category == null)
-            .OrderBy(item => item.CreatedAt).FirstOrDefaultAsync(cancellationToken);
+        var policies = await dbContext.SlaPolicies.Include(item => item.Calendar)
+            .Where(item => item.IsActive)
+            .OrderBy(item => item.SortOrder).ThenBy(item => item.CreatedAt)
+            .ToListAsync(cancellationToken);
+        var policy = policies.FirstOrDefault(item => Matches(item, ticket));
         if (policy is null) return;
+
         dbContext.TicketSlas.Add(new TicketSla
         {
-            Id = Guid.CreateVersion7(), TicketId = ticket.Id, PolicyId = policy.Id,
-            StartedAt = now, ActiveSince = now,
+            Id = Guid.CreateVersion7(),
+            TicketId = ticket.Id,
+            PolicyId = policy.Id,
+            // Snapshotted, not referenced: see TicketSla's own note.
+            ResponseTargetMinutes = policy.ResponseTargetMinutes,
+            ResolutionTargetMinutes = policy.ResolutionTargetMinutes,
+            WarningPercent = policy.WarningPercent,
+            CalendarId = policy.CalendarId,
+            StartedAt = now,
+            ActiveSince = now,
         });
     }
+
+    /// <summary>Every condition the policy states must hold; the ones it leaves null are not asked.</summary>
+    public static bool Matches(SlaPolicy policy, Ticket ticket) =>
+        (policy.Priority is null || policy.Priority == ticket.Priority)
+        && (policy.TicketType is null || policy.TicketType == ticket.Type)
+        && (policy.CategoryId is null || policy.CategoryId == ticket.CategoryId);
 
     public async Task RecordStatusChangeAsync(
         Ticket ticket, Guid fromStatusId, DateTimeOffset now, CancellationToken cancellationToken)
     {
-        var sla = await dbContext.TicketSlas.Include(item => item.Policy).ThenInclude(item => item.Calendar)
+        var sla = await dbContext.TicketSlas.Include(item => item.Policy).Include(item => item.Calendar)
             .SingleOrDefaultAsync(item => item.TicketId == ticket.Id, cancellationToken);
         if (sla is null) return;
         if (ticket.StatusId == DefaultTicketStatuses.PendingId && sla.ActiveSince is not null)
         {
-            sla.AccumulatedBusinessSeconds += BusinessTimeCalculator.Elapsed(sla.ActiveSince.Value, now, sla.Policy.Calendar).TotalSeconds;
+            sla.AccumulatedBusinessSeconds += BusinessTimeCalculator.Elapsed(sla.ActiveSince.Value, now, sla.Calendar).TotalSeconds;
             sla.ActiveSince = null;
         }
         else if (fromStatusId == DefaultTicketStatuses.PendingId && sla.ActiveSince is null
@@ -98,7 +276,7 @@ public sealed class SlaService(
 
     public async Task MarkRespondedAsync(Guid ticketId, DateTimeOffset now, CancellationToken cancellationToken)
     {
-        var sla = await dbContext.TicketSlas.Include(item => item.Policy).ThenInclude(item => item.Calendar)
+        var sla = await dbContext.TicketSlas.Include(item => item.Policy).Include(item => item.Calendar)
             .SingleOrDefaultAsync(item => item.TicketId == ticketId, cancellationToken);
         if (sla is null || sla.ResponseCompletedAt is not null) return;
         sla.ResponseBusinessSeconds = CurrentElapsedSeconds(sla, now);
@@ -109,7 +287,7 @@ public sealed class SlaService(
     public async Task<SlaRemainingResponse?> GetRemainingAsync(
         Guid ticketId, ClaimsPrincipal actor, CancellationToken cancellationToken)
     {
-        var sla = await dbContext.TicketSlas.Include(item => item.Ticket).Include(item => item.Policy).ThenInclude(item => item.Calendar)
+        var sla = await dbContext.TicketSlas.Include(item => item.Ticket).Include(item => item.Policy).Include(item => item.Calendar)
             .SingleOrDefaultAsync(item => item.TicketId == ticketId, cancellationToken);
         if (sla is null || (actor.IsInRole("EndUser") && sla.Ticket.RequesterId != ActorId(actor))) return null;
         return MapRemaining(sla, DateTimeOffset.UtcNow);
@@ -118,7 +296,7 @@ public sealed class SlaService(
     public async Task EvaluateAsync(DateTimeOffset now, CancellationToken cancellationToken)
     {
         var slas = await dbContext.TicketSlas.Include(item => item.Ticket).ThenInclude(item => item.Queue!).ThenInclude(item => item.Team).ThenInclude(item => item.Members)
-            .Include(item => item.Policy).ThenInclude(item => item.Calendar)
+            .Include(item => item.Policy).Include(item => item.Calendar)
             .Where(item => item.ResolutionCompletedAt == null).ToListAsync(cancellationToken);
         foreach (var sla in slas)
         {
@@ -132,12 +310,12 @@ public sealed class SlaService(
     {
         if (response && sla.ResponseCompletedAt is not null) return;
         var elapsed = CurrentElapsedSeconds(sla, now);
-        var target = (response ? sla.Policy.ResponseTargetMinutes : sla.Policy.ResolutionTargetMinutes) * 60d;
+        var target = (response ? sla.ResponseTargetMinutes : sla.ResolutionTargetMinutes) * 60d;
         var warned = response ? sla.ResponseWarningRaised : sla.ResolutionWarningRaised;
         var breached = response ? sla.ResponseBreached : sla.ResolutionBreached;
         var targetName = response ? "Response" : "Resolution";
         var dueAt = DueAt(sla, now, target);
-        if (!warned && elapsed >= target * sla.Policy.WarningPercent / 100d)
+        if (!warned && elapsed >= target * sla.WarningPercent / 100d)
         {
             if (response) sla.ResponseWarningRaised = true; else sla.ResolutionWarningRaised = true;
             await publishEndpoint.Publish(new SlaWarningRaised(Guid.CreateVersion7(), now, sla.TicketId, sla.Ticket.Number, targetName, dueAt), cancellationToken);
@@ -250,7 +428,7 @@ public sealed class SlaService(
     private static void AccumulateActive(TicketSla sla, DateTimeOffset now)
     {
         if (sla.ActiveSince is null) return;
-        sla.AccumulatedBusinessSeconds += BusinessTimeCalculator.Elapsed(sla.ActiveSince.Value, now, sla.Policy.Calendar).TotalSeconds;
+        sla.AccumulatedBusinessSeconds += BusinessTimeCalculator.Elapsed(sla.ActiveSince.Value, now, sla.Calendar).TotalSeconds;
         sla.ActiveSince = null;
     }
 
@@ -261,8 +439,9 @@ public sealed class SlaService(
     {
         var current = CurrentElapsedSeconds(sla, now);
         var responseElapsed = sla.ResponseBusinessSeconds ?? current;
-        var responseTarget = sla.Policy.ResponseTargetMinutes * 60d;
-        var resolutionTarget = sla.Policy.ResolutionTargetMinutes * 60d;
+        // Snapshotted onto the ticket, not read through the policy — see TicketSla.
+        var responseTarget = sla.ResponseTargetMinutes * 60d;
+        var resolutionTarget = sla.ResolutionTargetMinutes * 60d;
         return new(sla.TicketId, sla.Policy.Name, sla.ActiveSince is null && sla.ResolutionCompletedAt is null,
             Math.Max(0, responseTarget - responseElapsed), Math.Max(0, resolutionTarget - current),
             DueAt(sla, now, responseTarget), DueAt(sla, now, resolutionTarget),
@@ -273,6 +452,19 @@ public sealed class SlaService(
         ?? actor.FindFirstValue(ClaimTypes.NameIdentifier) ?? string.Empty;
     private static BusinessHoursCalendarResponse Map(BusinessHoursCalendar item) =>
         new(item.Id, item.Name, item.TimeZoneId, item.WorkingDays, item.StartTime, item.EndTime);
-    private static SlaPolicyResponse Map(SlaPolicy item) => new(item.Id, item.Name, item.Priority, item.Category,
-        item.ResponseTargetMinutes, item.ResolutionTargetMinutes, item.WarningPercent, item.CalendarId);
+    private static SlaPolicyResponse Map(SlaPolicy item, int ticketCount) => new(
+        item.Id,
+        item.Name,
+        item.SortOrder,
+        item.Priority,
+        item.TicketType,
+        item.CategoryId,
+        item.Category?.Name,
+        item.ResponseTargetMinutes,
+        item.ResolutionTargetMinutes,
+        item.WarningPercent,
+        item.CalendarId,
+        item.Calendar?.Name ?? string.Empty,
+        item.IsActive,
+        ticketCount);
 }

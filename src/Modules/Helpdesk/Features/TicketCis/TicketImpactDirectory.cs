@@ -69,7 +69,7 @@ public sealed class TicketImpactDirectory(HelpdeskDbContext dbContext) : ITicket
         var ticketIds = rows.Select(row => row.TicketId).Distinct().ToArray();
         var clocks = await dbContext.TicketSlas
             .AsNoTracking()
-            .Include(sla => sla.Policy).ThenInclude(policy => policy.Calendar)
+            .Include(sla => sla.Calendar)
             .Where(sla => ticketIds.Contains(sla.TicketId))
             .ToDictionaryAsync(sla => sla.TicketId, cancellationToken);
 

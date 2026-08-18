@@ -27,7 +27,7 @@ public static class SlaClock
         return sla.AccumulatedBusinessSeconds
             + (sla.ActiveSince is null
                 ? 0
-                : BusinessTimeCalculator.Elapsed(sla.ActiveSince.Value, now, sla.Policy.Calendar).TotalSeconds);
+                : BusinessTimeCalculator.Elapsed(sla.ActiveSince.Value, now, sla.Calendar).TotalSeconds);
     }
 
     /// <summary>
@@ -40,7 +40,7 @@ public static class SlaClock
         ArgumentNullException.ThrowIfNull(sla);
         var remaining = Math.Max(0, targetSeconds - sla.AccumulatedBusinessSeconds);
         return BusinessTimeCalculator.Add(
-            sla.ActiveSince ?? now, TimeSpan.FromSeconds(remaining), sla.Policy.Calendar);
+            sla.ActiveSince ?? now, TimeSpan.FromSeconds(remaining), sla.Calendar);
     }
 
     /// <summary>
@@ -60,7 +60,9 @@ public static class SlaClock
     public static SlaExposure Exposure(TicketSla sla, DateTimeOffset now)
     {
         ArgumentNullException.ThrowIfNull(sla);
-        var target = sla.Policy.ResolutionTargetMinutes * 60d;
+        // The snapshot on the ticket, not the policy: see TicketSla. Editing a policy must not
+        // move a clock that is already running.
+        var target = sla.ResolutionTargetMinutes * 60d;
         var elapsed = ElapsedSeconds(sla, now);
         var settled = sla.ResolutionCompletedAt is not null;
         var breached = !settled && elapsed >= target;
@@ -73,6 +75,6 @@ public static class SlaClock
             // "At risk" is the policy's own warning line, so a blast-radius panel and an SLA warning
             // notification never disagree about which tickets are close to the edge. A breached ticket
             // is not also at risk: it is past the thing being risked.
-            AtRisk: !settled && !breached && elapsed >= target * sla.Policy.WarningPercent / 100d);
+            AtRisk: !settled && !breached && elapsed >= target * sla.WarningPercent / 100d);
     }
 }

@@ -1,9 +1,10 @@
 import { useQuery } from '@tanstack/react-query'
-import { Building2, ChevronRight, ListPlus, Tags } from 'lucide-react'
+import { AlarmClock, Building2, ChevronRight, ListPlus, Tags } from 'lucide-react'
 import type { ComponentType } from 'react'
 import { Link } from 'react-router-dom'
 import { assetsApi } from '../../api/assets'
 import { directoryApi } from '../../api/directory'
+import { slaApi } from '../../api/sla'
 import { helpdeskApi } from '../../api/helpdesk'
 import { totalCount } from './categoryTree'
 
@@ -30,7 +31,14 @@ export function SettingsPage() {
     meta: { suppressErrorToast: true },
   })
 
+  const policies = useQuery({
+    queryKey: ['sla-policies'],
+    queryFn: slaApi.listPolicies,
+    meta: { suppressErrorToast: true },
+  })
+
   const count = categories.data ? totalCount(categories.data) : null
+  const policyCount = policies.data?.length ?? null
   const fieldCount = schemas.data
     ? schemas.data.reduce((total, schema) => total + schema.customFields.length, 0)
     : null
@@ -63,6 +71,13 @@ export function SettingsPage() {
         title="Asset fields"
         description="Extra fields each kind of CI carries — and how hardware is split into laptops, desktops and printers."
         detail={fieldCount === null ? 'Loading…' : `${fieldCount} ${fieldCount === 1 ? 'field' : 'fields'}`} />
+
+      <SettingsCard
+        to="/admin/settings/sla"
+        icon={AlarmClock}
+        title="Service levels"
+        description="The ordered rules that decide how long a ticket has, and the business hours they run on."
+        detail={policyCount === null ? 'Loading…' : `${policyCount} ${policyCount === 1 ? 'policy' : 'policies'}`} />
     </div>
   </div>
 }

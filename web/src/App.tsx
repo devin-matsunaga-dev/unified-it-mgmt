@@ -34,6 +34,7 @@ import { ProblemListPage } from './features/problems/ProblemListPage'
 import { AssetFieldsPage } from './features/settings/AssetFieldsPage'
 import { OrganisationPage } from './features/settings/OrganisationPage'
 import { SettingsPage } from './features/settings/SettingsPage'
+import { SlaPage } from './features/settings/SlaPage'
 import { TicketCategoriesPage } from './features/settings/TicketCategoriesPage'
 import { ProblemDetailPage } from './features/problems/ProblemDetailPage'
 import { LoginPage } from './pages/LoginPage'
@@ -95,6 +96,7 @@ export function App() {
       <Route path="admin/settings/ticket-categories" element={<ProtectedRoute roles={['Admin']}><TicketCategoriesPage /></ProtectedRoute>} />
       <Route path="admin/settings/organisation" element={<ProtectedRoute roles={['Admin']}><OrganisationPage /></ProtectedRoute>} />
       <Route path="admin/settings/asset-fields" element={<ProtectedRoute roles={['Admin']}><AssetFieldsPage /></ProtectedRoute>} />
+      <Route path="admin/settings/sla" element={<ProtectedRoute roles={['Admin']}><SlaPage /></ProtectedRoute>} />
     </Route>
     <Route path="*" element={<ProtectedRoute><PlaceholderPage title="Page not found" /></ProtectedRoute>} />
   </Routes>
