@@ -28,6 +28,15 @@ export type TicketCategory = {
   children: TicketCategory[]
 }
 
+/** A new category is always created active; only an update can deactivate one. */
+export type CreateTicketCategoryInput = {
+  name: string
+  parentId: string | null
+  sortOrder: number
+}
+
+export type UpdateTicketCategoryInput = CreateTicketCategoryInput & { isActive: boolean }
+
 export type TicketCustomFieldValue = {
   fieldId: string
   key: string
@@ -162,6 +171,14 @@ export const helpdeskApi = {
   renderCannedResponse: (id: string, ticketId: string) => apiRequest<RenderedCannedResponse>(`/api/canned-responses/${id}/render`, { method: 'POST', body: JSON.stringify({ ticketId }) }),
   listQueues: () => apiRequest<TicketQueue[]>('/api/queues'),
   listCategories: () => apiRequest<TicketCategory[]>('/api/ticket-categories'),
+  /**
+   * Settings only. A separate call rather than a flag on listCategories, because that one is handed
+   * straight to TanStack as a queryFn and would receive the query context as its first argument.
+   */
+  listCategoriesIncludingInactive: () => apiRequest<TicketCategory[]>('/api/ticket-categories?includeInactive=true'),
+  createCategory: (input: CreateTicketCategoryInput) => apiRequest<TicketCategory>('/api/ticket-categories', { method: 'POST', body: JSON.stringify(input) }),
+  updateCategory: (id: string, input: UpdateTicketCategoryInput) => apiRequest<TicketCategory>(`/api/ticket-categories/${id}`, { method: 'PUT', body: JSON.stringify(input) }),
+  deleteCategory: (id: string) => apiRequest<void>(`/api/ticket-categories/${id}`, { method: 'DELETE' }),
   getTicket: (id: string) => apiRequest<Ticket>(`/api/tickets/${id}`),
   createTicket: (input: CreateTicketInput) => apiRequest<Ticket>('/api/tickets', { method: 'POST', body: JSON.stringify(input) }),
   getComments: (id: string) => apiRequest<Comment[]>(`/api/tickets/${id}/comments`),

@@ -1,0 +1,54 @@
+import { useQuery } from '@tanstack/react-query'
+import { ChevronRight, Tags } from 'lucide-react'
+import type { ComponentType } from 'react'
+import { Link } from 'react-router-dom'
+import { helpdeskApi } from '../../api/helpdesk'
+import { totalCount } from './categoryTree'
+
+/**
+ * The administration area's index. Each section is a card that links to its own page, so a new
+ * setting is a new entry here rather than another tab on a page that keeps growing.
+ */
+export function SettingsPage() {
+  const categories = useQuery({
+    queryKey: ['ticket-categories', 'all'],
+    queryFn: helpdeskApi.listCategoriesIncludingInactive,
+    meta: { suppressErrorToast: true },
+  })
+
+  const count = categories.data ? totalCount(categories.data) : null
+
+  return <div className="space-y-6">
+    <div>
+      <h1 className="text-[28px] font-bold">Settings</h1>
+      <p className="mt-1 text-sm text-slate-500">Configuration that applies across the whole service desk.</p>
+    </div>
+
+    <div className="grid gap-6 sm:grid-cols-2">
+      <SettingsCard
+        to="/admin/settings/ticket-categories"
+        icon={Tags}
+        title="Ticket categories"
+        description="The categories people choose when raising a ticket, and how they nest."
+        detail={count === null ? 'Loading…' : `${count} ${count === 1 ? 'category' : 'categories'}`} />
+    </div>
+  </div>
+}
+
+function SettingsCard({ to, icon: Icon, title, description, detail }: {
+  to: string
+  icon: ComponentType<{ size?: number }>
+  title: string
+  description: string
+  detail: string
+}) {
+  return <Link to={to}
+    className="group flex gap-4 rounded-xl border border-slate-200 bg-white p-6 transition-colors hover:border-blue-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 dark:border-slate-800 dark:bg-slate-900 dark:hover:border-blue-800">
+    <span className="grid size-10 shrink-0 place-items-center rounded-full bg-blue-50 text-blue-600 dark:bg-blue-500/15"><Icon size={20} /></span>
+    <span className="min-w-0 flex-1">
+      <span className="flex items-center gap-1 font-semibold text-slate-900 dark:text-slate-100">{title}<ChevronRight size={16} className="text-slate-400 transition-transform group-hover:translate-x-0.5" /></span>
+      <span className="mt-1 block text-sm text-slate-500">{description}</span>
+      <span className="mt-3 block text-[13px] font-medium text-slate-500 tabular-nums">{detail}</span>
+    </span>
+  </Link>
+}

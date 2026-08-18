@@ -31,6 +31,8 @@ import { HomeRoute } from './pages/HomeRoute'
 import { KbArticlePage } from './features/knowledge/KbArticlePage'
 import { KbListPage } from './features/knowledge/KbListPage'
 import { ProblemListPage } from './features/problems/ProblemListPage'
+import { SettingsPage } from './features/settings/SettingsPage'
+import { TicketCategoriesPage } from './features/settings/TicketCategoriesPage'
 import { ProblemDetailPage } from './features/problems/ProblemDetailPage'
 import { LoginPage } from './pages/LoginPage'
 import { PlaceholderPage } from './pages/PlaceholderPage'
@@ -87,7 +89,8 @@ export function App() {
       <Route path="monitoring/alerts" element={<ProtectedRoute roles={['Admin', 'Technician', 'Manager']}><AlertBoardPage /></ProtectedRoute>} />
       <Route path="monitoring/devices/:id" element={<ProtectedRoute roles={['Admin', 'Technician', 'Manager']}><DeviceDetailPage /></ProtectedRoute>} />
       <Route path="admin/users" element={<ProtectedRoute roles={['Admin']}><PlaceholderPage title="Users" /></ProtectedRoute>} />
-      <Route path="admin/settings" element={<ProtectedRoute roles={['Admin']}><PlaceholderPage title="Settings" /></ProtectedRoute>} />
+      <Route path="admin/settings" element={<ProtectedRoute roles={['Admin']}><SettingsPage /></ProtectedRoute>} />
+      <Route path="admin/settings/ticket-categories" element={<ProtectedRoute roles={['Admin']}><TicketCategoriesPage /></ProtectedRoute>} />
     </Route>
     <Route path="*" element={<ProtectedRoute><PlaceholderPage title="Page not found" /></ProtectedRoute>} />
   </Routes>
