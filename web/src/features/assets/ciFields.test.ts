@@ -1,4 +1,5 @@
-import type { CiAttributeDefinition, CiCustomField } from '../../api/assets'
+import { describe, expect, it } from 'vitest'
+import { ciFilterToQuery, type CiAttributeDefinition, type CiCustomField } from '../../api/assets'
 import { ciValuePayload, validateAttributes, validateCiCustomFields } from './ciFields'
 
 const serverAttributes: CiAttributeDefinition[] = [
@@ -65,5 +66,29 @@ describe('ciValuePayload', () => {
   it('drops blanks and keys left behind by a previously selected type', () => {
     expect(ciValuePayload(['hostname', 'cpuCores'], { hostname: ' app-01 ', cpuCores: '', portCount: '48' }))
       .toEqual({ hostname: 'app-01' })
+  })
+})
+
+describe('ciFilterToQuery custom fields', () => {
+  it('sends one repeated parameter per constraint', () => {
+    const query = new URLSearchParams(ciFilterToQuery({
+      type: 'Hardware',
+      customFields: [{ fieldId: 'field-1', value: 'Laptop' }, { fieldId: 'field-2', value: 'Loan' }],
+    }))
+
+    expect(query.getAll('customField')).toEqual(['field-1:Laptop', 'field-2:Loan'])
+  })
+
+  /** An option value may contain a colon; the server splits on the first one, so we must not escape. */
+  it('leaves a colon inside an option value alone', () => {
+    const query = new URLSearchParams(ciFilterToQuery({
+      customFields: [{ fieldId: 'field-1', value: 'Laptop: 14 inch' }],
+    }))
+
+    expect(query.getAll('customField')).toEqual(['field-1:Laptop: 14 inch'])
+  })
+
+  it('sends nothing when no constraint is set', () => {
+    expect(new URLSearchParams(ciFilterToQuery({})).getAll('customField')).toEqual([])
   })
 })

@@ -14,6 +14,8 @@ export type CiAttributeDefinition = {
   allowedValues: string[]
 }
 
+export type CiCustomFieldValueCount = { value: string; ciCount: number }
+
 export type CiCustomField = {
   id: string
   ciType: CiType
@@ -311,8 +313,13 @@ export type Ci = {
 
 export type CiPage = { items: Ci[]; total: number; page: number; pageSize: number }
 
+/** One "this CI's value for that field is exactly this" constraint. Several are AND-ed. */
+export type CiCustomFieldFilter = { fieldId: string; value: string }
+
 export type CiFilter = {
   type?: CiType
+  /** Narrows on user-defined field values — the runtime stand-in for a CI subtype. */
+  customFields?: CiCustomFieldFilter[]
   search?: string
   isActive?: boolean
   lifecycleState?: CiLifecycleState
@@ -457,6 +464,11 @@ export function ciFilterToQuery(filter: CiFilter) {
   if (filter.siteId) query.set('siteId', filter.siteId)
   if (filter.contractId) query.set('contractId', filter.contractId)
   if (filter.warrantyExpiringWithinDays !== undefined) query.set('warrantyExpiringWithinDays', String(filter.warrantyExpiringWithinDays))
+  // Repeated rather than comma-joined: an option value may legitimately contain a comma, and the
+  // server splits each token on its first colon only for the same reason.
+  for (const constraint of filter.customFields ?? []) {
+    query.append('customField', `${constraint.fieldId}:${constraint.value}`)
+  }
   query.set('page', String(filter.page ?? 1))
   query.set('pageSize', String(filter.pageSize ?? 25))
   return query.toString()
@@ -511,6 +523,15 @@ export const assetsApi = {
     apiRequest<BulkEditReport>('/api/cis/bulk-edit', { method: 'POST', body: JSON.stringify(input) }),
   createCustomField: (input: { ciType: CiType; key: string; label: string; type: CiCustomFieldType; isRequired: boolean; options?: string[]; sortOrder?: number }) =>
     apiRequest<CiCustomField>('/api/ci-custom-fields', { method: 'POST', body: JSON.stringify(input) }),
+  /**
+   * Key and type are absent on purpose: the key is the name every payload and seeder uses for the
+   * field, and the type decides how stored values are read. Changing either is a delete and re-create.
+   */
+  updateCustomField: (id: string, input: { label: string; isRequired: boolean; options?: string[]; sortOrder?: number }) =>
+    apiRequest<CiCustomField>(`/api/ci-custom-fields/${id}`, { method: 'PUT', body: JSON.stringify(input) }),
+  /** How many CIs hold each option, so an edit can see what it is about to strand. */
+  getCustomFieldValueCounts: (id: string) =>
+    apiRequest<CiCustomFieldValueCount[]>(`/api/ci-custom-fields/${id}/value-counts`),
   deleteCustomField: (id: string) => apiRequest<void>(`/api/ci-custom-fields/${id}`, { method: 'DELETE' }),
 }
 

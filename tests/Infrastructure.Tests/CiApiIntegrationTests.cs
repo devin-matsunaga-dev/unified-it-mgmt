@@ -368,6 +368,272 @@ public sealed class CiApiIntegrationTests : IAsyncLifetime
         Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
     }
 
+    /// <summary>
+    /// A Select custom field is how a Hardware CI says it is a laptop rather than a printer — CiType
+    /// stops at "Hardware" — so the list has to be able to narrow on one.
+    /// </summary>
+    [Fact]
+    public async Task ListCis_FiltersByACustomFieldValue()
+    {
+        var marker = Guid.NewGuid().ToString("N")[..8];
+        var field = await AddSelectFieldAsync(
+            CiType.Hardware, $"kind_{marker}", "Hardware type", "Laptop", "Printer");
+        try
+        {
+            await CreateCiAsync(CiType.Hardware, $"{marker}-laptop",
+                new() { ["manufacturer"] = "Dell", ["model"] = "Latitude" },
+                customFields: new() { [field.Key] = "Laptop" });
+            await CreateCiAsync(CiType.Hardware, $"{marker}-printer",
+                new() { ["manufacturer"] = "HP", ["model"] = "LaserJet" },
+                customFields: new() { [field.Key] = "Printer" });
+
+            using var request = Authenticated(
+                HttpMethod.Get, $"/api/cis?type=Hardware&search={marker}&customField={field.Id}:Laptop");
+            using var response = await _client!.SendAsync(request);
+            var page = await response.Content.ReadFromJsonAsync<CiPageDto>();
+
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            Assert.Equal($"{marker}-laptop", Assert.Single(page!.Items).Name);
+        }
+        finally
+        {
+            using var cleanup = Authenticated(HttpMethod.Delete, $"/api/ci-custom-fields/{field.Id}", "Admin");
+            await _client!.SendAsync(cleanup);
+        }
+    }
+
+    /// <summary>Two Select fields AND together — narrowing by both is the point of having both.</summary>
+    [Fact]
+    public async Task ListCis_FiltersByTwoCustomFieldsAtOnce()
+    {
+        var marker = Guid.NewGuid().ToString("N")[..8];
+        var kind = await AddSelectFieldAsync(CiType.Hardware, $"kind_{marker}", "Kind", "Laptop", "Printer");
+        var estate = await AddSelectFieldAsync(CiType.Hardware, $"estate_{marker}", "Estate", "Loan", "Owned");
+        try
+        {
+            await CreateCiAsync(CiType.Hardware, $"{marker}-loan-laptop",
+                new() { ["manufacturer"] = "Dell", ["model"] = "Latitude" },
+                customFields: new() { [kind.Key] = "Laptop", [estate.Key] = "Loan" });
+            await CreateCiAsync(CiType.Hardware, $"{marker}-owned-laptop",
+                new() { ["manufacturer"] = "Dell", ["model"] = "Latitude" },
+                customFields: new() { [kind.Key] = "Laptop", [estate.Key] = "Owned" });
+
+            using var request = Authenticated(HttpMethod.Get,
+                $"/api/cis?type=Hardware&search={marker}&customField={kind.Id}:Laptop&customField={estate.Id}:Loan");
+            using var response = await _client!.SendAsync(request);
+            var page = await response.Content.ReadFromJsonAsync<CiPageDto>();
+
+            Assert.Equal($"{marker}-loan-laptop", Assert.Single(page!.Items).Name);
+        }
+        finally
+        {
+            foreach (var field in new[] { kind, estate })
+            {
+                using var cleanup = Authenticated(HttpMethod.Delete, $"/api/ci-custom-fields/{field.Id}", "Admin");
+                await _client!.SendAsync(cleanup);
+            }
+        }
+    }
+
+    /// <summary>A CI that has never been given a value for the field is not a match for any value.</summary>
+    [Fact]
+    public async Task ListCis_FilteringByACustomField_ExcludesCisThatHaveNoValueForIt()
+    {
+        var marker = Guid.NewGuid().ToString("N")[..8];
+        var field = await AddSelectFieldAsync(CiType.Hardware, $"kind_{marker}", "Kind", "Laptop");
+        try
+        {
+            await CreateCiAsync(CiType.Hardware, $"{marker}-untagged",
+                new() { ["manufacturer"] = "Dell", ["model"] = "Latitude" });
+
+            using var request = Authenticated(
+                HttpMethod.Get, $"/api/cis?type=Hardware&search={marker}&customField={field.Id}:Laptop");
+            using var response = await _client!.SendAsync(request);
+            var page = await response.Content.ReadFromJsonAsync<CiPageDto>();
+
+            Assert.Empty(page!.Items);
+        }
+        finally
+        {
+            using var cleanup = Authenticated(HttpMethod.Delete, $"/api/ci-custom-fields/{field.Id}", "Admin");
+            await _client!.SendAsync(cleanup);
+        }
+    }
+
+    /// <summary>FAILURE PATH: a malformed filter is a 400, not a silently ignored parameter.</summary>
+    [Theory]
+    [InlineData("not-a-guid:Laptop")]
+    [InlineData("Laptop")]
+    [InlineData(":Laptop")]
+    public async Task ListCis_WithAMalformedCustomFieldFilter_ReturnsBadRequest(string token)
+    {
+        using var request = Authenticated(HttpMethod.Get, $"/api/cis?customField={token}");
+        using var response = await _client!.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    /// <summary>
+    /// Adding an option strands nothing: values are stored against the field's id, not its text, so
+    /// everything already recorded keeps its meaning. This is the edit people actually want.
+    /// </summary>
+    [Fact]
+    public async Task UpdateCustomField_AddingAnOption_IsAllowedAndKeepsExistingValues()
+    {
+        var marker = Guid.NewGuid().ToString("N")[..8];
+        var field = await AddSelectFieldAsync(CiType.Hardware, $"kind_{marker}", "Kind", "Laptop");
+        try
+        {
+            var ci = await CreateCiAsync(CiType.Hardware, $"{marker}-laptop",
+                new() { ["manufacturer"] = "Dell", ["model"] = "Latitude" },
+                customFields: new() { [field.Key] = "Laptop" });
+
+            using var request = Authenticated(HttpMethod.Put, $"/api/ci-custom-fields/{field.Id}", "Admin");
+            request.Content = JsonContent.Create(new
+            {
+                label = "Hardware kind",
+                isRequired = false,
+                options = new[] { "Laptop", "Desktop", "Printer" },
+                sortOrder = 0,
+            });
+            using var response = await _client!.SendAsync(request);
+            var updated = await response.Content.ReadFromJsonAsync<CiCustomFieldDto>();
+
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            Assert.Equal("Hardware kind", updated!.Label);
+            Assert.Equal(["Laptop", "Desktop", "Printer"], updated.Options);
+
+            // The CI that was already a Laptop is untouched and still says so.
+            using var read = Authenticated(HttpMethod.Get, $"/api/cis/{ci.Id}");
+            using var readResponse = await _client.SendAsync(read);
+            var fetched = await readResponse.Content.ReadFromJsonAsync<CiDto>();
+            Assert.Equal("Laptop", fetched!.CustomFields.Single(value => value.Key == field.Key).Value);
+        }
+        finally
+        {
+            using var cleanup = Authenticated(HttpMethod.Delete, $"/api/ci-custom-fields/{field.Id}", "Admin");
+            await _client!.SendAsync(cleanup);
+        }
+    }
+
+    /// <summary>
+    /// FAILURE PATH: removing an option that CIs still hold would leave them failing validation on
+    /// their next edit, for a field nobody touched. Refused, and the refusal says how many.
+    /// </summary>
+    [Fact]
+    public async Task UpdateCustomField_RemovingAnOptionCisStillHold_IsRefused()
+    {
+        var marker = Guid.NewGuid().ToString("N")[..8];
+        var field = await AddSelectFieldAsync(CiType.Hardware, $"kind_{marker}", "Kind", "Laptop", "Printer");
+        try
+        {
+            foreach (var name in new[] { "printer-a", "printer-b" })
+            {
+                await CreateCiAsync(CiType.Hardware, $"{marker}-{name}",
+                    new() { ["manufacturer"] = "HP", ["model"] = "LaserJet" },
+                    customFields: new() { [field.Key] = "Printer" });
+            }
+
+            using var request = Authenticated(HttpMethod.Put, $"/api/ci-custom-fields/{field.Id}", "Admin");
+            request.Content = JsonContent.Create(new
+            {
+                label = "Kind",
+                isRequired = false,
+                options = new[] { "Laptop" },
+                sortOrder = 0,
+            });
+            using var response = await _client!.SendAsync(request);
+            var problem = await response.Content.ReadAsStringAsync();
+
+            Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+            Assert.Contains("2 on 'Printer'", problem, StringComparison.Ordinal);
+        }
+        finally
+        {
+            using var cleanup = Authenticated(HttpMethod.Delete, $"/api/ci-custom-fields/{field.Id}", "Admin");
+            await _client!.SendAsync(cleanup);
+        }
+    }
+
+    /// <summary>An option nothing is recorded as is free to go — the guard is about data, not history.</summary>
+    [Fact]
+    public async Task UpdateCustomField_RemovingAnUnusedOption_IsAllowed()
+    {
+        var marker = Guid.NewGuid().ToString("N")[..8];
+        var field = await AddSelectFieldAsync(CiType.Hardware, $"kind_{marker}", "Kind", "Laptop", "Fax");
+        try
+        {
+            using var request = Authenticated(HttpMethod.Put, $"/api/ci-custom-fields/{field.Id}", "Admin");
+            request.Content = JsonContent.Create(new
+            {
+                label = "Kind",
+                isRequired = false,
+                options = new[] { "Laptop" },
+                sortOrder = 0,
+            });
+            using var response = await _client!.SendAsync(request);
+            var updated = await response.Content.ReadFromJsonAsync<CiCustomFieldDto>();
+
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            Assert.Equal(["Laptop"], updated!.Options);
+        }
+        finally
+        {
+            using var cleanup = Authenticated(HttpMethod.Delete, $"/api/ci-custom-fields/{field.Id}", "Admin");
+            await _client!.SendAsync(cleanup);
+        }
+    }
+
+    /// <summary>The counts are what let the dialog show what is removable before anybody clicks.</summary>
+    [Fact]
+    public async Task GetCustomFieldValueCounts_ReportsHowManyCisHoldEachOption()
+    {
+        var marker = Guid.NewGuid().ToString("N")[..8];
+        var field = await AddSelectFieldAsync(CiType.Hardware, $"kind_{marker}", "Kind", "Laptop", "Printer", "Fax");
+        try
+        {
+            await CreateCiAsync(CiType.Hardware, $"{marker}-a",
+                new() { ["manufacturer"] = "Dell", ["model"] = "Latitude" },
+                customFields: new() { [field.Key] = "Laptop" });
+            await CreateCiAsync(CiType.Hardware, $"{marker}-b",
+                new() { ["manufacturer"] = "Dell", ["model"] = "Latitude" },
+                customFields: new() { [field.Key] = "Laptop" });
+            await CreateCiAsync(CiType.Hardware, $"{marker}-c",
+                new() { ["manufacturer"] = "HP", ["model"] = "LaserJet" },
+                customFields: new() { [field.Key] = "Printer" });
+
+            using var request = Authenticated(
+                HttpMethod.Get, $"/api/ci-custom-fields/{field.Id}/value-counts", "Admin");
+            using var response = await _client!.SendAsync(request);
+            var counts = Assert.IsType<List<CiCustomFieldValueCountDto>>(
+                await response.Content.ReadFromJsonAsync<List<CiCustomFieldValueCountDto>>());
+
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            Assert.Equal(2, counts.Single(count => count.Value == "Laptop").CiCount);
+            Assert.Equal(1, counts.Single(count => count.Value == "Printer").CiCount);
+            // An option nothing is recorded as simply does not appear.
+            Assert.DoesNotContain(counts, count => count.Value == "Fax");
+        }
+        finally
+        {
+            using var cleanup = Authenticated(HttpMethod.Delete, $"/api/ci-custom-fields/{field.Id}", "Admin");
+            await _client!.SendAsync(cleanup);
+        }
+    }
+
+    /// <summary>FAILURE PATH: editing fields is administration, not a technician's job.</summary>
+    [Fact]
+    public async Task UpdateCustomField_AsATechnician_IsForbidden()
+    {
+        using var request = Authenticated(
+            HttpMethod.Put, $"/api/ci-custom-fields/{Guid.NewGuid()}", "Technician");
+        request.Content = JsonContent.Create(new { label = "Nope", isRequired = false, sortOrder = 0 });
+
+        using var response = await _client!.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+    }
+
     private async Task<CiDto> CreateCiAsync(
         CiType type,
         string name,
@@ -410,6 +676,27 @@ public sealed class CiApiIntegrationTests : IAsyncLifetime
         return Assert.IsType<CiCustomFieldDto>(await response.Content.ReadFromJsonAsync<CiCustomFieldDto>());
     }
 
+    private async Task<CiCustomFieldDto> AddSelectFieldAsync(
+        CiType ciType,
+        string key,
+        string label,
+        params string[] options)
+    {
+        using var request = Authenticated(HttpMethod.Post, "/api/ci-custom-fields", "Admin");
+        request.Content = JsonContent.Create(new
+        {
+            ciType = ciType.ToString(),
+            key,
+            label,
+            type = "Select",
+            isRequired = false,
+            options,
+        });
+        using var response = await _client!.SendAsync(request);
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        return Assert.IsType<CiCustomFieldDto>(await response.Content.ReadFromJsonAsync<CiCustomFieldDto>());
+    }
+
     private static HttpRequestMessage Authenticated(HttpMethod method, string uri, string role = "Technician")
     {
         var request = new HttpRequestMessage(method, uri);
@@ -430,9 +717,13 @@ public sealed class CiApiIntegrationTests : IAsyncLifetime
 
     private sealed record CiCustomFieldValueDto(Guid FieldId, string Key, string Label, string Type, string Value);
 
+    private sealed record CiCustomFieldValueCountDto(string Value, int CiCount);
+
     private sealed record CiPageDto(List<CiDto> Items, int Total, int Page, int PageSize);
 
-    private sealed record CiCustomFieldDto(Guid Id, string CiType, string Key, string Label, string Type, bool IsRequired);
+    private sealed record CiCustomFieldDto(
+        Guid Id, string CiType, string Key, string Label, string Type, bool IsRequired,
+        List<string> Options);
 
     private sealed record CiAttributeDto(string Key, string Label, string Kind, bool IsRequired);
 

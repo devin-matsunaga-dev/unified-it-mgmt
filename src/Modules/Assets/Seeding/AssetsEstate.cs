@@ -155,6 +155,10 @@ public static class AssetsEstate
     /// </summary>
     public static readonly IReadOnlyList<CiCustomFieldSeed> CustomFields =
     [
+        // The runtime stand-in for a hardware subtype: CiType stops at "Hardware", and this is how a
+        // laptop says it is not a printer. Seeded so a fresh estate can be filtered on it immediately.
+        new("hardware_type", CiType.Hardware, "Hardware type", CiCustomFieldType.Select,
+            ["Laptop", "Desktop", "Printer", "Monitor", "Other"], 0),
         new("purchase_order", CiType.Hardware, "Purchase order", CiCustomFieldType.Text, [], 1),
         new("backup_schedule", CiType.Server, "Backup schedule", CiCustomFieldType.Select,
             ["Nightly", "Weekly", "None"], 1),
@@ -361,22 +365,26 @@ public static class AssetsEstate
         Hardware("hw-ws-01", "Workstation — Manager One", "Desk workstation.", "Dell", "OptiPlex 7020") with
             { AssetTag = "WS-0001", SerialNumber = "5CG4102001", OwnerUsername = "manager1",
               PurchasedDaysAgo = 450, WarrantyInDays = 640, AgeDays = 450,
-              CustomFieldValues = new Dictionary<string, string> { ["purchase_order"] = "PO-2025-0004" } },
+              CustomFieldValues = new Dictionary<string, string>
+                { ["hardware_type"] = "Desktop", ["purchase_order"] = "PO-2025-0004" } },
         Hardware("hw-ws-02", "Workstation — retired", "Desk workstation withdrawn from service after a hardware fault.",
                  "Dell", "OptiPlex 5090") with
             { State = CiLifecycleState.Retired, AssetTag = "WS-0002", SerialNumber = "5CG4102002",
               PreviousOwnerUsername = "manager2", SiteCode = "BR1", DepartmentCode = "FIN",
               PurchasedDaysAgo = 1_650, WarrantyInDays = -190, AgeDays = 1_650,
-              CustomFieldValues = new Dictionary<string, string> { ["purchase_order"] = "PO-2022-0311" } },
+              CustomFieldValues = new Dictionary<string, string>
+                { ["hardware_type"] = "Desktop", ["purchase_order"] = "PO-2022-0311" } },
         Hardware("hw-pr-01", "HQ floor 1 printer", "Shared multifunction printer by the ground floor kitchen.",
                  "HP", "LaserJet E60155") with
             { AssetTag = "PR-0001", SerialNumber = "CNB4103001", SiteCode = "HQ", DepartmentCode = "OPS",
-              PurchasedDaysAgo = 610, WarrantyInDays = 150, AgeDays = 610 },
+              PurchasedDaysAgo = 610, WarrantyInDays = 150, AgeDays = 610,
+              CustomFieldValues = new Dictionary<string, string> { ["hardware_type"] = "Printer" } },
         Hardware("hw-pr-02", "Branch printer — disposed", "Branch multifunction printer, scrapped after the paper feed failed.",
                  "HP", "LaserJet E50145") with
             { State = CiLifecycleState.Disposed, AssetTag = "PR-0002", SerialNumber = "CNB4103002",
               SiteCode = "BR1", DepartmentCode = "OPS",
-              PurchasedDaysAgo = 1_800, WarrantyInDays = -350, AgeDays = 1_800 },
+              PurchasedDaysAgo = 1_800, WarrantyInDays = -350, AgeDays = 1_800,
+              CustomFieldValues = new Dictionary<string, string> { ["hardware_type"] = "Printer" } },
     ];
 
     /// <summary>
@@ -528,6 +536,7 @@ public static class AssetsEstate
             AgeDays = purchasedDaysAgo ?? 30,
             CustomFieldValues = new Dictionary<string, string>(StringComparer.Ordinal)
             {
+                ["hardware_type"] = "Laptop",
                 ["purchase_order"] = purchaseOrder,
             },
         };

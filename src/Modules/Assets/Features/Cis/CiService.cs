@@ -44,6 +44,16 @@ public sealed class CiService(
             };
         }
 
+        foreach (var constraint in request.CustomFields ?? [])
+        {
+            // Captured per iteration: a closure over the loop variable would leave every predicate
+            // pointing at the last constraint, and the list would silently narrow on one field.
+            var fieldId = constraint.FieldId;
+            var value = constraint.Value;
+            query = query.Where(ci => ci.CustomFieldValues
+                .Any(item => item.FieldId == fieldId && item.Value == value));
+        }
+
         if (request.IsActive is not null)
         {
             query = query.Where(ci => ci.IsActive == request.IsActive);
@@ -371,6 +381,87 @@ public sealed class CiService(
         return new(CiOutcome.Success, response);
     }
 
+    public async Task<CiCustomFieldResult> UpdateFieldAsync(
+        Guid fieldId,
+        UpdateCiCustomFieldRequest request,
+        ClaimsPrincipal actor,
+        CancellationToken cancellationToken)
+    {
+        var field = await dbContext.CiCustomFields
+            .SingleOrDefaultAsync(item => item.Id == fieldId, cancellationToken);
+        if (field is null)
+        {
+            return new(CiOutcome.NotFound);
+        }
+
+        var options = field.Type == CiCustomFieldType.Select
+            ? (request.Options ?? []).Select(option => option.Trim()).Where(option => option.Length > 0).ToList()
+            : [];
+
+        // Adding an option strands nothing — values are stored against the field's id, not its text.
+        // Removing one does: CiCustomFieldValueBinder validates every Select value on every CI write,
+        // and the CI form submits the whole set, so a CI still holding a removed option would fail
+        // validation on its next edit for a field nobody touched. Refuse instead, and say how many.
+        if (field.Type == CiCustomFieldType.Select)
+        {
+            var kept = options.ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var removed = field.Options.Where(option => !kept.Contains(option)).ToArray();
+            if (removed.Length > 0)
+            {
+                var counts = await ValueCountsAsync(fieldId, cancellationToken);
+                var stranded = counts
+                    .Where(count => removed.Contains(count.Value, StringComparer.OrdinalIgnoreCase))
+                    .ToArray();
+                if (stranded.Length > 0)
+                {
+                    var detail = string.Join(
+                        "; ",
+                        stranded.Select(count => $"{count.CiCount} on '{count.Value}'"));
+                    return new(
+                        CiOutcome.InUse,
+                        Error: $"Configuration items still hold options you are removing ({detail}). Change those first.");
+                }
+            }
+        }
+
+        var before = Map(field);
+        field.Label = request.Label.Trim();
+        field.IsRequired = request.IsRequired;
+        field.SortOrder = request.SortOrder;
+        field.Options = options;
+        await dbContext.SaveChangesAsync(cancellationToken);
+
+        var after = Map(field);
+        await auditService.WriteAsync(
+            actor, "Updated", "CiCustomField", field.Id.ToString(), before, after, cancellationToken);
+        return new(CiOutcome.Success, after);
+    }
+
+    public async Task<IReadOnlyList<CiCustomFieldValueCount>> GetFieldValueCountsAsync(
+        Guid fieldId,
+        CancellationToken cancellationToken) =>
+        await ValueCountsAsync(fieldId, cancellationToken);
+
+    /// <summary>
+    /// Grouped into an anonymous type and mapped afterwards: EF cannot translate a GroupBy that
+    /// projects straight into a record constructor, and the alternative is the whole values table.
+    /// </summary>
+    private async Task<IReadOnlyList<CiCustomFieldValueCount>> ValueCountsAsync(
+        Guid fieldId,
+        CancellationToken cancellationToken)
+    {
+        var rows = await dbContext.CiCustomFieldValues
+            .Where(value => value.FieldId == fieldId)
+            .GroupBy(value => value.Value)
+            .Select(group => new { Value = group.Key, CiCount = group.Count() })
+            .ToListAsync(cancellationToken);
+
+        return [.. rows
+            .Select(row => new CiCustomFieldValueCount(row.Value, row.CiCount))
+            .OrderByDescending(count => count.CiCount)
+            .ThenBy(count => count.Value, StringComparer.OrdinalIgnoreCase)];
+    }
+
     public async Task<CiOutcome> DeleteFieldAsync(
         Guid fieldId,
         ClaimsPrincipal actor,
@@ -500,13 +591,17 @@ public sealed class CiService(
             ["cpuCores"] = server.CpuCores.ToString(CultureInfo.InvariantCulture),
             ["ramGb"] = server.RamGb.ToString(CultureInfo.InvariantCulture),
         },
+        // Role is omitted rather than reported as an empty string: it is the one optional attribute
+        // in the schema, and "present but blank" is not the same claim as "not recorded".
         NetworkDeviceCi network => new Dictionary<string, string>(StringComparer.Ordinal)
         {
             ["managementIp"] = network.ManagementIp,
             ["vendor"] = network.Vendor,
             ["portCount"] = network.PortCount.ToString(CultureInfo.InvariantCulture),
-            ["role"] = network.Role ?? string.Empty,
-        },
+        }.Concat(network.Role is null
+                ? []
+                : new[] { new KeyValuePair<string, string>("role", network.Role) })
+            .ToDictionary(StringComparer.Ordinal),
         SoftwareCi software => new Dictionary<string, string>(StringComparer.Ordinal)
         {
             ["vendor"] = software.Vendor,

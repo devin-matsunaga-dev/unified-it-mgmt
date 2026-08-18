@@ -24,6 +24,13 @@ public sealed record UpdateCiRequest(
     IReadOnlyDictionary<string, string?>? Attributes = null,
     IReadOnlyDictionary<string, string?>? CustomFields = null);
 
+/// <summary>
+/// One "this CI's value for that field is exactly this" constraint. Several are AND-ed, because a
+/// type may carry more than one Select field and narrowing by two of them is the point of having
+/// both.
+/// </summary>
+public sealed record CiCustomFieldFilter(Guid FieldId, string Value);
+
 public sealed record CiListRequest(
     CiType? Type = null,
     string? Search = null,
@@ -35,7 +42,12 @@ public sealed record CiListRequest(
     Guid? ContractId = null,
     int? WarrantyExpiringWithinDays = null,
     int Page = 1,
-    int PageSize = 25);
+    int PageSize = 25,
+    /// <summary>
+    /// Narrows on user-defined field values — the runtime equivalent of a subtype, which is how a
+    /// Hardware CI says it is a laptop rather than a printer. Empty means no such narrowing.
+    /// </summary>
+    IReadOnlyList<CiCustomFieldFilter>? CustomFields = null);
 
 public sealed record CiCustomFieldValueResponse(
     Guid FieldId,
@@ -90,6 +102,21 @@ public sealed record CreateCiCustomFieldRequest(
     bool IsRequired,
     IReadOnlyList<string>? Options = null,
     int SortOrder = 0);
+
+/// <summary>
+/// What an edit may change. The key and the type are deliberately absent: the key is the name every
+/// payload and every seeder uses for this field, and the type decides how stored values are read —
+/// changing either is a delete and a re-create, and saying so is more honest than silently
+/// reinterpreting rows.
+/// </summary>
+public sealed record UpdateCiCustomFieldRequest(
+    string Label,
+    bool IsRequired,
+    IReadOnlyList<string>? Options = null,
+    int SortOrder = 0);
+
+/// <summary>How many CIs hold each value of a field, so an edit can see what it is about to strand.</summary>
+public sealed record CiCustomFieldValueCount(string Value, int CiCount);
 
 public sealed record CiCustomFieldResponse(
     Guid Id,

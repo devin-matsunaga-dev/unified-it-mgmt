@@ -16,13 +16,23 @@ public static class CiEndpoints
 
         group.MapGet("/", async (CiType? type, string? search, bool? isActive, CiLifecycleState? lifecycleState,
                 Guid? ownerUserId, Guid? departmentId, Guid? siteId, Guid? contractId,
-                int? warrantyExpiringWithinDays, int? page, int? pageSize,
+                int? warrantyExpiringWithinDays, int? page, int? pageSize, string[]? customField,
                 ICiService service, CancellationToken cancellationToken) =>
-            Results.Ok(await service.ListAsync(
+        {
+            if (!TryParseCustomFields(customField, out var customFields))
+            {
+                return Results.ValidationProblem(new Dictionary<string, string[]>
+                {
+                    ["customField"] = ["Each value must read '<fieldId>:<value>' with a valid field id."],
+                });
+            }
+
+            return Results.Ok(await service.ListAsync(
                 new CiListRequest(
                     type, search, isActive, lifecycleState, ownerUserId, departmentId, siteId, contractId,
-                    warrantyExpiringWithinDays, page ?? 1, pageSize ?? 25),
-                cancellationToken)));
+                    warrantyExpiringWithinDays, page ?? 1, pageSize ?? 25, customFields),
+                cancellationToken));
+        });
 
         group.MapGet("/{id:guid}", async (Guid id, ICiService service, CancellationToken cancellationToken) =>
             await service.GetAsync(id, cancellationToken) is { } ci
@@ -109,6 +119,30 @@ public static class CiEndpoints
             };
         });
 
+        admin.MapPut("/{fieldId:guid}", async (Guid fieldId, UpdateCiCustomFieldRequest request,
+            ClaimsPrincipal user, ICiService service, CancellationToken cancellationToken) =>
+        {
+            var validation = await new UpdateCiCustomFieldValidator().ValidateAsync(request, cancellationToken);
+            if (!validation.IsValid) return Results.ValidationProblem(validation.ToDictionary());
+            var result = await service.UpdateFieldAsync(fieldId, request, user, cancellationToken);
+            return result.Outcome switch
+            {
+                CiOutcome.Success => Results.Ok(result.Field),
+                CiOutcome.NotFound => Results.Problem(
+                    statusCode: StatusCodes.Status404NotFound, title: "Custom field not found."),
+                CiOutcome.InUse => Results.Problem(
+                    statusCode: StatusCodes.Status409Conflict,
+                    title: "An option is still in use.",
+                    detail: result.Error),
+                var outcome => throw new InvalidOperationException($"Unknown CI outcome '{outcome}'."),
+            };
+        });
+
+        // Read by the edit dialog only, so the schema endpoint the asset list polls stays a plain read.
+        admin.MapGet("/{fieldId:guid}/value-counts", async (Guid fieldId, ICiService service,
+                CancellationToken cancellationToken) =>
+            Results.Ok(await service.GetFieldValueCountsAsync(fieldId, cancellationToken)));
+
         admin.MapDelete("/{fieldId:guid}", async (Guid fieldId, ClaimsPrincipal user, ICiService service,
             CancellationToken cancellationToken) =>
             await service.DeleteFieldAsync(fieldId, user, cancellationToken) switch
@@ -146,6 +180,53 @@ public static class CiEndpoints
             RuleFor(request => request.AssetTag).MaximumLength(64);
             RuleFor(request => request.SerialNumber).MaximumLength(128);
             RuleFor(request => request.Description).MaximumLength(2_000);
+        }
+    }
+
+    /// <summary>
+    /// Reads repeated <c>?customField=&lt;fieldId&gt;:&lt;value&gt;</c> parameters.
+    /// <para>
+    /// Split on the FIRST colon only: a field id never contains one, but an option value may well —
+    /// "Laptop: 14 inch" is a legitimate thing for somebody to have typed into the options list.
+    /// </para>
+    /// </summary>
+    private static bool TryParseCustomFields(string[]? raw, out IReadOnlyList<CiCustomFieldFilter>? parsed)
+    {
+        parsed = null;
+        if (raw is null || raw.Length == 0)
+        {
+            return true;
+        }
+
+        var filters = new List<CiCustomFieldFilter>(raw.Length);
+        foreach (var token in raw)
+        {
+            var separator = token.IndexOf(':');
+            if (separator <= 0 || separator == token.Length - 1)
+            {
+                return false;
+            }
+
+            if (!Guid.TryParse(token[..separator], out var fieldId))
+            {
+                return false;
+            }
+
+            filters.Add(new CiCustomFieldFilter(fieldId, token[(separator + 1)..]));
+        }
+
+        parsed = filters;
+        return true;
+    }
+
+    private sealed class UpdateCiCustomFieldValidator : AbstractValidator<UpdateCiCustomFieldRequest>
+    {
+        public UpdateCiCustomFieldValidator()
+        {
+            RuleFor(request => request.Label).NotEmpty().MaximumLength(100);
+            RuleFor(request => request.SortOrder).InclusiveBetween(0, 10_000);
+            RuleForEach(request => request.Options).NotEmpty().MaximumLength(100)
+                .When(request => request.Options is not null);
         }
     }
 

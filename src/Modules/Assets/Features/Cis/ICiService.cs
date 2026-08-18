@@ -27,5 +27,16 @@ public interface ICiService
         ClaimsPrincipal actor,
         CancellationToken cancellationToken);
 
+    Task<CiCustomFieldResult> UpdateFieldAsync(
+        Guid fieldId,
+        UpdateCiCustomFieldRequest request,
+        ClaimsPrincipal actor,
+        CancellationToken cancellationToken);
+
+    /// <summary>How many CIs hold each value of this field. Empty for a field nothing has been set to.</summary>
+    Task<IReadOnlyList<CiCustomFieldValueCount>> GetFieldValueCountsAsync(
+        Guid fieldId,
+        CancellationToken cancellationToken);
+
     Task<CiOutcome> DeleteFieldAsync(Guid fieldId, ClaimsPrincipal actor, CancellationToken cancellationToken);
 }

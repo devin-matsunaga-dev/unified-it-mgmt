@@ -1,7 +1,8 @@
 import { useQuery } from '@tanstack/react-query'
-import { Building2, ChevronRight, Tags } from 'lucide-react'
+import { Building2, ChevronRight, ListPlus, Tags } from 'lucide-react'
 import type { ComponentType } from 'react'
 import { Link } from 'react-router-dom'
+import { assetsApi } from '../../api/assets'
 import { directoryApi } from '../../api/directory'
 import { helpdeskApi } from '../../api/helpdesk'
 import { totalCount } from './categoryTree'
@@ -23,7 +24,16 @@ export function SettingsPage() {
     meta: { suppressErrorToast: true },
   })
 
+  const schemas = useQuery({
+    queryKey: ['ci-type-schemas'],
+    queryFn: assetsApi.listTypeSchemas,
+    meta: { suppressErrorToast: true },
+  })
+
   const count = categories.data ? totalCount(categories.data) : null
+  const fieldCount = schemas.data
+    ? schemas.data.reduce((total, schema) => total + schema.customFields.length, 0)
+    : null
   const orgCount = departments.data?.length ?? null
 
   return <div className="space-y-6">
@@ -46,6 +56,13 @@ export function SettingsPage() {
         title="Departments and locations"
         description="The parts of the business, the sites they operate at, and which belongs where."
         detail={orgCount === null ? 'Loading…' : `${orgCount} ${orgCount === 1 ? 'department' : 'departments'}`} />
+
+      <SettingsCard
+        to="/admin/settings/asset-fields"
+        icon={ListPlus}
+        title="Asset fields"
+        description="Extra fields each kind of CI carries — and how hardware is split into laptops, desktops and printers."
+        detail={fieldCount === null ? 'Loading…' : `${fieldCount} ${fieldCount === 1 ? 'field' : 'fields'}`} />
     </div>
   </div>
 }

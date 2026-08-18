@@ -1,6 +1,6 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { ArrowDown, ArrowUp, ArrowUpDown, ChevronLeft, ChevronRight, Layers, Pencil, Plus, QrCode, Search, Server, SlidersHorizontal, Upload } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { toast } from 'sonner'
 import { ApiError } from '../../api/client'
@@ -40,6 +40,18 @@ export function CiListPage() {
   // Always refetched: a cached schema can omit a field an admin has since made required, producing
   // a 400 the form cannot attribute to any input.
   const schemas = useQuery({ queryKey: ['ci-type-schemas'], queryFn: assetsApi.listTypeSchemas, staleTime: 0, refetchOnMount: 'always' })
+
+  /**
+   * The "choose one" fields of the selected type, which become the sub-filters beside it. Every
+   * Select field gets one rather than a single privileged "category": nothing in the model makes one
+   * field special, and a type with two of them is narrowed by both.
+   */
+  const subFilters = useMemo(
+    () => filter.type === undefined
+      ? []
+      : (schemas.data?.find((schema) => schema.type === filter.type)?.customFields ?? [])
+        .filter((field) => field.type === 'Select' && field.options.length > 0),
+    [schemas.data, filter.type])
   const lifecycleStates = useQuery({ queryKey: ['ci-lifecycle-states'], queryFn: assetsApi.listLifecycleStates })
   const owners = useQuery({ queryKey: ['directory', 'users'], queryFn: directoryApi.listUsers })
 
@@ -102,10 +114,36 @@ export function CiListPage() {
           <Search size={17} /><span className="sr-only">Search configuration items</span>
           <input value={search} onChange={(event) => setSearch(event.target.value)} className="w-full bg-transparent text-sm text-slate-900 outline-none dark:text-slate-100" placeholder="Search names, asset tags, and serials…" />
         </label>
-        <select aria-label="Filter by type" className="input w-auto min-w-40" value={filter.type ?? ''} onChange={(event) => setFilter((current) => ({ ...current, type: (event.target.value || undefined) as CiType | undefined, page: 1 }))}>
+        <select aria-label="Filter by type" className="input w-auto min-w-40" value={filter.type ?? ''}
+          onChange={(event) => setFilter((current) => ({
+            ...current,
+            type: (event.target.value || undefined) as CiType | undefined,
+            // The sub-filters belong to the type being left, so they go with it. Keeping them would
+            // silently narrow the new type by a field it does not have and return nothing.
+            customFields: undefined,
+            page: 1,
+          }))}>
           <option value="">All types</option>
           {ciTypes.map((type) => <option key={type} value={type}>{ciTypeLabel(type)}</option>)}
         </select>
+
+        {/*
+          * The sub-filters: one per "choose one" field the selected type carries. They appear only
+          * once a type is chosen, because a field belongs to a type and "All types" has none.
+          */}
+        {subFilters.map((field) => <select key={field.id}
+          aria-label={`Filter by ${field.label}`}
+          className="input w-auto min-w-40"
+          value={filter.customFields?.find((item) => item.fieldId === field.id)?.value ?? ''}
+          onChange={(event) => setFilter((current) => {
+            const rest = (current.customFields ?? []).filter((item) => item.fieldId !== field.id)
+            const chosen = event.target.value
+            const next = chosen ? [...rest, { fieldId: field.id, value: chosen }] : rest
+            return { ...current, customFields: next.length > 0 ? next : undefined, page: 1 }
+          })}>
+          <option value="">All {field.label.toLowerCase()}</option>
+          {field.options.map((option) => <option key={option} value={option}>{option}</option>)}
+        </select>)}
         <select aria-label="Filter by lifecycle state" className="input w-auto min-w-40" value={filter.lifecycleState ?? ''} onChange={(event) => setFilter((current) => ({ ...current, lifecycleState: (event.target.value || undefined) as CiLifecycleState | undefined, page: 1 }))}>
           <option value="">All lifecycle states</option>
           {ciLifecycleStates.map((state) => <option key={state} value={state}>{ciLifecycleLabel(state)}</option>)}

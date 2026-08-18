@@ -375,4 +375,77 @@ describe('CiListPage', () => {
       expect((await (await tiles()).findAllByText('Unavailable')).length).toBe(4)
     })
   })
+
+  /**
+   * §The sub-filter: CiType stops at "Hardware", so the Select field an admin defined is what says
+   * laptop or printer. It appears only once a type is chosen, because a field belongs to a type.
+   */
+  it('reveals a sub-filter for each choose-one field once a type is picked', async () => {
+    vi.mocked(assetsApi.listTypeSchemas).mockResolvedValue([
+      {
+        ...schemas[0],
+        customFields: [
+          {
+            id: 'field-kind', ciType: 'Hardware', key: 'hardware_type', label: 'Hardware type',
+            type: 'Select', isRequired: false, options: ['Laptop', 'Desktop', 'Printer'], sortOrder: 0,
+          },
+          {
+            id: 'field-po', ciType: 'Hardware', key: 'purchase_order', label: 'Purchase order',
+            type: 'Text', isRequired: false, options: [], sortOrder: 1,
+          },
+        ],
+      },
+      schemas[1],
+    ])
+    const user = userEvent.setup()
+    renderPage()
+    await screen.findByLabelText('Filter by type')
+
+    // Nothing until a type is chosen — "All types" has no fields of its own.
+    expect(screen.queryByLabelText('Filter by Hardware type')).not.toBeInTheDocument()
+
+    await user.selectOptions(screen.getByLabelText('Filter by type'), 'Hardware')
+
+    const sub = await screen.findByLabelText('Filter by Hardware type')
+    expect([...sub.querySelectorAll('option')].map((option) => option.textContent))
+      .toEqual(['All hardware type', 'Laptop', 'Desktop', 'Printer'])
+    // A Text field is not a sub-filter: there is nothing to choose from.
+    expect(screen.queryByLabelText('Filter by Purchase order')).not.toBeInTheDocument()
+
+    await user.selectOptions(sub, 'Laptop')
+
+    await waitFor(() => expect(assetsApi.listCis).toHaveBeenLastCalledWith(
+      expect.objectContaining({ customFields: [{ fieldId: 'field-kind', value: 'Laptop' }] })))
+  })
+
+  /**
+   * The sub-filters belong to the type being left. Carrying them over would narrow the new type by a
+   * field it does not have and quietly return nothing.
+   */
+  it('drops the sub-filter when the type changes', async () => {
+    vi.mocked(assetsApi.listTypeSchemas).mockResolvedValue([
+      {
+        ...schemas[0],
+        customFields: [{
+          id: 'field-kind', ciType: 'Hardware', key: 'hardware_type', label: 'Hardware type',
+          type: 'Select', isRequired: false, options: ['Laptop'], sortOrder: 0,
+        }],
+      },
+      schemas[1],
+    ])
+    const user = userEvent.setup()
+    renderPage()
+    await screen.findByLabelText('Filter by type')
+
+    await user.selectOptions(screen.getByLabelText('Filter by type'), 'Hardware')
+    await user.selectOptions(await screen.findByLabelText('Filter by Hardware type'), 'Laptop')
+    await waitFor(() => expect(assetsApi.listCis).toHaveBeenLastCalledWith(
+      expect.objectContaining({ customFields: [{ fieldId: 'field-kind', value: 'Laptop' }] })))
+
+    await user.selectOptions(screen.getByLabelText('Filter by type'), 'Server')
+
+    await waitFor(() => expect(assetsApi.listCis).toHaveBeenLastCalledWith(
+      expect.objectContaining({ type: 'Server', customFields: undefined })))
+    expect(screen.queryByLabelText('Filter by Hardware type')).not.toBeInTheDocument()
+  })
 })
