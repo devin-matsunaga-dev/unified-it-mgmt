@@ -42,7 +42,15 @@ public sealed record TicketResponse(
     DateTimeOffset UpdatedAt,
     Guid? CategoryId = null,
     string? CategoryName = null,
-    IReadOnlyList<TicketCustomFieldValueResponse>? CustomFields = null);
+    IReadOnlyList<TicketCustomFieldValueResponse>? CustomFields = null,
+    /// <summary>
+    /// The requester's department and location, resolved through Platform's directory at read time
+    /// rather than stored on the ticket. Derived, so it is always the truth about where the person
+    /// sits and there is nothing to keep in sync; null when the requester is not a directory user,
+    /// which an alert-raised or an emailed-in ticket often is not.
+    /// </summary>
+    string? RequesterDepartmentName = null,
+    string? RequesterSiteName = null);
 
 /// <summary>
 /// The ticket list filter. Doubles as the persisted payload of a saved view, so every member has to be

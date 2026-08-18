@@ -11,6 +11,7 @@ public sealed class PlatformDbContext(DbContextOptions<PlatformDbContext> option
     public DbSet<ConsumerDedupeEntry> ConsumerDedupeEntries => Set<ConsumerDedupeEntry>();
     public DbSet<Site> Sites => Set<Site>();
     public DbSet<Department> Departments => Set<Department>();
+    public DbSet<DepartmentSite> DepartmentSites => Set<DepartmentSite>();
     public DbSet<UserProfile> UserProfiles => Set<UserProfile>();
     public DbSet<NotificationChannel> NotificationChannels => Set<NotificationChannel>();
     public DbSet<NotificationRoutingRule> NotificationRoutingRules => Set<NotificationRoutingRule>();

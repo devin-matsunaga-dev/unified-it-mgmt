@@ -151,7 +151,8 @@ export function CiListPage() {
                   <td className="h-12 px-4 font-mono text-xs text-slate-500">{ci.assetTag ?? '—'}</td>
                   <td className="h-12 px-4 font-mono text-xs text-slate-500">{ci.serialNumber ?? '—'}</td>
                   <td className="h-12 px-4"><span className={`rounded-md px-2 py-0.5 text-xs font-medium ${ciLifecycleTone(ci.lifecycleState)}`}>{ciLifecycleLabel(ci.lifecycleState)}</span></td>
-                  <td className="h-12 px-4 text-slate-600 dark:text-slate-300">{ci.ownership.ownerName ?? ci.ownership.departmentName ?? '—'}</td>
+                  <td className="h-12 px-4 text-slate-600 dark:text-slate-300">{ci.ownership.ownerName ?? '—'}</td>
+                  <td className="h-12 px-4 text-slate-600 dark:text-slate-300">{ci.ownership.departmentName ?? '—'}</td>
                   <td className="h-12 px-4 text-slate-600 dark:text-slate-300">{ci.ownership.siteName ?? '—'}</td>
                   <td className="h-12 px-4"><StatePill isActive={ci.isActive} /></td>
                   <td className="h-12 px-4 text-right whitespace-nowrap">

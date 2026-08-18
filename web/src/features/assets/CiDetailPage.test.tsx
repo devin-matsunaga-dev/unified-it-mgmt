@@ -95,6 +95,8 @@ const ticket: Ticket = {
   urgency: 'High', impact: 'High', priority: 'Critical', status: 'InProgress', requesterId: 'enduser1',
   requesterName: 'End User One', queueId: null, queueName: null, assignedTechnicianId: 'technician1',
   createdAt: '2026-08-05T00:00:00Z', updatedAt: '2026-08-06T00:00:00Z', categoryId: null, categoryName: null, customFields: [],
+  requesterDepartmentName: null,
+  requesterSiteName: null,
 }
 
 const discoveryFacts: CiDiscoveryFacts = {

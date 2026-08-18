@@ -6,6 +6,7 @@ using MassTransit;
 using Microsoft.EntityFrameworkCore;
 using Modules.Helpdesk.Data;
 using Platform.Auditing;
+using Platform.Directory;
 using Platform.Notifications;
 using Platform.Search;
 using Modules.Helpdesk.Features.Sla;
@@ -18,7 +19,8 @@ public sealed class TicketService(
     IPublishEndpoint publishEndpoint,
     IAuditService auditService,
     ISlaService slaService,
-    INotificationService notificationService) : ITicketService
+    INotificationService notificationService,
+    IDirectoryService directoryService) : ITicketService
 {
     /// <summary>
     /// The text-search dictionary the generated tsvector columns are built with. One definition for the
@@ -136,7 +138,8 @@ public sealed class TicketService(
         CancellationToken cancellationToken)
     {
         var ticket = await VisibleTickets(actor).SingleOrDefaultAsync(item => item.Id == id, cancellationToken);
-        return ticket is null ? null : Map(ticket);
+        if (ticket is null) return null;
+        return (await WithRequesterPlaceAsync([Map(ticket)], cancellationToken))[0];
     }
 
     public async Task<TicketListResult> ListAsync(
@@ -236,7 +239,8 @@ public sealed class TicketService(
             .Skip((page - 1) * pageSize)
             .Take(pageSize)
             .ToListAsync(cancellationToken);
-        return new(new TicketPageResponse(tickets.Select(Map).ToList(), total, page, pageSize));
+        var mapped = await WithRequesterPlaceAsync([.. tickets.Select(Map)], cancellationToken);
+        return new(new TicketPageResponse(mapped, total, page, pageSize));
     }
 
     public async Task<TicketWriteResult> UpdateAsync(
@@ -438,6 +442,54 @@ public sealed class TicketService(
             .Include(ticket => ticket.CustomFieldValues).ThenInclude(value => value.Field)
             .AsQueryable();
         return IsEndUser(actor) ? query.Where(ticket => ticket.RequesterId == GetActorId(actor)) : query;
+    }
+
+    /// <summary>
+    /// Fills in each requester's department and location from Platform's directory.
+    /// <para>
+    /// The directory is read <b>once</b> for the whole page rather than per ticket, because a 25-row
+    /// list would otherwise be 25 round trips for two strings each.
+    /// </para>
+    /// <para>
+    /// The join is on username first and email second, which is the convention the rest of the app
+    /// already follows — <c>Ticket.RequesterId</c> holds the identity the helpdesk recorded, which is
+    /// the username for seeded and agent-raised tickets and the OIDC subject for a portal one. It is
+    /// deliberately not <c>UserProfile.Id</c>: Keycloak mints its own user ids, so the subject claim
+    /// matches no row in the directory. A requester who resolves to nobody simply has no place shown.
+    /// </para>
+    /// </summary>
+    private async Task<IReadOnlyList<TicketResponse>> WithRequesterPlaceAsync(
+        IReadOnlyList<TicketResponse> tickets,
+        CancellationToken cancellationToken)
+    {
+        if (tickets.Count == 0)
+        {
+            return tickets;
+        }
+
+        var users = await directoryService.ListUsersAsync(cancellationToken);
+        var byUsername = users
+            .GroupBy(user => user.Username, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(group => group.Key, group => group.First(), StringComparer.OrdinalIgnoreCase);
+        var byEmail = users
+            .Where(user => !string.IsNullOrWhiteSpace(user.Email))
+            .GroupBy(user => user.Email, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(group => group.Key, group => group.First(), StringComparer.OrdinalIgnoreCase);
+
+        return [.. tickets.Select(ticket =>
+        {
+            if (!byUsername.TryGetValue(ticket.RequesterId, out var user)
+                && !byEmail.TryGetValue(ticket.RequesterId, out user))
+            {
+                return ticket;
+            }
+
+            return ticket with
+            {
+                RequesterDepartmentName = user.DepartmentName,
+                RequesterSiteName = user.SiteName,
+            };
+        })];
     }
 
     private static bool IsEndUser(ClaimsPrincipal actor) => actor.IsInRole("EndUser");

@@ -11,7 +11,7 @@ vi.mock('../../api/helpdesk', async (original) => {
   return { ...actual, helpdeskApi: { ...actual.helpdeskApi, listTickets: vi.fn(), listQueues: vi.fn(), listCategories: vi.fn(), createTicket: vi.fn(), listViews: vi.fn(), createView: vi.fn(), updateView: vi.fn(), deleteView: vi.fn() } }
 })
 
-const ticket: Ticket = { id: 'ticket-1', number: 'INC-000001', title: 'VPN unavailable', description: 'Cannot connect', type: 'Incident', urgency: 'High', impact: 'Medium', priority: 'High', status: 'New', requesterId: 'requester-1', requesterName: 'Requester One', queueId: null, queueName: null, assignedTechnicianId: null, createdAt: '2026-08-07T00:00:00Z', updatedAt: '2026-08-07T01:00:00Z', categoryId: null, categoryName: null, customFields: [] }
+const ticket: Ticket = { id: 'ticket-1', number: 'INC-000001', title: 'VPN unavailable', description: 'Cannot connect', type: 'Incident', urgency: 'High', impact: 'Medium', priority: 'High', status: 'New', requesterId: 'requester-1', requesterName: 'Requester One', queueId: null, queueName: null, assignedTechnicianId: null, createdAt: '2026-08-07T00:00:00Z', updatedAt: '2026-08-07T01:00:00Z', categoryId: null, categoryName: null, customFields: [], requesterDepartmentName: null, requesterSiteName: null }
 
 const savedView: TicketView = { id: 'view-1', name: 'Unassigned high priority', ownerId: 'tech-1', ownerName: 'Technician One', isShared: true, isMine: false, filter: { priorities: ['High'], unassigned: true }, createdAt: '2026-08-07T00:00:00Z', updatedAt: '2026-08-07T00:00:00Z' }
 

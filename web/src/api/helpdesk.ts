@@ -65,6 +65,9 @@ export type Ticket = {
   categoryId: string | null
   categoryName: string | null
   customFields: TicketCustomFieldValue[]
+  /** Derived from the requester's directory record at read time; null when they are not a known user. */
+  requesterDepartmentName: string | null
+  requesterSiteName: string | null
 }
 
 export type TicketPage = { items: Ticket[]; total: number; page: number; pageSize: number }

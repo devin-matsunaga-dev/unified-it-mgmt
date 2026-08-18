@@ -21,6 +21,7 @@ using Modules.Assets.Features.Timeline;
 using Modules.Assets.Features.Topology;
 using Modules.Assets.Features.Dashboards;
 using Platform.Dashboards;
+using Platform.Directory;
 using Platform.Integration;
 using Platform.Search;
 using Quartz;
@@ -44,6 +45,8 @@ public static class AssetsServiceCollectionExtensions
         // WP-5.4. Assets answers about its own CIs; the merge happens in Platform, which cannot
         // see this module at all.
         services.AddScoped<ISearchSource, CiSearchSource>();
+        // Assets' answer to "may this department or location be deleted?" — see IDirectoryUsageSource.
+        services.AddScoped<IDirectoryUsageSource, CiDirectoryUsageSource>();
         // WP-5.5, on the same terms: the widget reads Assets' own compliance report through the
         // module's own service, and Platform composes it without seeing any of that.
         services.AddScoped<IDashboardWidget, LicenseComplianceWidget>();

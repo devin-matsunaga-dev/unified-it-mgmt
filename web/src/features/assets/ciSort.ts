@@ -1,7 +1,7 @@
 import { ciTypeLabel, type Ci } from '../../api/assets'
 import { ciLifecycleLabel, ciLifecycleStates } from './lifecycle'
 
-export type CiSortColumn = 'name' | 'type' | 'assetTag' | 'serialNumber' | 'lifecycleState' | 'owner' | 'site' | 'isActive'
+export type CiSortColumn = 'name' | 'type' | 'assetTag' | 'serialNumber' | 'lifecycleState' | 'owner' | 'department' | 'site' | 'isActive'
 
 export type CiSort = { column: CiSortColumn; desc: boolean }
 
@@ -11,6 +11,10 @@ export type CiSort = { column: CiSortColumn; desc: boolean }
  * Lifecycle is the exception: it sorts by position in the WP-2.2 state graph (Ordered → Disposed)
  * rather than alphabetically, because "Deployed, Disposed, In repair, In stock" is an ordering of
  * spellings, not of asset lives, and nobody reads a lifecycle column looking for the letter D.
+ *
+ * Owner used to fall back to the department when nobody held the asset. That fallback existed only
+ * because department had no column of its own; now that it has one, the fallback would print the same
+ * name in two adjacent cells, so owner sorts and reads as the owner alone.
  */
 const sortKeys: Record<CiSortColumn, (ci: Ci) => string | number | null> = {
   name: (ci) => ci.name,
@@ -18,7 +22,8 @@ const sortKeys: Record<CiSortColumn, (ci: Ci) => string | number | null> = {
   assetTag: (ci) => ci.assetTag,
   serialNumber: (ci) => ci.serialNumber,
   lifecycleState: (ci) => ciLifecycleStates.indexOf(ci.lifecycleState),
-  owner: (ci) => ci.ownership.ownerName ?? ci.ownership.departmentName,
+  owner: (ci) => ci.ownership.ownerName,
+  department: (ci) => ci.ownership.departmentName,
   site: (ci) => ci.ownership.siteName,
   isActive: (ci) => (ci.isActive ? 0 : 1),
 }
@@ -31,6 +36,7 @@ export const ciSortLabels: Record<CiSortColumn, string> = {
   serialNumber: 'Serial',
   lifecycleState: 'Lifecycle',
   owner: 'Owner',
+  department: 'Department',
   site: 'Location',
   isActive: 'State',
 }

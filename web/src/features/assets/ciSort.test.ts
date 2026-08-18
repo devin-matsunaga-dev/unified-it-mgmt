@@ -80,13 +80,15 @@ describe('sortCis', () => {
     expect(names(sortCis(tied, { column: 'type', desc: true }))).toEqual(['alpha', 'zeta'])
   })
 
-  it('sorts owner by the department when nobody holds the asset', () => {
+  it('sorts owner by the owner alone, leaving the department to its own column', () => {
     const owned = [
       ci({ id: '1', name: 'unowned', ownership: { ...base.ownership, departmentName: 'Zoology' } }),
       ci({ id: '2', name: 'owned', ownership: { ...base.ownership, ownerName: 'Ann Adams' } }),
     ]
 
+    // 'unowned' has no owner at all, so it sorts as a null and lands last regardless of its department.
     expect(names(sortCis(owned, { column: 'owner', desc: false }))).toEqual(['owned', 'unowned'])
+    expect(names(sortCis(owned, { column: 'department', desc: false }))).toEqual(['unowned', 'owned'])
   })
 })
 

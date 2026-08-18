@@ -36,6 +36,8 @@ const columns: ColumnDef<Ticket>[] = [
   { accessorKey: 'status', header: 'Status', cell: ({ getValue }) => <StatusPill status={getValue<string>()} /> },
   { accessorKey: 'priority', header: 'Priority', cell: ({ getValue }) => <PriorityPill priority={getValue<Ticket['priority']>()} /> },
   { accessorKey: 'categoryName', header: 'Category', cell: ({ getValue }) => getValue<string | null>() ?? 'Uncategorised' },
+  { accessorKey: 'requesterDepartmentName', header: 'Department', cell: ({ getValue }) => getValue<string | null>() ?? '—' },
+  { accessorKey: 'requesterSiteName', header: 'Location', cell: ({ getValue }) => getValue<string | null>() ?? '—' },
   { accessorKey: 'queueName', header: 'Queue', cell: ({ getValue }) => getValue<string | null>() ?? 'Unqueued' },
   { accessorKey: 'assignedTechnicianId', header: 'Assignee', cell: ({ getValue }) => getValue<string | null>() ?? 'Unassigned' },
   { accessorKey: 'updatedAt', header: 'Updated', cell: ({ getValue }) => <span className="whitespace-nowrap text-slate-500">{formatLocal(getValue<string>())}</span> },

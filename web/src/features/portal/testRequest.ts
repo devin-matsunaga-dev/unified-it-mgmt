@@ -19,5 +19,7 @@ export const portalRequest: Ticket = {
   updatedAt: '2026-08-07T01:00:00Z',
   categoryId: 'category-laptop',
   categoryName: 'Laptop issue',
+  requesterDepartmentName: null,
+  requesterSiteName: null,
   customFields: [{ fieldId: 'field-asset-tag', key: 'asset_tag', label: 'Asset tag', type: 'Text', value: 'LT-4417' }],
 }

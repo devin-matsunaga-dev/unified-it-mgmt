@@ -80,6 +80,21 @@ public sealed class DemoDataSeeder(PlatformDbContext dbContext)
         }).ToArray();
         dbContext.UserProfiles.AddRange(usersToAdd);
         await dbContext.SaveChangesAsync(cancellationToken);
+
+        // Derived from the people above rather than listed separately, so the department-to-location
+        // map can never contradict where the seeded staff actually sit. This is also the evidence for
+        // the many-to-many: IT alone spans HQ, DC1 and BR1.
+        var existingLinks = await dbContext.DepartmentSites
+            .Select(link => new { link.DepartmentId, link.SiteId }).ToListAsync(cancellationToken);
+        var linksToAdd = Users
+            .Select(user => new { DepartmentId = departmentIds[user.DepartmentCode], SiteId = siteIds[user.SiteCode] })
+            .Distinct()
+            .Where(pair => !existingLinks.Any(
+                link => link.DepartmentId == pair.DepartmentId && link.SiteId == pair.SiteId))
+            .Select(pair => new DepartmentSite { DepartmentId = pair.DepartmentId, SiteId = pair.SiteId })
+            .ToArray();
+        dbContext.DepartmentSites.AddRange(linksToAdd);
+        await dbContext.SaveChangesAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
 
         return new SeedResult(sitesToAdd.Length, departmentsToAdd.Length, usersToAdd.Length);

@@ -1,7 +1,8 @@
 import { useQuery } from '@tanstack/react-query'
-import { ChevronRight, Tags } from 'lucide-react'
+import { Building2, ChevronRight, Tags } from 'lucide-react'
 import type { ComponentType } from 'react'
 import { Link } from 'react-router-dom'
+import { directoryApi } from '../../api/directory'
 import { helpdeskApi } from '../../api/helpdesk'
 import { totalCount } from './categoryTree'
 
@@ -16,7 +17,14 @@ export function SettingsPage() {
     meta: { suppressErrorToast: true },
   })
 
+  const departments = useQuery({
+    queryKey: ['admin-departments'],
+    queryFn: directoryApi.listAdminDepartments,
+    meta: { suppressErrorToast: true },
+  })
+
   const count = categories.data ? totalCount(categories.data) : null
+  const orgCount = departments.data?.length ?? null
 
   return <div className="space-y-6">
     <div>
@@ -31,6 +39,13 @@ export function SettingsPage() {
         title="Ticket categories"
         description="The categories people choose when raising a ticket, and how they nest."
         detail={count === null ? 'Loading…' : `${count} ${count === 1 ? 'category' : 'categories'}`} />
+
+      <SettingsCard
+        to="/admin/settings/organisation"
+        icon={Building2}
+        title="Departments and locations"
+        description="The parts of the business, the sites they operate at, and which belongs where."
+        detail={orgCount === null ? 'Loading…' : `${orgCount} ${orgCount === 1 ? 'department' : 'departments'}`} />
     </div>
   </div>
 }

@@ -38,6 +38,8 @@ const raised: Ticket = {
   urgency: 'High', impact: 'Medium', priority: 'High', status: 'New', requesterId: 'enduser1',
   requesterName: 'End User One', queueId: null, queueName: null, assignedTechnicianId: null,
   createdAt: '2026-08-06T00:00:00Z', updatedAt: '2026-08-06T00:00:00Z', categoryId: null, categoryName: null, customFields: [],
+  requesterDepartmentName: null,
+  requesterSiteName: null,
 }
 
 function renderPage() {

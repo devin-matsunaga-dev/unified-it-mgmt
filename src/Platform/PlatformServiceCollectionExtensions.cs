@@ -46,6 +46,8 @@ public static class PlatformServiceCollectionExtensions
         services.AddScoped<IAuditService, AuditService>();
         services.AddScoped<IAuditTrail, AuditTrailReader>();
         services.AddScoped<IDirectoryService, DirectoryService>();
+        // Writes live apart from IDirectoryService so that stays the read-only surface modules use.
+        services.AddScoped<IDirectoryAdminService, DirectoryAdminService>();
 
         // WP-5.4. The service holds no reference to any module: it is handed whatever ISearchSource
         // implementations the host has registered, and each module registers its own beside its services.
