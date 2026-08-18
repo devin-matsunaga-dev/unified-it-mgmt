@@ -1,19 +1,27 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { ArrowDown, ArrowUp, ArrowUpDown, ChevronLeft, ChevronRight, Layers, Pencil, Plus, QrCode, Search, Server, SlidersHorizontal, Upload } from 'lucide-react'
-import { useEffect, useMemo, useState } from 'react'
+import { Columns3, ArrowDown, ArrowUp, ArrowUpDown, ChevronLeft, ChevronRight, Layers, Pencil, Plus, QrCode, Search, Server, SlidersHorizontal, Upload } from 'lucide-react'
+import { Fragment, useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { toast } from 'sonner'
 import { ApiError } from '../../api/client'
-import { assetsApi, ciTypeLabel, ciTypes, type Ci, type CiFilter, type CiLifecycleState, type CiType } from '../../api/assets'
+import { assetsApi, type Ci, type CiFilter } from '../../api/assets'
 import { directoryApi } from '../../api/directory'
 import { Button } from '../../components/ui/Button'
+import { cn } from '../../lib/utils'
 import { CiBulkEditDialog } from './CiBulkEditDialog'
 import { CiFormDialog, type CiFormSubmit } from './CiFormDialog'
 import { CiLabelDialog } from './CiLabelDialog'
 import { CiLifecycleDrawer } from './CiLifecycleDrawer'
 import { CiStatsRow } from './CiStatsRow'
-import { ciSortDescription, ciSortLabels, nextCiSort, sortCis, type CiSort, type CiSortColumn } from './ciSort'
-import { ciLifecycleLabel, ciLifecycleStates, ciLifecycleTone } from './lifecycle'
+import { toTileFilter } from './ciTiles'
+import { ciSortDescription, nextCiSort, sortCis, type CiSort, type CiSortColumn } from './ciSort'
+import { ciColumn, ciColumnIds } from './ciColumns'
+import { isColumnVisible, moveColumn, readLayout, toggleColumn, visibleColumns, writeLayout } from './columnLayout'
+import { ciFilterDefinition, ciFilterIds, clearFilter } from './ciFilters'
+
+/** Namespaced so a later table on another screen cannot collide with this one's arrangement. */
+const columnLayoutKey = 'assets:columns'
+const filterLayoutKey = 'assets:filters'
 
 export function CiListPage() {
   const navigate = useNavigate()
@@ -46,6 +54,26 @@ export function CiListPage() {
    * Select field gets one rather than a single privileged "category": nothing in the model makes one
    * field special, and a type with two of them is narrowed by both.
    */
+  /**
+   * Per browser, like the ticket list's column menu — a table arrangement is a personal preference,
+   * not something to make everyone who shares an account live with.
+   */
+  const [layout, setLayout] = useState(() => readLayout(columnLayoutKey, ciColumnIds))
+  const [draggingColumn, setDraggingColumn] = useState<CiSortColumn | null>(null)
+  const [columnMenu, setColumnMenu] = useState(false)
+  const [filterLayout, setFilterLayout] = useState(() => readLayout(filterLayoutKey, ciFilterIds))
+  const [filterMenu, setFilterMenu] = useState(false)
+
+  useEffect(() => writeLayout(filterLayoutKey, filterLayout), [filterLayout])
+
+  const shownFilters = useMemo(
+    () => visibleColumns(filterLayout).map(ciFilterDefinition),
+    [filterLayout])
+
+  useEffect(() => writeLayout(columnLayoutKey, layout), [layout])
+
+  const shownColumns = useMemo(() => visibleColumns(layout).map(ciColumn), [layout])
+
   const subFilters = useMemo(
     () => filter.type === undefined
       ? []
@@ -54,6 +82,14 @@ export function CiListPage() {
     [schemas.data, filter.type])
   const lifecycleStates = useQuery({ queryKey: ['ci-lifecycle-states'], queryFn: assetsApi.listLifecycleStates })
   const owners = useQuery({ queryKey: ['directory', 'users'], queryFn: directoryApi.listUsers })
+
+  /** Sorted by name, because the directory's own order is not one anybody is scanning by. */
+  const ownerOptions = useMemo(
+    () => (owners.data ?? [])
+      .map((user) => ({ value: user.id, label: user.displayName }))
+      .sort((a, b) => a.label.localeCompare(b.label, undefined, { sensitivity: 'base' })),
+    [owners.data])
+
 
   // The drawer holds a snapshot, so a transition made inside it has to be re-read from the refreshed
   // list or the buttons would still offer the old state's targets.
@@ -96,10 +132,19 @@ export function CiListPage() {
       </div>
     </div>
 
-    {/* A tile sets the whole narrowing it counts, so the number on it and the rows below always agree. */}
-    <CiStatsRow filter={filter} onSelect={(next) => setFilter((current) => ({
-      ...current, lifecycleState: undefined, warrantyExpiringWithinDays: undefined, ...next, page: 1,
-    }))} />
+    {/*
+      * A tile sets the whole narrowing it counts, so the number on it and the rows below always
+      * agree. Every constraint a tile can carry is dropped first, rather than the two the built-ins
+      * happened to use — a pinned tile can narrow by type, owner or a custom field, and leaving any
+      * of those behind means the next tile counts one thing while the table shows another.
+      *
+      * The search term goes too, and its box with it: a tile's count is taken without it, so a
+      * surviving search would show fewer rows than the number promises.
+      */}
+    <CiStatsRow filter={filter} onSelect={(next) => {
+      setSearch('')
+      setFilter((current) => ({ pageSize: current.pageSize, ...toTileFilter(next), page: 1 }))
+    }} />
 
     <section className="rounded-xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
       {selection.length > 0 &&<div className="flex flex-wrap items-center gap-3 border-b border-slate-200 bg-blue-50 px-4 py-3 text-[13px] dark:border-slate-800 dark:bg-blue-500/10">
@@ -114,49 +159,51 @@ export function CiListPage() {
           <Search size={17} /><span className="sr-only">Search configuration items</span>
           <input value={search} onChange={(event) => setSearch(event.target.value)} className="w-full bg-transparent text-sm text-slate-900 outline-none dark:text-slate-100" placeholder="Search names, asset tags, and serials…" />
         </label>
-        <select aria-label="Filter by type" className="input w-auto min-w-40" value={filter.type ?? ''}
-          onChange={(event) => setFilter((current) => ({
-            ...current,
-            type: (event.target.value || undefined) as CiType | undefined,
-            // The sub-filters belong to the type being left, so they go with it. Keeping them would
-            // silently narrow the new type by a field it does not have and return nothing.
-            customFields: undefined,
-            page: 1,
-          }))}>
-          <option value="">All types</option>
-          {ciTypes.map((type) => <option key={type} value={type}>{ciTypeLabel(type)}</option>)}
-        </select>
+        {shownFilters.map((definition) => <Fragment key={definition.id}>
+          {definition.render({ filter, setFilter, ownerOptions, subFilters })}
+        </Fragment>)}
 
-        {/*
-          * The sub-filters: one per "choose one" field the selected type carries. They appear only
-          * once a type is chosen, because a field belongs to a type and "All types" has none.
-          */}
-        {subFilters.map((field) => <select key={field.id}
-          aria-label={`Filter by ${field.label}`}
-          className="input w-auto min-w-40"
-          value={filter.customFields?.find((item) => item.fieldId === field.id)?.value ?? ''}
-          onChange={(event) => setFilter((current) => {
-            const rest = (current.customFields ?? []).filter((item) => item.fieldId !== field.id)
-            const chosen = event.target.value
-            const next = chosen ? [...rest, { fieldId: field.id, value: chosen }] : rest
-            return { ...current, customFields: next.length > 0 ? next : undefined, page: 1 }
-          })}>
-          <option value="">All {field.label.toLowerCase()}</option>
-          {field.options.map((option) => <option key={option} value={option}>{option}</option>)}
-        </select>)}
-        <select aria-label="Filter by lifecycle state" className="input w-auto min-w-40" value={filter.lifecycleState ?? ''} onChange={(event) => setFilter((current) => ({ ...current, lifecycleState: (event.target.value || undefined) as CiLifecycleState | undefined, page: 1 }))}>
-          <option value="">All lifecycle states</option>
-          {ciLifecycleStates.map((state) => <option key={state} value={state}>{ciLifecycleLabel(state)}</option>)}
-        </select>
-        <select aria-label="Filter by owner" className="input w-auto min-w-44" value={filter.ownerUserId ?? ''} onChange={(event) => setFilter((current) => ({ ...current, ownerUserId: event.target.value || undefined, page: 1 }))}>
-          <option value="">All owners</option>
-          {(owners.data ?? []).map((user) => <option key={user.id} value={user.id}>{user.displayName}</option>)}
-        </select>
-        <select aria-label="Filter by state" className="input w-auto min-w-36" value={filter.isActive === undefined ? '' : String(filter.isActive)} onChange={(event) => setFilter((current) => ({ ...current, isActive: event.target.value === '' ? undefined : event.target.value === 'true', page: 1 }))}>
-          <option value="">Active and inactive</option>
-          <option value="true">Active only</option>
-          <option value="false">Inactive only</option>
-        </select>
+        <div className="relative">
+          <Button variant="secondary" onClick={() => setFilterMenu((value) => !value)} aria-expanded={filterMenu}>
+            <SlidersHorizontal size={17} />Filters
+          </Button>
+          {filterMenu && <div className="absolute right-0 top-12 z-20 w-52 rounded-lg border border-slate-200 bg-white p-2 shadow-sm dark:border-slate-700 dark:bg-slate-800">
+            {ciFilterIds.map((id) => <label key={id} className="flex h-9 items-center gap-2 rounded px-2 text-sm hover:bg-slate-50 dark:hover:bg-slate-700">
+              <input type="checkbox" checked={isColumnVisible(filterLayout, id)}
+                onChange={() => setFilterLayout((current) => {
+                  // Hiding a control clears what it was narrowing by, so nothing filters invisibly.
+                  if (isColumnVisible(current, id)) setFilter((value) => clearFilter(id, value))
+                  return toggleColumn(current, id)
+                })} />
+              {ciFilterDefinition(id).label}
+            </label>)}
+            <p className="mt-1 border-t border-slate-200 px-2 pt-2 text-[12px] text-slate-500 dark:border-slate-700">
+              Search is always shown.
+            </p>
+          </div>}
+        </div>
+
+        <div className="relative">
+          <Button variant="secondary" onClick={() => setColumnMenu((value) => !value)} aria-expanded={columnMenu}>
+            <Columns3 size={17} />Columns
+          </Button>
+          {columnMenu && <div className="absolute right-0 top-12 z-20 w-52 rounded-lg border border-slate-200 bg-white p-2 shadow-sm dark:border-slate-700 dark:bg-slate-800">
+            {layout.order.map((id) => {
+              const column = ciColumn(id)
+              const shown = shownColumns.some((item) => item.id === id)
+              return <label key={id} className="flex h-9 items-center gap-2 rounded px-2 text-sm hover:bg-slate-50 dark:hover:bg-slate-700">
+                <input type="checkbox" checked={shown}
+                  // The last one standing cannot be unticked; toggleColumn refuses it either way.
+                  disabled={shown && shownColumns.length <= 1}
+                  onChange={() => setLayout((current) => toggleColumn(current, id))} />
+                {column.label}
+              </label>
+            })}
+            <p className="mt-1 border-t border-slate-200 px-2 pt-2 text-[12px] text-slate-500 dark:border-slate-700">
+              Drag a column heading to reorder it.
+            </p>
+          </div>}
+        </div>
       </div>
 
       {cis.isLoading ? <CiTableSkeleton />
@@ -168,13 +215,32 @@ export function CiListPage() {
                 <th className="h-11 w-10 px-4">
                   <input type="checkbox" aria-label="Select every configuration item on this page" checked={allVisibleSelected} onChange={toggleAll} />
                 </th>
-                {(Object.keys(ciSortLabels) as CiSortColumn[]).map((column) => <th key={column} aria-sort={ciSortDescription(sort, column)} className="h-11 px-4 text-[13px] font-medium text-slate-500">
+                {shownColumns.map((column) => <th key={column.id}
+                  aria-sort={ciSortDescription(sort, column.id)}
+                  // Native drag, as the dashboard's arrange mode uses. The sort control inside is a
+                  // <button>, which has no drag behaviour of its own, so the two do not fight.
+                  draggable
+                  onDragStart={(event) => {
+                    setDraggingColumn(column.id)
+                    // Guarded: a real browser always provides it, but nothing here depends on it and
+                    // assuming it exists turns a missing dataTransfer into a thrown handler.
+                    if (event.dataTransfer) event.dataTransfer.effectAllowed = 'move'
+                  }}
+                  onDragOver={(event) => { if (draggingColumn && draggingColumn !== column.id) event.preventDefault() }}
+                  onDrop={(event) => {
+                    event.preventDefault()
+                    if (draggingColumn) setLayout((current) => moveColumn(current, draggingColumn, column.id))
+                    setDraggingColumn(null)
+                  }}
+                  onDragEnd={() => setDraggingColumn(null)}
+                  className={cn('h-11 cursor-grab px-4 text-[13px] font-medium text-slate-500',
+                    draggingColumn === column.id && 'opacity-40')}>
                   {/* Named for the action, not just the column: "Lifecycle" alone is also a row button. */}
-                  <button type="button" aria-label={`Sort by ${ciSortLabels[column].toLowerCase()}`}
+                  <button type="button" aria-label={`Sort by ${column.label.toLowerCase()}`}
                     className="inline-flex items-center gap-1 rounded hover:text-slate-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 dark:hover:text-slate-100"
-                    onClick={() => setSort((current) => nextCiSort(current, column))}>
-                    {ciSortLabels[column]}
-                    {sort?.column === column ? (sort.desc ? <ArrowDown size={14} /> : <ArrowUp size={14} />) : <ArrowUpDown size={14} className="text-slate-400" />}
+                    onClick={() => setSort((current) => nextCiSort(current, column.id))}>
+                    {column.label}
+                    {sort?.column === column.id ? (sort.desc ? <ArrowDown size={14} /> : <ArrowUp size={14} />) : <ArrowUpDown size={14} className="text-slate-400" />}
                   </button>
                 </th>)}
                 <th className="h-11 px-4" />
@@ -184,15 +250,9 @@ export function CiListPage() {
                   <td className="h-12 px-4">
                     <input type="checkbox" aria-label={`Select ${ci.name}`} checked={selectedIds.includes(ci.id)} onChange={() => toggleOne(ci.id)} />
                   </td>
-                  <td className="h-12 px-4"><Link to={`/assets/${ci.id}`} className="font-medium text-slate-900 hover:text-blue-600 dark:text-slate-100">{ci.name}</Link></td>
-                  <td className="h-12 px-4 text-slate-600 dark:text-slate-300">{ciTypeLabel(ci.type)}</td>
-                  <td className="h-12 px-4 font-mono text-xs text-slate-500">{ci.assetTag ?? '—'}</td>
-                  <td className="h-12 px-4 font-mono text-xs text-slate-500">{ci.serialNumber ?? '—'}</td>
-                  <td className="h-12 px-4"><span className={`rounded-md px-2 py-0.5 text-xs font-medium ${ciLifecycleTone(ci.lifecycleState)}`}>{ciLifecycleLabel(ci.lifecycleState)}</span></td>
-                  <td className="h-12 px-4 text-slate-600 dark:text-slate-300">{ci.ownership.ownerName ?? '—'}</td>
-                  <td className="h-12 px-4 text-slate-600 dark:text-slate-300">{ci.ownership.departmentName ?? '—'}</td>
-                  <td className="h-12 px-4 text-slate-600 dark:text-slate-300">{ci.ownership.siteName ?? '—'}</td>
-                  <td className="h-12 px-4"><StatePill isActive={ci.isActive} /></td>
+                  {shownColumns.map((column) => <td key={column.id} className={cn('h-12 px-4', column.className)}>
+                    {column.cell(ci)}
+                  </td>)}
                   <td className="h-12 px-4 text-right whitespace-nowrap">
                     <Button variant="ghost" className="h-8 px-2 text-[13px]" onClick={() => { setEditing(ci); setDialogOpen(true) }}><Pencil size={15} />Edit</Button>
                     <Button variant="ghost" className="h-8 px-2 text-[13px]" onClick={() => setPeeking(ci)}><SlidersHorizontal size={15} />Lifecycle</Button>
@@ -229,12 +289,6 @@ export function CiListPage() {
 
     <CiLabelDialog selection={labelsOpen ? selection : []} onClose={() => setLabelsOpen(false)} />
   </div>
-}
-
-function StatePill({ isActive }: { isActive: boolean }) {
-  return isActive
-    ? <span className="rounded-md bg-green-100 px-2 py-0.5 text-xs font-medium text-green-700 dark:bg-green-500/15 dark:text-green-400">Active</span>
-    : <span className="rounded-md bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-600 dark:bg-slate-500/15 dark:text-slate-400">Inactive</span>
 }
 
 function EmptyState({ onCreate }: { onCreate: () => void }) {

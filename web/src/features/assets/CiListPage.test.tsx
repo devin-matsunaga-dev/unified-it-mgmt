@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
 import { vi } from 'vitest'
@@ -65,6 +65,7 @@ function renderPage() {
 describe('CiListPage', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    localStorage.clear()
     vi.mocked(assetsApi.listTypeSchemas).mockResolvedValue(schemas)
     vi.mocked(assetsApi.listLifecycleStates).mockResolvedValue(lifecycleStates)
     vi.mocked(assetsApi.getLifecycleHistory).mockResolvedValue([])
@@ -254,15 +255,109 @@ describe('CiListPage', () => {
     expect(within(drawer).getByLabelText('Owner')).toBeDisabled()
   })
 
-  it('sends the owner filter to the API so a user\'s assets can be listed', async () => {
+  /**
+   * The owner filter is a combobox rather than a select: it is the one filter whose list grows with
+   * the organisation, so it has to be typeable as well as choosable.
+   */
+  it('filters by an owner typed into the box', async () => {
     vi.mocked(assetsApi.listCis).mockResolvedValue({ items: [server], total: 1, page: 1, pageSize: 25 })
+    const user = userEvent.setup()
     renderPage()
     expect(await screen.findByText('app-01')).toBeInTheDocument()
-    await waitFor(() => expect(screen.getByRole('combobox', { name: 'Filter by owner' })).toHaveTextContent('End User One'))
 
-    await userEvent.selectOptions(screen.getByRole('combobox', { name: 'Filter by owner' }), 'user-1')
+    const box = screen.getByRole('combobox', { name: 'Filter by owner' })
+    // Matching is on any part of the name, not a prefix — people search by surname.
+    await user.type(box, 'user one')
+    await user.click(await screen.findByRole('option', { name: 'End User One' }))
 
     await waitFor(() => expect(assetsApi.listCis).toHaveBeenCalledWith(expect.objectContaining({ ownerUserId: 'user-1' })))
+    expect(box).toHaveValue('End User One')
+  })
+
+  /** Only the name is shown, and only the name is matched — a hidden match has no visible reason. */
+  it('shows only the name in the owner list', async () => {
+    vi.mocked(assetsApi.listCis).mockResolvedValue({ items: [server], total: 1, page: 1, pageSize: 25 })
+    const user = userEvent.setup()
+    renderPage()
+    await screen.findByText('app-01')
+
+    await user.click(screen.getByRole('combobox', { name: 'Filter by owner' }))
+
+    const option = await screen.findByRole('option', { name: 'End User One' })
+    expect(option).toHaveTextContent('End User One')
+    expect(option).not.toHaveTextContent('Finance')
+  })
+
+  it('does not match on a department that is not shown', async () => {
+    vi.mocked(assetsApi.listCis).mockResolvedValue({ items: [server], total: 1, page: 1, pageSize: 25 })
+    const user = userEvent.setup()
+    renderPage()
+    await screen.findByText('app-01')
+
+    await user.type(screen.getByRole('combobox', { name: 'Filter by owner' }), 'Finance')
+
+    expect(await screen.findByText(/Nothing matches/)).toBeInTheDocument()
+  })
+
+  it('says so when nothing matches what was typed, instead of showing an empty list', async () => {
+    vi.mocked(assetsApi.listCis).mockResolvedValue({ items: [server], total: 1, page: 1, pageSize: 25 })
+    const user = userEvent.setup()
+    renderPage()
+    await screen.findByText('app-01')
+
+    await user.type(screen.getByRole('combobox', { name: 'Filter by owner' }), 'nobody')
+
+    expect(await screen.findByText(/Nothing matches/)).toBeInTheDocument()
+  })
+
+  /** A filter that cannot be cleared is a trap, so "All owners" is always offered. */
+  it('clears the owner filter back to all owners', async () => {
+    vi.mocked(assetsApi.listCis).mockResolvedValue({ items: [server], total: 1, page: 1, pageSize: 25 })
+    const user = userEvent.setup()
+    renderPage()
+    await screen.findByText('app-01')
+
+    const box = screen.getByRole('combobox', { name: 'Filter by owner' })
+    await user.click(box)
+    await user.click(await screen.findByRole('option', { name: 'End User One' }))
+    await waitFor(() => expect(assetsApi.listCis).toHaveBeenCalledWith(expect.objectContaining({ ownerUserId: 'user-1' })))
+
+    await user.click(screen.getByRole('button', { name: 'Clear Filter by owner' }))
+
+    await waitFor(() => expect(assetsApi.listCis).toHaveBeenLastCalledWith(
+      expect.objectContaining({ ownerUserId: undefined })))
+    expect(box).toHaveValue('')
+  })
+
+  /** Keyboard parity with the global search box, which is the other combobox in this app. */
+  it('can be driven from the keyboard', async () => {
+    vi.mocked(assetsApi.listCis).mockResolvedValue({ items: [server], total: 1, page: 1, pageSize: 25 })
+    const user = userEvent.setup()
+    renderPage()
+    await screen.findByText('app-01')
+
+    const box = screen.getByRole('combobox', { name: 'Filter by owner' })
+    await user.click(box)
+    // Down once lands on "All owners", twice on the first person.
+    await user.keyboard('{ArrowDown}{ArrowDown}{Enter}')
+
+    await waitFor(() => expect(assetsApi.listCis).toHaveBeenCalledWith(expect.objectContaining({ ownerUserId: 'user-1' })))
+  })
+
+  /** Escape must abandon the interaction without changing the filter. */
+  it('closes on escape without changing the filter', async () => {
+    vi.mocked(assetsApi.listCis).mockResolvedValue({ items: [server], total: 1, page: 1, pageSize: 25 })
+    const user = userEvent.setup()
+    renderPage()
+    await screen.findByText('app-01')
+    const callsBefore = vi.mocked(assetsApi.listCis).mock.calls.length
+
+    const box = screen.getByRole('combobox', { name: 'Filter by owner' })
+    await user.type(box, 'End')
+    await user.keyboard('{Escape}')
+
+    expect(screen.queryByRole('listbox')).not.toBeInTheDocument()
+    expect(vi.mocked(assetsApi.listCis).mock.calls.length).toBe(callsBefore)
   })
 
   it('offers a retry when loading fails', async () => {
@@ -447,5 +542,250 @@ describe('CiListPage', () => {
     await waitFor(() => expect(assetsApi.listCis).toHaveBeenLastCalledWith(
       expect.objectContaining({ type: 'Server', customFields: undefined })))
     expect(screen.queryByLabelText('Filter by Hardware type')).not.toBeInTheDocument()
+  })
+
+  /** Columns are one definition now, so hiding one must remove its header and its cells together. */
+  it('hides a column from the header and the rows together', async () => {
+    vi.mocked(assetsApi.listCis).mockResolvedValue({ items: [server], total: 1, page: 1, pageSize: 25 })
+    const user = userEvent.setup()
+    renderPage()
+    await screen.findByText('app-01')
+
+    expect(screen.getByRole('columnheader', { name: /Serial/ })).toBeInTheDocument()
+    expect(screen.getByText('SN-0001')).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: 'Columns' }))
+    await user.click(screen.getByRole('checkbox', { name: 'Serial' }))
+
+    expect(screen.queryByRole('columnheader', { name: /Serial/ })).not.toBeInTheDocument()
+    expect(screen.queryByText('SN-0001')).not.toBeInTheDocument()
+  })
+
+  it('remembers the arrangement across a remount', async () => {
+    vi.mocked(assetsApi.listCis).mockResolvedValue({ items: [server], total: 1, page: 1, pageSize: 25 })
+    const user = userEvent.setup()
+    const first = renderPage()
+    await screen.findByText('app-01')
+
+    await user.click(screen.getByRole('button', { name: 'Columns' }))
+    await user.click(screen.getByRole('checkbox', { name: 'Serial' }))
+    first.unmount()
+
+    renderPage()
+    await screen.findByText('app-01')
+
+    expect(screen.queryByRole('columnheader', { name: /Serial/ })).not.toBeInTheDocument()
+  })
+
+  /** An empty table is not a view of anything, and the menu would have no table beside it. */
+  it('will not let the last column be hidden', async () => {
+    vi.mocked(assetsApi.listCis).mockResolvedValue({ items: [server], total: 1, page: 1, pageSize: 25 })
+    const user = userEvent.setup()
+    renderPage()
+    await screen.findByText('app-01')
+
+    await user.click(screen.getByRole('button', { name: 'Columns' }))
+    for (const label of ['Type', 'Asset tag', 'Serial', 'Lifecycle', 'Owner', 'Department', 'Location', 'State']) {
+      await user.click(screen.getByRole('checkbox', { name: label }))
+    }
+
+    const last = screen.getByRole('checkbox', { name: 'Name' })
+    expect(last).toBeChecked()
+    expect(last).toBeDisabled()
+    expect(screen.getByRole('columnheader', { name: /Name/ })).toBeInTheDocument()
+  })
+
+  /** Dragging a heading onto another moves it there, header and cells together. */
+  it('reorders columns when a heading is dropped on another', async () => {
+    vi.mocked(assetsApi.listCis).mockResolvedValue({ items: [server], total: 1, page: 1, pageSize: 25 })
+    renderPage()
+    await screen.findByText('app-01')
+
+    const headerText = () => screen.getAllByRole('columnheader').map((cell) => cell.textContent?.trim())
+    expect(headerText()[1]).toContain('Name')
+    expect(headerText()[2]).toContain('Type')
+
+    const location = screen.getByRole('columnheader', { name: /Location/ })
+    const name = screen.getByRole('columnheader', { name: /Name/ })
+    fireEvent.dragStart(location)
+    fireEvent.dragOver(name)
+    fireEvent.drop(name)
+
+    // Location has taken Name's place, and Name has shifted along rather than being overwritten.
+    expect(headerText()[1]).toContain('Location')
+    expect(headerText()[2]).toContain('Name')
+  })
+
+  it('hides a filter control that is turned off in the filters menu', async () => {
+    vi.mocked(assetsApi.listCis).mockResolvedValue({ items: [server], total: 1, page: 1, pageSize: 25 })
+    const user = userEvent.setup()
+    renderPage()
+    await screen.findByText('app-01')
+
+    expect(screen.getByLabelText('Filter by lifecycle state')).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: 'Filters' }))
+    await user.click(screen.getByRole('checkbox', { name: 'Lifecycle state' }))
+
+    expect(screen.queryByLabelText('Filter by lifecycle state')).not.toBeInTheDocument()
+    // Search stays: it is the way into the list, not a narrowing of it.
+    expect(screen.getByRole('textbox', { name: 'Search configuration items' })).toBeInTheDocument()
+  })
+
+  /**
+   * The worst outcome would be a list still narrowed by a control nobody can see: a subset with no
+   * visible reason, and no way to widen it without finding the menu again.
+   */
+  it('clears what a filter was narrowing by when that filter is hidden', async () => {
+    vi.mocked(assetsApi.listCis).mockResolvedValue({ items: [server], total: 1, page: 1, pageSize: 25 })
+    const user = userEvent.setup()
+    renderPage()
+    await screen.findByText('app-01')
+
+    await userEvent.selectOptions(screen.getByLabelText('Filter by lifecycle state'), 'Deployed')
+    await waitFor(() => expect(assetsApi.listCis).toHaveBeenCalledWith(
+      expect.objectContaining({ lifecycleState: 'Deployed' })))
+
+    await user.click(screen.getByRole('button', { name: 'Filters' }))
+    await user.click(screen.getByRole('checkbox', { name: 'Lifecycle state' }))
+
+    await waitFor(() => expect(assetsApi.listCis).toHaveBeenLastCalledWith(
+      expect.objectContaining({ lifecycleState: undefined })))
+  })
+
+  /** The sub-filters belong to Type, so hiding it must take them and their narrowing with it. */
+  it('takes the sub-filters with the type control when it is hidden', async () => {
+    vi.mocked(assetsApi.listTypeSchemas).mockResolvedValue([
+      {
+        ...schemas[0],
+        customFields: [{
+          id: 'field-kind', ciType: 'Hardware', key: 'hardware_type', label: 'Hardware type',
+          type: 'Select', isRequired: false, options: ['Laptop'], sortOrder: 0,
+        }],
+      },
+      schemas[1],
+    ])
+    vi.mocked(assetsApi.listCis).mockResolvedValue({ items: [server], total: 1, page: 1, pageSize: 25 })
+    const user = userEvent.setup()
+    renderPage()
+    await screen.findByText('app-01')
+
+    await user.selectOptions(screen.getByLabelText('Filter by type'), 'Hardware')
+    await user.selectOptions(await screen.findByLabelText('Filter by Hardware type'), 'Laptop')
+    await waitFor(() => expect(assetsApi.listCis).toHaveBeenLastCalledWith(
+      expect.objectContaining({ customFields: [{ fieldId: 'field-kind', value: 'Laptop' }] })))
+
+    await user.click(screen.getByRole('button', { name: 'Filters' }))
+    await user.click(screen.getByRole('checkbox', { name: 'Type' }))
+
+    expect(screen.queryByLabelText('Filter by type')).not.toBeInTheDocument()
+    expect(screen.queryByLabelText('Filter by Hardware type')).not.toBeInTheDocument()
+    await waitFor(() => expect(assetsApi.listCis).toHaveBeenLastCalledWith(
+      expect.objectContaining({ type: undefined, customFields: undefined })))
+  })
+
+  it('remembers which filters are shown across a remount', async () => {
+    vi.mocked(assetsApi.listCis).mockResolvedValue({ items: [server], total: 1, page: 1, pageSize: 25 })
+    const user = userEvent.setup()
+    const first = renderPage()
+    await screen.findByText('app-01')
+
+    await user.click(screen.getByRole('button', { name: 'Filters' }))
+    await user.click(screen.getByRole('checkbox', { name: 'Owner' }))
+    first.unmount()
+
+    renderPage()
+    await screen.findByText('app-01')
+
+    expect(screen.queryByRole('combobox', { name: 'Filter by owner' })).not.toBeInTheDocument()
+  })
+
+  /** Columns and filters are separate preferences; turning one off must not disturb the other. */
+  it('keeps the column layout and the filter layout apart', async () => {
+    vi.mocked(assetsApi.listCis).mockResolvedValue({ items: [server], total: 1, page: 1, pageSize: 25 })
+    const user = userEvent.setup()
+    renderPage()
+    await screen.findByText('app-01')
+
+    await user.click(screen.getByRole('button', { name: 'Filters' }))
+    await user.click(screen.getByRole('checkbox', { name: 'Owner' }))
+
+    // The Owner column is untouched by hiding the Owner filter.
+    expect(screen.getByRole('columnheader', { name: /Owner/ })).toBeInTheDocument()
+  })
+
+  /**
+   * REGRESSION: applying a pinned tile and then a built-in used to leave the pinned tile's
+   * constraints behind, because the handler cleared only the two keys the built-ins happened to
+   * use. The built-in then counted one thing while the table showed another.
+   */
+  it('a built-in tile clears everything a pinned tile was narrowing by', async () => {
+    localStorage.setItem('assets:tiles', JSON.stringify([{
+      id: 't1',
+      label: 'Retired hardware',
+      filter: { type: 'Hardware', lifecycleState: 'Retired', isActive: false },
+    }]))
+    vi.mocked(assetsApi.listCis).mockResolvedValue({ items: [server], total: 1, page: 1, pageSize: 25 })
+    const user = userEvent.setup()
+    renderPage()
+    await screen.findByText('app-01')
+
+    const tiles = () => within(screen.getByRole('group', { name: 'Estate counts' }))
+    await user.click((await tiles().findByText('Retired hardware')).closest('button')!)
+    // pageSize 25 is the table's own query; the tiles read pageSize 1 for their counts.
+    await waitFor(() => expect(assetsApi.listCis).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'Hardware', lifecycleState: 'Retired', isActive: false, pageSize: 25 })))
+
+    await user.click(tiles().getByText('Deployed').closest('button')!)
+
+    // Nothing of the pinned tile survives: the list is exactly what the built-in counts.
+    // Matched exactly rather than loosely: the whole point is that nothing survived.
+    await waitFor(() => expect(assetsApi.listCis).toHaveBeenCalledWith(
+      { lifecycleState: 'Deployed', page: 1, pageSize: 25 }))
+  })
+
+  /** The same in the other direction, and for the sub-filters a pinned tile can carry. */
+  it('a pinned tile clears what a previous one was narrowing by', async () => {
+    localStorage.setItem('assets:tiles', JSON.stringify([
+      { id: 't1', label: 'Laptops', filter: { type: 'Hardware', customFields: [{ fieldId: 'f1', value: 'Laptop' }] } },
+      { id: 't2', label: 'Owned by one', filter: { ownerUserId: 'user-1' } },
+    ]))
+    vi.mocked(assetsApi.listCis).mockResolvedValue({ items: [server], total: 1, page: 1, pageSize: 25 })
+    const user = userEvent.setup()
+    renderPage()
+    await screen.findByText('app-01')
+
+    const tiles = () => within(screen.getByRole('group', { name: 'Estate counts' }))
+    await user.click((await tiles().findByText('Laptops')).closest('button')!)
+    await waitFor(() => expect(assetsApi.listCis).toHaveBeenCalledWith(
+      expect.objectContaining({ customFields: [{ fieldId: 'f1', value: 'Laptop' }], pageSize: 25 })))
+
+    await user.click(tiles().getByText('Owned by one').closest('button')!)
+
+    await waitFor(() => expect(assetsApi.listCis).toHaveBeenCalledWith(
+      { ownerUserId: 'user-1', page: 1, pageSize: 25 }))
+  })
+
+  /**
+   * A tile's count is taken without the search term, so a search surviving the click would show
+   * fewer rows than the number on the tile promises.
+   */
+  it('clears the search box when a tile is applied', async () => {
+    vi.mocked(assetsApi.listCis).mockResolvedValue({ items: [server], total: 1, page: 1, pageSize: 25 })
+    const user = userEvent.setup()
+    renderPage()
+    await screen.findByText('app-01')
+
+    const box = screen.getByRole('textbox', { name: 'Search configuration items' })
+    await user.type(box, 'switch')
+    await waitFor(() => expect(assetsApi.listCis).toHaveBeenCalledWith(
+      expect.objectContaining({ search: 'switch' })))
+
+    await user.click(within(screen.getByRole('group', { name: 'Estate counts' }))
+      .getByText('Deployed').closest('button')!)
+
+    expect(box).toHaveValue('')
+    await waitFor(() => expect(assetsApi.listCis).toHaveBeenCalledWith(
+      { lifecycleState: 'Deployed', page: 1, pageSize: 25 }))
   })
 })
