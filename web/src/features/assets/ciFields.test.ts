@@ -2,12 +2,12 @@ import type { CiAttributeDefinition, CiCustomField } from '../../api/assets'
 import { ciValuePayload, validateAttributes, validateCiCustomFields } from './ciFields'
 
 const serverAttributes: CiAttributeDefinition[] = [
-  { key: 'hostname', label: 'Hostname', kind: 'Text', isRequired: true },
-  { key: 'cpuCores', label: 'CPU cores', kind: 'Integer', isRequired: true },
+  { key: 'hostname', label: 'Hostname', kind: 'Text', isRequired: true, allowedValues: [] },
+  { key: 'cpuCores', label: 'CPU cores', kind: 'Integer', isRequired: true, allowedValues: [] },
 ]
 
 const managementIp: CiAttributeDefinition[] = [
-  { key: 'managementIp', label: 'Management IP', kind: 'IpAddress', isRequired: true },
+  { key: 'managementIp', label: 'Management IP', kind: 'IpAddress', isRequired: true, allowedValues: [] },
 ]
 
 function customField(overrides: Partial<CiCustomField> = {}): CiCustomField {

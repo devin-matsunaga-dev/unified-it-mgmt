@@ -39,7 +39,13 @@ public sealed record TopologyNode(
     bool IsActive,
     string? SiteName,
     string? Address,
-    DateTimeOffset? LastSeenByDiscoveryAt);
+    DateTimeOffset? LastSeenByDiscoveryAt,
+    /// <summary>
+    /// Edge, Firewall, Core, Distribution, Access or Wireless for a network device; null for every
+    /// other CI type and for a device nobody has given a role yet. This is what lets the map put a
+    /// core switch above an access switch without reading either one's name.
+    /// </summary>
+    string? NetworkRole = null);
 
 /// <summary>
 /// One relationship somebody asserted, as the map draws it.

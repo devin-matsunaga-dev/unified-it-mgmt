@@ -75,6 +75,14 @@ public sealed class NetworkDeviceCi : ConfigurationItem
     public string ManagementIp { get; set; } = string.Empty;
     public string Vendor { get; set; } = string.Empty;
     public int PortCount { get; set; }
+
+    /// <summary>
+    /// Edge, Firewall, Core, Distribution, Access or Wireless — see <c>NetworkDeviceRoles</c>.
+    /// Nullable because every device recorded before this column existed has no role, and the
+    /// topology has to keep drawing those.
+    /// </summary>
+    public string? Role { get; set; }
+
     public override CiType Type => CiType.NetworkDevice;
 }
 

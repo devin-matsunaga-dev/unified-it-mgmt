@@ -1,5 +1,7 @@
 using Modules.Assets.Data;
 
+using Modules.Assets.Features.Cis;
+
 namespace Modules.Assets.Seeding;
 
 /// <summary>A supplier the seeded estate buys from. Keyed by a slug so contracts can name it in code.</summary>
@@ -166,22 +168,22 @@ public static class AssetsEstate
     [
         // ---- Network (10) -------------------------------------------------------------------
         Network("dc1-core-rtr-01", "DC1 core router", "Primary Data Centre edge router. Root of the data centre dependency tree.",
-                "10.10.0.1", "Cisco", 24) with
+                "10.10.0.1", "Cisco", 24, NetworkDeviceRoles.Edge) with
             { SiteCode = "DC1", OwnerUsername = "technician2", AssetTag = "NET-0001",
               SerialNumber = "FTX2401R001", ContractKey = "smartnet",
               PurchasedDaysAgo = 1_100, WarrantyInDays = 640, AgeDays = 1_100 },
         Network("dc1-core-sw-01", "DC1 core switch A", "First of the redundant core switch pair.",
-                "10.10.0.2", "Cisco", 48) with
+                "10.10.0.2", "Cisco", 48, NetworkDeviceRoles.Core) with
             { SiteCode = "DC1", OwnerUsername = "technician2", AssetTag = "NET-0002",
               SerialNumber = "FTX2401S001", ContractKey = "smartnet",
               PurchasedDaysAgo = 1_100, WarrantyInDays = 640, AgeDays = 1_100 },
         Network("dc1-core-sw-02", "DC1 core switch B", "Second of the redundant core switch pair.",
-                "10.10.0.3", "Cisco", 48) with
+                "10.10.0.3", "Cisco", 48, NetworkDeviceRoles.Core) with
             { SiteCode = "DC1", OwnerUsername = "technician2", AssetTag = "NET-0003",
               SerialNumber = "FTX2401S002", ContractKey = "smartnet",
               PurchasedDaysAgo = 1_100, WarrantyInDays = 640, AgeDays = 1_100 },
         Network("dc1-acc-sw-01", "DC1 access switch", "Out-of-band and backup network access switch.",
-                "10.10.0.4", "Cisco", 24) with
+                "10.10.0.4", "Cisco", 24, NetworkDeviceRoles.Access) with
             // Held by technician2 for the same reason WP-3.7 gave the three core CIs above an owner:
             // WP-3.12 makes this the down-able device, so its ticket is the one the Phase 3 demo puts
             // on screen — and a demo whose asset card reads "nobody holds this asset" proves the
@@ -190,27 +192,27 @@ public static class AssetsEstate
               SerialNumber = "FTX2401S003", ContractKey = "smartnet",
               PurchasedDaysAgo = 800, WarrantyInDays = 460, AgeDays = 800 },
         Network("hq-edge-rtr-01", "HQ edge router", "Head Office internet edge. Root of the Head Office dependency tree.",
-                "10.20.0.1", "Cisco", 16) with
+                "10.20.0.1", "Cisco", 16, NetworkDeviceRoles.Edge) with
             { SiteCode = "HQ", AssetTag = "NET-0005", SerialNumber = "FTX2402R001", ContractKey = "smartnet",
               PurchasedDaysAgo = 900, WarrantyInDays = 560, AgeDays = 900 },
         Network("hq-acc-sw-01", "HQ floor 1 switch", "Head Office ground floor access switch.",
-                "10.20.0.2", "Aruba", 48) with
+                "10.20.0.2", "Aruba", 48, NetworkDeviceRoles.Access) with
             { SiteCode = "HQ", AssetTag = "NET-0006", SerialNumber = "CN2402S001", ContractKey = "campus-switching",
               PurchasedDaysAgo = 700, WarrantyInDays = 400, AgeDays = 700 },
         Network("hq-acc-sw-02", "HQ floor 2 switch", "Head Office first floor access switch.",
-                "10.20.0.3", "Aruba", 48) with
+                "10.20.0.3", "Aruba", 48, NetworkDeviceRoles.Access) with
             { SiteCode = "HQ", AssetTag = "NET-0007", SerialNumber = "CN2402S002", ContractKey = "campus-switching",
               PurchasedDaysAgo = 700, WarrantyInDays = 400, AgeDays = 700 },
         Network("hq-acc-sw-03", "HQ floor 3 switch", "Head Office second floor access switch. Warranty is close to expiry.",
-                "10.20.0.4", "Aruba", 48) with
+                "10.20.0.4", "Aruba", 48, NetworkDeviceRoles.Access) with
             { SiteCode = "HQ", AssetTag = "NET-0008", SerialNumber = "CN2402S003", ContractKey = "campus-switching",
               PurchasedDaysAgo = 1_080, WarrantyInDays = 12, AgeDays = 1_080 },
         Network("br1-rtr-01", "Branch router", "Regional Branch router. Root of the branch dependency tree.",
-                "10.30.0.1", "Cisco", 8) with
+                "10.30.0.1", "Cisco", 8, NetworkDeviceRoles.Edge) with
             { SiteCode = "BR1", AssetTag = "NET-0009", SerialNumber = "FTX2403R001", ContractKey = "smartnet",
               PurchasedDaysAgo = 620, WarrantyInDays = 470, AgeDays = 620 },
         Network("br1-sw-01", "Branch switch", "Regional Branch access switch.",
-                "10.30.0.2", "Cisco", 24) with
+                "10.30.0.2", "Cisco", 24, NetworkDeviceRoles.Access) with
             { SiteCode = "BR1", AssetTag = "NET-0010", SerialNumber = "FTX2403S001", ContractKey = "smartnet",
               PurchasedDaysAgo = 620, WarrantyInDays = 470, AgeDays = 620 },
 
@@ -452,12 +454,18 @@ public static class AssetsEstate
         Edge("hw-lt-06", "br1-sw-01", CiRelationshipType.ConnectsTo, "Desk network port."),
     ];
 
-    private static CiSeed Network(string key, string name, string description, string ip, string vendor, int ports) =>
+    /// <param name="role">
+    /// One of <see cref="NetworkDeviceRoles"/>. Seeded rather than left unset so a fresh estate draws
+    /// the hierarchy the topology's Network view is built on, instead of one flat rank of devices.
+    /// </param>
+    private static CiSeed Network(
+        string key, string name, string description, string ip, string vendor, int ports, string role) =>
         new(key, CiType.NetworkDevice, name, description, new Dictionary<string, string>(StringComparer.Ordinal)
         {
             ["managementIp"] = ip,
             ["vendor"] = vendor,
             ["portCount"] = ports.ToString(),
+            ["role"] = role,
         }, CiLifecycleState.Deployed) { DepartmentCode = "IT" };
 
     private static CiSeed Server(

@@ -28,13 +28,13 @@ const schemas: CiTypeSchema[] = [
   {
     type: 'NetworkDevice',
     attributes: [
-      { key: 'managementIp', label: 'Management IP', kind: 'IpAddress', isRequired: true },
-      { key: 'vendor', label: 'Vendor', kind: 'Text', isRequired: true },
-      { key: 'portCount', label: 'Port count', kind: 'Integer', isRequired: true },
+      { key: 'managementIp', label: 'Management IP', kind: 'IpAddress', isRequired: true, allowedValues: [] },
+      { key: 'vendor', label: 'Vendor', kind: 'Text', isRequired: true, allowedValues: [] },
+      { key: 'portCount', label: 'Port count', kind: 'Integer', isRequired: true, allowedValues: [] },
     ],
     customFields: [],
   },
-  { type: 'Hardware', attributes: [{ key: 'manufacturer', label: 'Manufacturer', kind: 'Text', isRequired: true }], customFields: [] },
+  { type: 'Hardware', attributes: [{ key: 'manufacturer', label: 'Manufacturer', kind: 'Text', isRequired: true, allowedValues: [] }], customFields: [] },
 ]
 
 const stranger: DiscoveredDevice = {

@@ -94,7 +94,8 @@ public sealed class TopologyService(AssetsDbContext dbContext, IConfiguration co
                 ci.LifecycleState,
                 ci.IsActive,
                 ci.SiteName,
-                ci is NetworkDeviceCi ? ((NetworkDeviceCi)ci).ManagementIp : null))
+                ci is NetworkDeviceCi ? ((NetworkDeviceCi)ci).ManagementIp : null,
+                ci is NetworkDeviceCi ? ((NetworkDeviceCi)ci).Role : null))
             .ToListAsync(cancellationToken);
 
         // The type filter is applied to the nodes and the edges follow, rather than the other way
@@ -134,7 +135,8 @@ public sealed class TopologyService(AssetsDbContext dbContext, IConfiguration co
                     string.IsNullOrWhiteSpace(ci.ManagementIp)
                         ? addressByCi.GetValueOrDefault(ci.Id)
                         : ci.ManagementIp,
-                    lastSeenByCi.TryGetValue(ci.Id, out var lastSeen) ? lastSeen : null))
+                    lastSeenByCi.TryGetValue(ci.Id, out var lastSeen) ? lastSeen : null,
+                    ci.NetworkRole))
                 .OrderBy(node => node.Name, StringComparer.OrdinalIgnoreCase)
                 .ThenBy(node => node.CiId)],
             [.. edges
@@ -344,5 +346,6 @@ public sealed class TopologyService(AssetsDbContext dbContext, IConfiguration co
         CiLifecycleState LifecycleState,
         bool IsActive,
         string? SiteName,
-        string? ManagementIp);
+        string? ManagementIp,
+        string? NetworkRole);
 }

@@ -18,6 +18,12 @@ export type TopologyNode = {
   siteName: string | null
   address: string | null
   lastSeenByDiscoveryAt: string | null
+  /**
+   * Edge | Firewall | Core | Distribution | Access | Wireless for a network device; null for every
+   * other CI type and for a device nobody has given a role yet. CiType alone cannot tell a core
+   * switch from a desk-side one, and this is what the Network view's hierarchy is built on.
+   */
+  networkRole: string | null
 }
 
 /** A relationship somebody asserted. `observedByDiscovery` says whether a scan agreed with it. */

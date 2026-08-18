@@ -29,16 +29,16 @@ const schemas: CiTypeSchema[] = [
   {
     type: 'Hardware',
     attributes: [
-      { key: 'manufacturer', label: 'Manufacturer', kind: 'Text', isRequired: true },
-      { key: 'model', label: 'Model', kind: 'Text', isRequired: true },
+      { key: 'manufacturer', label: 'Manufacturer', kind: 'Text', isRequired: true, allowedValues: [] },
+      { key: 'model', label: 'Model', kind: 'Text', isRequired: true, allowedValues: [] },
     ],
     customFields: [],
   },
   {
     type: 'Server',
     attributes: [
-      { key: 'hostname', label: 'Hostname', kind: 'Text', isRequired: true },
-      { key: 'cpuCores', label: 'CPU cores', kind: 'Integer', isRequired: true },
+      { key: 'hostname', label: 'Hostname', kind: 'Text', isRequired: true, allowedValues: [] },
+      { key: 'cpuCores', label: 'CPU cores', kind: 'Integer', isRequired: true, allowedValues: [] },
     ],
     customFields: [],
   },

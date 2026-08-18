@@ -12,7 +12,12 @@ function node(ciId: string, name = ciId): TopologyNode {
     siteName: null,
     address: null,
     lastSeenByDiscoveryAt: null,
+    networkRole: null,
   }
+}
+
+function roled(ciId: string, networkRole: string): TopologyNode {
+  return { ...node(ciId), networkRole }
 }
 
 function edge(source: string, target: string): TopologyEdge {
@@ -103,6 +108,112 @@ describe('autoLayout', () => {
     const edges = [edge('sw-a', 'router'), edge('sw-b', 'router'), edge('host', 'sw-a')]
 
     expect([...autoLayout(nodes, edges)]).toEqual([...autoLayout(nodes, edges)])
+  })
+})
+
+describe('autoLayout crossing reduction', () => {
+  /**
+   * Counts pairs of edges that cross when drawn between adjacent layers. The alternating sweeps
+   * exist to bring this down; a single downward pass leaves the leaf layers ordered by whatever
+   * their parents happened to do, which is what made the real map rake.
+   */
+  function crossings(nodes: TopologyNode[], edges: TopologyEdge[]): number {
+    const positions = autoLayout(nodes, edges)
+    const drawn = edges.map((item) => ({
+      from: positions.get(item.sourceCiId)!,
+      to: positions.get(item.targetCiId)!,
+    }))
+
+    let total = 0
+    for (let a = 0; a < drawn.length; a++) {
+      for (let b = a + 1; b < drawn.length; b++) {
+        const one = drawn[a]
+        const two = drawn[b]
+        if (one.from.y !== two.from.y || one.to.y !== two.to.y) continue
+        if ((one.from.x - two.from.x) * (one.to.x - two.to.x) < 0) total++
+      }
+    }
+
+    return total
+  }
+
+  /**
+   * Two hosts whose VMs are named so that alphabetical order interleaves them across parents:
+   * P and R belong to the B host, Q and S to the A host. Seeded by name alone every one of those
+   * edges crosses its neighbour. Only a sweep that pulls each VM toward its own parent undoes it.
+   */
+  it('orders a layer so that children sit under their own parent', () => {
+    const nodes = [
+      node('switch', 'Switch'),
+      node('host-a', 'A host'), node('host-b', 'B host'),
+      node('vm-p', 'P vm'), node('vm-q', 'Q vm'), node('vm-r', 'R vm'), node('vm-s', 'S vm'),
+    ]
+    const edges = [
+      edge('host-a', 'switch'), edge('host-b', 'switch'),
+      edge('vm-p', 'host-b'), edge('vm-q', 'host-a'),
+      edge('vm-r', 'host-b'), edge('vm-s', 'host-a'),
+    ]
+
+    expect(crossings(nodes, edges)).toBe(0)
+  })
+
+  /** The sweeps must settle rather than oscillate, or the same graph would draw differently twice. */
+  it('reaches the same arrangement every time it is run', () => {
+    const nodes = [
+      node('root'),
+      node('mid-a', 'A mid'), node('mid-b', 'B mid'), node('mid-c', 'C mid'),
+      node('leaf-1', 'Z leaf'), node('leaf-2', 'Y leaf'), node('leaf-3', 'X leaf'),
+    ]
+    const edges = [
+      edge('mid-a', 'root'), edge('mid-b', 'root'), edge('mid-c', 'root'),
+      edge('leaf-1', 'mid-c'), edge('leaf-2', 'mid-b'), edge('leaf-3', 'mid-a'),
+    ]
+
+    const once = autoLayout(nodes, edges)
+    const twice = autoLayout(nodes, edges)
+
+    expect([...twice.entries()]).toEqual([...once.entries()])
+    expect(crossings(nodes, edges)).toBe(0)
+  })
+})
+
+describe('autoLayout with recorded network roles', () => {
+  const rowOf = (positions: Map<string, { x: number; y: number }>, ciId: string) => positions.get(ciId)!.y
+
+  /**
+   * §9: a role is authoritative about the hierarchy. With no relationship between them, dependency
+   * depth alone would put an edge router and a core switch on the same row.
+   */
+  it('orders unrelated devices by their role', () => {
+    const positions = autoLayout(
+      [roled('rtr', 'Edge'), roled('core', 'Core'), roled('acc', 'Access')], [])
+
+    expect(rowOf(positions, 'rtr')).toBeLessThan(rowOf(positions, 'core'))
+    expect(rowOf(positions, 'core')).toBeLessThan(rowOf(positions, 'acc'))
+  })
+
+  /**
+   * The role is a floor, not a replacement: a dependency can push a device further down, because a
+   * switch behind two routers really does belong below both.
+   */
+  it('lets a dependency push a device below its role floor', () => {
+    const positions = autoLayout(
+      [roled('rtr', 'Edge'), roled('core', 'Core'), roled('other', 'Edge')],
+      [edge('core', 'rtr'), edge('other', 'core')])
+
+    // 'other' is an Edge device, floor 0, but it depends on a Core switch and must sit under it.
+    expect(rowOf(positions, 'other')).toBeGreaterThan(rowOf(positions, 'core'))
+  })
+
+  /** A CMDB that has not filled the field in must lay out exactly as it did before. */
+  it('changes nothing when no device records a role', () => {
+    const nodes = [node('a'), node('b'), node('c')]
+    const edges = [edge('b', 'a'), edge('c', 'b')]
+
+    const positions = autoLayout(nodes, edges)
+
+    expect(rowOf(positions, 'a')).toBeLessThan(rowOf(positions, 'b'))
+    expect(rowOf(positions, 'b')).toBeLessThan(rowOf(positions, 'c'))
   })
 })
 

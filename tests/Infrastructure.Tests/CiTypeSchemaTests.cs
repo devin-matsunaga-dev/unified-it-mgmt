@@ -126,4 +126,86 @@ public sealed class CiTypeSchemaTests
         Assert.Empty(result.Errors);
         Assert.False(result.Values.ContainsKey("serviceTier"));
     }
+
+    private static Dictionary<string, string?> NetworkAttributes() => new()
+    {
+        ["managementIp"] = "10.10.0.1",
+        ["vendor"] = "Cisco",
+        ["portCount"] = "24",
+    };
+
+    /// <summary>
+    /// The role is what lets a topology tell a core switch from a desk-side one, since both are
+    /// CiType.NetworkDevice. It is optional so that every device recorded before the column existed
+    /// stays valid on its next save.
+    /// </summary>
+    [Fact]
+    public void Bind_NetworkDeviceWithoutARole_IsStillValid()
+    {
+        var result = CiTypeSchema.Bind(CiType.NetworkDevice, NetworkAttributes());
+
+        Assert.Empty(result.Errors);
+        Assert.False(result.Values.ContainsKey("role"));
+    }
+
+    [Fact]
+    public void Bind_NetworkDeviceWithARole_KeepsIt()
+    {
+        var attributes = NetworkAttributes();
+        attributes["role"] = NetworkDeviceRoles.Core;
+
+        var result = CiTypeSchema.Bind(CiType.NetworkDevice, attributes);
+
+        Assert.Empty(result.Errors);
+        Assert.Equal("Core", result.Values["role"]);
+    }
+
+    /// <summary>Canonicalised, so "core", "CORE" and "Core" cannot become three different roles.</summary>
+    [Fact]
+    public void Bind_ARoleInAnyCasing_IsCanonicalisedToTheDeclaredSpelling()
+    {
+        var attributes = NetworkAttributes();
+        attributes["role"] = "aCCeSS";
+
+        var result = CiTypeSchema.Bind(CiType.NetworkDevice, attributes);
+
+        Assert.Equal("Access", result.Values["role"]);
+    }
+
+    /// <summary>FAILURE PATH: a role nobody declared must be refused, not stored as free text.</summary>
+    [Fact]
+    public void Bind_ARoleThatIsNotOnTheList_IsRefused()
+    {
+        var attributes = NetworkAttributes();
+        attributes["role"] = "Spine";
+
+        var result = CiTypeSchema.Bind(CiType.NetworkDevice, attributes);
+
+        Assert.Contains("attributes.role", result.Errors.Keys);
+        Assert.False(result.Values.ContainsKey("role"));
+    }
+
+    /// <summary>Only network devices have one; offering it elsewhere would be a lie about the column.</summary>
+    [Fact]
+    public void Bind_ARoleOnANonNetworkCi_IsRejectedAsNotAnAttributeOfThatType()
+    {
+        var attributes = ServerAttributes();
+        attributes["role"] = "Core";
+
+        var result = CiTypeSchema.Bind(CiType.Server, attributes);
+
+        Assert.Contains("attributes.role", result.Errors.Keys);
+    }
+
+    [Fact]
+    public void For_NetworkDevice_OffersEveryRoleInHierarchyOrder()
+    {
+        var role = CiTypeSchema.For(CiType.NetworkDevice).Single(item => item.Key == "role");
+
+        Assert.Equal(CiAttributeKind.Choice, role.Kind);
+        Assert.Equal(["Edge", "Firewall", "Core", "Distribution", "Access", "Wireless"], role.AllowedValues);
+        Assert.True(NetworkDeviceRoles.Rank("Edge") < NetworkDeviceRoles.Rank("Core"));
+        Assert.True(NetworkDeviceRoles.Rank("Core") < NetworkDeviceRoles.Rank("Access"));
+        Assert.Equal(int.MaxValue, NetworkDeviceRoles.Rank(null));
+    }
 }

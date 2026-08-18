@@ -462,6 +462,10 @@ public sealed class CiService(
                 network.ManagementIp = Text(values, "managementIp");
                 network.Vendor = Text(values, "vendor");
                 network.PortCount = Integer(values, "portCount");
+                // Optional, so an absent value clears the role rather than defaulting it to something.
+                network.Role = values.TryGetValue("role", out var role) && !string.IsNullOrWhiteSpace(role)
+                    ? role
+                    : null;
                 break;
             case SoftwareCi software:
                 software.Vendor = Text(values, "vendor");
@@ -501,6 +505,7 @@ public sealed class CiService(
             ["managementIp"] = network.ManagementIp,
             ["vendor"] = network.Vendor,
             ["portCount"] = network.PortCount.ToString(CultureInfo.InvariantCulture),
+            ["role"] = network.Role ?? string.Empty,
         },
         SoftwareCi software => new Dictionary<string, string>(StringComparer.Ordinal)
         {

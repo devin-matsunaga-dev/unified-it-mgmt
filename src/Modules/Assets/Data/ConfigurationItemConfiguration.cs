@@ -102,6 +102,9 @@ public sealed class NetworkDeviceCiConfiguration : IEntityTypeConfiguration<Netw
     {
         builder.Property(ci => ci.ManagementIp).HasMaxLength(45);
         builder.Property(ci => ci.Vendor).HasColumnName("network_vendor").HasMaxLength(120);
+        // Named rather than an enum column: the allowed values live in NetworkDeviceRoles and are
+        // validated by CiTypeSchema, so adding a role later is not a database migration.
+        builder.Property(ci => ci.Role).HasColumnName("network_role").HasMaxLength(32);
     }
 }
 

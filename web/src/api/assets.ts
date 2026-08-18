@@ -1,7 +1,7 @@
 import { apiDownload, apiRequest, apiUpload } from './client'
 
 export type CiType = 'Hardware' | 'Server' | 'NetworkDevice' | 'Software' | 'Virtual' | 'Logical'
-export type CiAttributeKind = 'Text' | 'Integer' | 'IpAddress'
+export type CiAttributeKind = 'Text' | 'Integer' | 'IpAddress' | 'Choice'
 export type CiCustomFieldType = 'Text' | 'Number' | 'Date' | 'Select'
 
 /** A fixed attribute of a CI type — a real column, not a runtime field. */
@@ -10,6 +10,8 @@ export type CiAttributeDefinition = {
   label: string
   kind: CiAttributeKind
   isRequired: boolean
+  /** The only values a Choice attribute accepts, in the order to offer them. Empty for other kinds. */
+  allowedValues: string[]
 }
 
 export type CiCustomField = {

@@ -5,17 +5,27 @@ using Modules.Assets.Data;
 
 namespace Modules.Assets.Features.Cis;
 
+/// <param name="AllowedValues">
+/// The only values a <see cref="CiAttributeKind.Choice"/> attribute accepts, in the order a form
+/// should offer them. Empty for every other kind.
+/// </param>
 public sealed record CiAttributeDefinition(
     string Key,
     string Label,
     CiAttributeKind Kind,
-    bool IsRequired);
+    bool IsRequired,
+    IReadOnlyList<string> AllowedValues = null!)
+{
+    public IReadOnlyList<string> AllowedValues { get; init; } = AllowedValues ?? [];
+}
 
 public enum CiAttributeKind
 {
     Text = 1,
     Integer = 2,
     IpAddress = 3,
+    /// <summary>One of a fixed list. Canonicalised to the declared spelling, so casing cannot drift.</summary>
+    Choice = 4,
 }
 
 public sealed record CiAttributeBindResult(
@@ -50,6 +60,9 @@ public static class CiTypeSchema
                 new("managementIp", "Management IP", CiAttributeKind.IpAddress, true),
                 new("vendor", "Vendor", CiAttributeKind.Text, true),
                 new("portCount", "Port count", CiAttributeKind.Integer, true),
+                // Optional, deliberately: every device that existed before this attribute has no role,
+                // and a required field would have made all of them invalid on their next save.
+                new("role", "Network role", CiAttributeKind.Choice, false, NetworkDeviceRoles.All),
             ],
             [CiType.Software] =
             [
@@ -154,6 +167,17 @@ public static class CiTypeSchema
                 }
 
                 canonical = number.ToString(CultureInfo.InvariantCulture);
+                return true;
+            case CiAttributeKind.Choice:
+                var match = definition.AllowedValues
+                    .FirstOrDefault(allowed => string.Equals(allowed, raw, StringComparison.OrdinalIgnoreCase));
+                if (match is null)
+                {
+                    error = $"{definition.Label} must be one of: {string.Join(", ", definition.AllowedValues)}.";
+                    return false;
+                }
+
+                canonical = match;
                 return true;
             case CiAttributeKind.IpAddress:
                 if (!IPAddress.TryParse(raw, out var address))

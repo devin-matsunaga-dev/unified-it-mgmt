@@ -128,7 +128,13 @@ export function CiFormDialog({ open, ci, schemas, pending, error, onClose, onSub
 function AttributeInput({ definition, value, error, onChange }: { definition: CiAttributeDefinition; value: string; error?: string; onChange: (value: string) => void }) {
   const id = `ci-attribute-${definition.key}`
   return <Field label={definition.label} htmlFor={id} required={definition.isRequired} error={error}>
-    <input id={id} className="input h-11" type={definition.kind === 'Integer' ? 'number' : 'text'} inputMode={definition.kind === 'Integer' ? 'numeric' : undefined} min={definition.kind === 'Integer' ? 0 : undefined} value={value} onChange={(event) => onChange(event.target.value)} aria-invalid={Boolean(error)} />
+    {definition.kind === 'Choice'
+      ? <select id={id} className="input h-11" value={value} onChange={(event) => onChange(event.target.value)} aria-invalid={Boolean(error)}>
+          {/* Blank stays selectable: an optional Choice has to be clearable back to "not set". */}
+          <option value="">{definition.isRequired ? 'Choose…' : 'Not set'}</option>
+          {definition.allowedValues.map((allowed) => <option key={allowed} value={allowed}>{allowed}</option>)}
+        </select>
+      : <input id={id} className="input h-11" type={definition.kind === 'Integer' ? 'number' : 'text'} inputMode={definition.kind === 'Integer' ? 'numeric' : undefined} min={definition.kind === 'Integer' ? 0 : undefined} value={value} onChange={(event) => onChange(event.target.value)} aria-invalid={Boolean(error)} />}
   </Field>
 }
 

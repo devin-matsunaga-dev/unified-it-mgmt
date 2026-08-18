@@ -16,6 +16,7 @@ export function validateAttributes(definitions: CiAttributeDefinition[], values:
     if (definition.kind === 'Integer' && !/^\d+$/.test(value)) errors[definition.key] = `${definition.label} must be a whole number of zero or more.`
     else if (definition.kind === 'IpAddress' && !isIpAddress(value)) errors[definition.key] = `${definition.label} must be a valid IPv4 or IPv6 address.`
     else if (definition.kind === 'Text' && value.length > 500) errors[definition.key] = `${definition.label} must be 500 characters or fewer.`
+    else if (definition.kind === 'Choice' && !definition.allowedValues.some((allowed) => allowed.toLowerCase() === value.toLowerCase())) errors[definition.key] = `${definition.label} must be one of: ${definition.allowedValues.join(', ')}.`
   }
   return errors
 }

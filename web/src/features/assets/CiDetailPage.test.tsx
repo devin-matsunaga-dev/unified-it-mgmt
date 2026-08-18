@@ -38,10 +38,10 @@ const host: Ci = {
 const schemas: CiTypeSchema[] = [{
   type: 'Server',
   attributes: [
-    { key: 'hostname', label: 'Hostname', kind: 'Text', isRequired: true },
-    { key: 'operatingSystem', label: 'Operating system', kind: 'Text', isRequired: true },
-    { key: 'cpuCores', label: 'CPU cores', kind: 'Integer', isRequired: true },
-    { key: 'ramGb', label: 'RAM (GB)', kind: 'Integer', isRequired: true },
+    { key: 'hostname', label: 'Hostname', kind: 'Text', isRequired: true, allowedValues: [] },
+    { key: 'operatingSystem', label: 'Operating system', kind: 'Text', isRequired: true, allowedValues: [] },
+    { key: 'cpuCores', label: 'CPU cores', kind: 'Integer', isRequired: true, allowedValues: [] },
+    { key: 'ramGb', label: 'RAM (GB)', kind: 'Integer', isRequired: true, allowedValues: [] },
   ],
   customFields: [],
 }]

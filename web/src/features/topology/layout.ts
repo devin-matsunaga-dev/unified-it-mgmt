@@ -1,5 +1,18 @@
 import type { TopologyEdge, TopologyMapNode, TopologyNode, TopologyObservedLink } from '../../api/topology'
 
+/**
+ * Where a recorded network role sits in the hierarchy, mirroring the server's NetworkDeviceRoles.
+ * A device without a role contributes nothing — its layer comes from its dependencies alone.
+ */
+const roleLayer: Record<string, number> = {
+  Edge: 0,
+  Firewall: 1,
+  Core: 2,
+  Distribution: 3,
+  Access: 4,
+  Wireless: 5,
+}
+
 export type Position = { x: number; y: number }
 
 /**
@@ -38,6 +51,18 @@ export function autoLayout(
     dependsOn.set(edge.sourceCiId, [...dependsOn.get(edge.sourceCiId) ?? [], edge.targetCiId])
   }
 
+  /**
+   * A recorded role is a floor, not a replacement (§9). Dependencies can push a device further down
+   * — a switch behind two routers belongs below both — but nothing can pull a Core switch above an
+   * Edge router just because the relationship between them was never written down. Devices with no
+   * role are unaffected, so this changes nothing for a CMDB that has not filled the field in.
+   */
+  const floorOf = new Map<string, number>()
+  for (const node of nodes) {
+    const floor = node.networkRole === null ? undefined : roleLayer[node.networkRole]
+    if (floor !== undefined) floorOf.set(node.ciId, floor)
+  }
+
   const layerOf = new Map<string, number>()
   const onPath = new Set<string>()
   const layer = (ciId: string): number => {
@@ -50,7 +75,7 @@ export function autoLayout(
     if (onPath.has(ciId)) return 0
 
     onPath.add(ciId)
-    let depth = 0
+    let depth = floorOf.get(ciId) ?? 0
     for (const target of dependsOn.get(ciId) ?? []) {
       depth = Math.max(depth, layer(target) + 1)
     }
@@ -77,33 +102,60 @@ export function autoLayout(
   for (const edge of edges) join(edge.sourceCiId, edge.targetCiId)
   for (const link of observedLinks) join(link.sourceCiId, link.targetCiId)
 
-  const positions = new Map<string, Position>()
   const columnOf = new Map<string, number>()
   const layers = [...byLayer.keys()].sort((a, b) => a - b)
 
+  // Seed each layer alphabetically so the first downward sweep has something stable to weigh
+  // against, and so a graph with no edges at all still comes out in a predictable order.
+  const order = new Map<number, TopologyNode[]>()
   for (const index of layers) {
-    const row = byLayer.get(index) ?? []
-    // One barycentre sweep against the layer already placed above: a node sits over the average
-    // column of the neighbours it is joined to. Not a crossing-minimising algorithm — that is a
-    // research problem and this is a picture an operator drags around anyway — but it is the
-    // difference between "every VM under its own host" and "alphabetical spaghetti".
-    const ordered = [...row].sort((a, b) => {
-      const weight = (node: TopologyNode) => {
-        const placed = (neighbours.get(node.ciId) ?? [])
-          .map((other) => columnOf.get(other))
-          .filter((column): column is number => column !== undefined)
-        return placed.length === 0
-          ? Number.MAX_SAFE_INTEGER
-          : placed.reduce((total, column) => total + column, 0) / placed.length
-      }
+    const row = [...byLayer.get(index) ?? []]
+      .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }))
+    order.set(index, row)
+    row.forEach((node, column) => columnOf.set(node.ciId, column))
+  }
 
-      const difference = weight(a) - weight(b)
-      return difference !== 0 ? difference : a.name.localeCompare(b.name, undefined, { sensitivity: 'base' })
+  /**
+   * One barycentre pass over a layer: a node moves to the average column of the neighbours it is
+   * joined to, keeping its current column when it has none placed. Sorting is stable and ties fall
+   * back to the existing order, so a pass never churns nodes it has no opinion about.
+   */
+  const sweep = (index: number) => {
+    const row = order.get(index) ?? []
+    const weight = new Map<string, number>()
+    row.forEach((node, column) => {
+      const placed = (neighbours.get(node.ciId) ?? [])
+        .map((other) => columnOf.get(other))
+        .filter((column): column is number => column !== undefined)
+      weight.set(node.ciId, placed.length === 0
+        ? column
+        : placed.reduce((total, value) => total + value, 0) / placed.length)
     })
 
+    const resorted = [...row].sort((a, b) => (weight.get(a.ciId) ?? 0) - (weight.get(b.ciId) ?? 0))
+    order.set(index, resorted)
+    resorted.forEach((node, column) => columnOf.set(node.ciId, column))
+  }
+
+  /**
+   * Sweeps alternate down the layers and back up, four times.
+   *
+   * A single downward pass only ever weighs a node against the layer above it, so the widest layers
+   * — the leaves, which is most of this estate — are ordered by whatever their parents happened to
+   * do and nothing pulls a parent back over its children. Alternating is the standard Sugiyama
+   * ordering heuristic and it is what stops long edges raking across the whole picture. Four is
+   * empirical: the arrangement stops moving well before it, and this runs on every graph change.
+   */
+  for (let iteration = 0; iteration < 4; iteration++) {
+    for (const index of layers) sweep(index)
+    for (const index of [...layers].reverse()) sweep(index)
+  }
+
+  const positions = new Map<string, Position>()
+  for (const index of layers) {
+    const ordered = order.get(index) ?? []
     const width = ordered.length * nodeWidth + Math.max(0, ordered.length - 1) * gapX
     ordered.forEach((node, column) => {
-      columnOf.set(node.ciId, column)
       positions.set(node.ciId, {
         x: column * (nodeWidth + gapX) - width / 2,
         y: index * (nodeHeight + gapY),
