@@ -88,17 +88,14 @@ export function SlaPage() {
   }
 
   return <div className="space-y-6">
-    <Link to="/admin/settings" className="inline-flex items-center gap-2 text-sm text-slate-500 hover:text-blue-600"><ArrowLeft size={17} />Back to settings</Link>
-
-    <div className="flex flex-col gap-4 sm:flex-row sm:items-end">
-      <div>
-        <h1 className="text-[28px] font-bold">Service levels</h1>
-        <p className="mt-1 text-sm text-slate-500">
-          A new ticket takes the <strong>first</strong> policy below whose conditions it meets, so the order is
-          the rule. Editing one reaches new tickets only — a clock already running keeps the target it started with.
-        </p>
-      </div>
-      <Button className="sm:ml-auto" onClick={() => { save.reset(); setEditing(null); setCreating(true) }}>
+    <div className="flex flex-wrap items-center gap-3">
+      <Link to="/admin/settings" className="inline-flex items-center gap-2 text-sm text-slate-500 hover:text-blue-600"><ArrowLeft size={17} />Back to settings</Link>
+      {/* Order is the rule here, so it stays on the screen that lets you reorder rather than in the topbar. */}
+      <p className="text-sm text-slate-500">
+        A new ticket takes the <strong>first</strong> policy below whose conditions it meets. Editing one
+        reaches new tickets only — a clock already running keeps the target it started with.
+      </p>
+      <Button className="ml-auto" onClick={() => { save.reset(); setEditing(null); setCreating(true) }}>
         <Plus size={18} />New policy
       </Button>
     </div>

@@ -15,8 +15,6 @@ export function PeopleListPage() {
       .some((field) => field.toLowerCase().includes(term)))
 
   return <div className="space-y-6">
-    <div><h1 className="text-[28px] font-bold">People</h1><p className="mt-1 text-sm text-slate-500">Everyone in the directory, with the assets they hold and the tickets they raised.</p></div>
-
     <section className="rounded-xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
       <div className="border-b border-slate-200 p-4 dark:border-slate-800">
         <label className="flex h-10 max-w-md items-center gap-2 rounded-lg border border-slate-200 px-3 text-slate-500 dark:border-slate-700">

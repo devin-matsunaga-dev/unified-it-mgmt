@@ -54,14 +54,9 @@ export function DriftReportPage() {
   const summary = report?.summary
 
   return <div className="space-y-6">
-    <div className="flex flex-col gap-4 sm:flex-row sm:items-end">
-      <div>
-        <h1 className="text-[28px] font-bold">Drift</h1>
-        <p className="mt-1 text-sm text-slate-500">
-          What the CMDB records, beside what the last scan observed. Nothing here is applied for you —
-          every line is a decision about which of the two is wrong.
-        </p>
-      </div>
+    <div className="flex flex-wrap items-center gap-3">
+      {/* The warning belongs beside the rows it is about, not in a topbar subtitle. */}
+      <p className="text-sm text-slate-500">Nothing here is applied for you — every line is a decision about which of the two is wrong.</p>
       <div className="flex flex-wrap gap-2 sm:ml-auto">
         <Button variant="secondary" onClick={() => navigate('/audits')}><ScanSearch size={18} />Physical audits</Button>
         <Button variant="secondary" onClick={() => navigate('/assets/discovery')}><Radar size={18} />Review queue</Button>

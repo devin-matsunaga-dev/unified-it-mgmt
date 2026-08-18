@@ -124,12 +124,9 @@ export function CiListPage() {
   const goToPage = (next: number) => setFilter((current) => ({ ...current, page: Math.min(Math.max(next, 1), lastPage) }))
 
   return <div className="space-y-6">
-    <div className="flex flex-col gap-4 sm:flex-row sm:items-end">
-      <div><h1 className="text-[28px] font-bold">Assets</h1><p className="mt-1 text-sm text-slate-500">The configuration items every ticket, alert, and device links back to.</p></div>
-      <div className="flex gap-2 sm:ml-auto">
-        <Button variant="secondary" onClick={() => navigate('/assets/import')}><Upload size={18} />Import</Button>
-        <Button onClick={() => { setEditing(null); setDialogOpen(true) }}><Plus size={18} />New CI</Button>
-      </div>
+    <div className="flex flex-wrap justify-end gap-2">
+      <Button variant="secondary" onClick={() => navigate('/assets/import')}><Upload size={18} />Import</Button>
+      <Button onClick={() => { setEditing(null); setDialogOpen(true) }}><Plus size={18} />New CI</Button>
     </div>
 
     {/*

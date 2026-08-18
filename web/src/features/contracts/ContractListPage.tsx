@@ -61,12 +61,8 @@ export function ContractListPage() {
   const goToPage = (next: number) => setFilter((current) => ({ ...current, page: Math.min(Math.max(next, 1), lastPage) }))
 
   return <div className="space-y-6">
-    <div className="flex flex-col gap-4 sm:flex-row sm:items-end">
-      <div>
-        <h1 className="text-[28px] font-bold">Contracts</h1>
-        <p className="mt-1 text-sm text-slate-500">Support, warranty and lease agreements, and the assets they cover.</p>
-      </div>
-      <div className="flex flex-wrap gap-2 sm:ml-auto">
+    <div className="flex flex-wrap justify-end gap-2">
+      <div className="flex flex-wrap gap-2">
         <Button variant="secondary" disabled={runNotices.isPending} onClick={() => runNotices.mutate()}>
           <BellRing size={18} />{runNotices.isPending ? 'Checking…' : 'Check renewals now'}
         </Button>

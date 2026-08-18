@@ -7,6 +7,7 @@ import { knowledgeApi, type KbArticle, type KbArticleStatus } from '../../api/kn
 import { Button } from '../../components/ui/Button'
 import { formatLocal } from '../tickets/ticketUi'
 import { ArticleBody, KbStatusPill, kbTransitionLabel } from './knowledgeUi'
+import { usePageHeading } from '../../layout/pageHeading'
 
 /**
  * One article: what it says, what it used to say, and the two buttons that decide whether anybody outside
@@ -24,6 +25,7 @@ export function KbArticlePage() {
   const [showHistory, setShowHistory] = useState(false)
 
   const article = useQuery({ queryKey: ['kb-article', id], queryFn: () => knowledgeApi.get(id), enabled: Boolean(id) })
+  usePageHeading(article.data ? { title: article.data.title } : null)
 
   const refresh = async () => {
     await queryClient.invalidateQueries({ queryKey: ['kb-article', id] })

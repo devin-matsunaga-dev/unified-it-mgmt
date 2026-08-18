@@ -9,6 +9,7 @@ import { LiveIndicator } from './LiveIndicator'
 import { metricRanges, parseSeriesKey, seriesKey, windowFor, type RangeKey } from './metricRanges'
 import { SeverityPill, formatAge, formatLocal, statusDot, statusLabel, statusTone } from './severity'
 import { useMonitoringHub } from './useMonitoringHub'
+import { usePageHeading } from '../../layout/pageHeading'
 
 /**
  * Recharts is a third of the bundle and this is the only screen that draws a chart, so it is split
@@ -29,6 +30,7 @@ export function DeviceDetailPage() {
   const [selectedInterface, setSelectedInterface] = useState<number | null>(null)
 
   const device = useQuery({ queryKey: ['monitoring', 'device', id], queryFn: () => monitoringApi.getDevice(id) })
+  usePageHeading(device.data ? { title: device.data.ciName ?? device.data.address } : null)
   const tile = useQuery({ queryKey: ['monitoring', 'device-tile', id], queryFn: () => monitoringApi.statusBoard({ pageSize: 200 }).then((board) => board.items.find((item) => item.deviceId === id) ?? null) })
   const checks = useQuery({ queryKey: ['monitoring', 'checks', id], queryFn: () => monitoringApi.listChecks(id) })
   const metrics = useQuery({ queryKey: ['monitoring', 'metrics', id], queryFn: () => monitoringApi.listMetrics(id) })

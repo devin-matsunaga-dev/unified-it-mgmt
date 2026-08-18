@@ -1,4 +1,4 @@
-import { AppWindow, Bell, BookOpen, Boxes, CalendarClock, ClipboardCheck, Radar, FileText, ChevronRight, CircleHelp, Contact, Gauge, GitCompareArrows, Headphones, LogOut, Mail, Menu, MonitorCog, ScanLine, Settings, ShieldCheck, ShieldQuestion, Users, Waypoints, X } from 'lucide-react'
+import { PanelLeftClose, PanelLeftOpen, AppWindow, Bell, BookOpen, Boxes, CalendarClock, ClipboardCheck, Radar, FileText, ChevronRight, CircleHelp, Contact, Gauge, GitCompareArrows, Headphones, LogOut, Mail, Menu, MonitorCog, ScanLine, Settings, ShieldCheck, ShieldQuestion, Users, Waypoints, X } from 'lucide-react'
 import { useEffect, useRef, useState, type ComponentType } from 'react'
 import { NavLink, Outlet, useLocation } from 'react-router-dom'
 import { useAuth } from '../auth/AuthProvider'
@@ -7,6 +7,7 @@ import { cn } from '../lib/utils'
 import { ThemeToggle } from '../components/ThemeToggle'
 import { Button } from '../components/ui/Button'
 import { GlobalSearch } from '../features/search/GlobalSearch'
+import { PageHeadingContext, headingForPath, type PageHeading } from './pageHeading'
 
 type NavItem = { label: string; to: string; icon: ComponentType<{ size?: number }>; roles?: AppRole[] }
 const navigation: NavItem[] = [
@@ -29,24 +30,72 @@ const navigation: NavItem[] = [
   { label: 'Settings', to: '/admin/settings', icon: Settings, roles: ['Admin'] },
 ]
 
+/** Per browser, like the table arrangements: how much room somebody wants is a personal preference. */
+const collapsedKey = 'shell:nav-collapsed'
+
+function readCollapsed(): boolean {
+  try {
+    return localStorage.getItem(collapsedKey) === 'true'
+  } catch {
+    return false
+  }
+}
+
 export function AppShell() {
   const { pathname } = useLocation()
   const { user, roles, signOut } = useAuth()
   const [open, setOpen] = useState(false)
+  const [collapsed, setCollapsed] = useState(readCollapsed)
+  /**
+   * What the sidebar was before the browser went full screen, so leaving full screen puts it back.
+   * A ref rather than state: nothing renders from it, and it must not cause a pass of its own.
+   */
+  const beforeFullscreen = useRef<boolean | null>(null)
   const [accountOpen, setAccountOpen] = useState(false)
   const accountMenuRef = useRef<HTMLDivElement>(null)
   const visibleNavigation = navigation.filter((item) => !item.roles || item.roles.some((role) => roles.includes(role)))
   const displayName = user?.profile.name ?? user?.profile.preferred_username ?? 'User'
   const email = user?.profile.email
-  const pageContext = pathname.startsWith('/tickets')
-    ? { title: 'Tickets', subtitle: 'Manage requests across the service desk.' }
-    : pathname.startsWith('/problems')
-      ? { title: 'Problems', subtitle: 'The causes behind repeated incidents, and their known errors.' }
-    : pathname.startsWith('/knowledge')
-      ? { title: 'Knowledge', subtitle: 'The answers already written down, and who can see them.' }
-    : pathname.startsWith('/monitoring')
-      ? { title: 'Monitoring', subtitle: 'Live device status and alerts across the estate.' }
-      : { title: 'Overview', subtitle: 'Your unified IT environment at a glance.' }
+  /**
+   * The page's own heading, which a page overrides once it knows a record's name. The route table is
+   * what stands there until then, and for every page whose title never changes.
+   */
+  const [heading, setHeading] = useState<PageHeading | null>(null)
+  const pageContext = heading ?? headingForPath(pathname)
+
+  /**
+   * Full screen collapses the navigation and leaving it restores what was there before.
+   *
+   * The stored preference is deliberately not written while full screen, so a temporary collapse
+   * does not become the answer somebody gets on their next ordinary visit. The toggle still works
+   * in full screen — this sets the state, it does not lock it.
+   */
+  useEffect(() => {
+    const onFullscreenChange = () => {
+      if (document.fullscreenElement !== null) {
+        beforeFullscreen.current = collapsed
+        setCollapsed(true)
+        return
+      }
+
+      if (beforeFullscreen.current !== null) {
+        setCollapsed(beforeFullscreen.current)
+        beforeFullscreen.current = null
+      }
+    }
+
+    document.addEventListener('fullscreenchange', onFullscreenChange)
+    return () => document.removeEventListener('fullscreenchange', onFullscreenChange)
+  }, [collapsed])
+
+  useEffect(() => {
+    if (beforeFullscreen.current !== null) return
+    try {
+      localStorage.setItem(collapsedKey, String(collapsed))
+    } catch {
+      // A blocked store forgets the preference; it must not take the shell down.
+    }
+  }, [collapsed])
 
   useEffect(() => {
     if (!accountOpen) return
@@ -67,7 +116,13 @@ export function AppShell() {
   return <div className="min-h-screen bg-slate-50 text-slate-900 dark:bg-slate-950 dark:text-slate-100">
     <Button variant="secondary" className="fixed left-4 top-4 z-50 size-10 p-0 lg:hidden" aria-label="Open navigation" onClick={() => setOpen(true)}><Menu /></Button>
     {open && <button className="fixed inset-0 z-30 bg-slate-950/50 lg:hidden" aria-label="Close navigation" onClick={() => setOpen(false)} />}
-    <aside className={cn('fixed inset-y-0 left-0 z-40 flex w-[232px] flex-col bg-slate-900 px-3 py-5 text-white transition-transform lg:translate-x-0', open ? 'translate-x-0' : '-translate-x-full')}>
+    <aside
+      // Hidden from assistive technology as well as from view: a sidebar translated off screen is
+      // still in the tab order, and a keyboard would walk into navigation nobody can see.
+      aria-hidden={collapsed && !open}
+      className={cn('fixed inset-y-0 left-0 z-40 flex w-[232px] flex-col bg-slate-900 px-3 py-5 text-white transition-transform',
+        collapsed ? 'lg:-translate-x-full' : 'lg:translate-x-0',
+        open ? 'translate-x-0' : '-translate-x-full')}>
       <div className="mb-6 flex h-10 items-center gap-3 border-b border-slate-800 px-2 pb-5 box-content">
         <div className="grid size-9 place-items-center rounded-lg bg-blue-600"><ShieldCheck size={22} /></div><span className="text-xl font-bold">ITManager</span>
         <button className="ml-auto lg:hidden" aria-label="Close navigation" onClick={() => setOpen(false)}><X /></button>
@@ -91,13 +146,29 @@ export function AppShell() {
         </button>
       </div>
     </aside>
-    <main className="min-h-screen lg:ml-[232px]">
+    <main className={cn('min-h-screen transition-[margin]', collapsed ? 'lg:ml-0' : 'lg:ml-[232px]')}>
       <header className="flex min-h-20 items-center gap-3 border-b border-slate-200 bg-white px-6 dark:border-slate-800 dark:bg-slate-900 lg:px-7">
-        <div className="ml-12 lg:ml-0"><h1 className="text-xl font-bold sm:text-2xl">{pageContext.title}</h1><p className="hidden text-sm text-slate-500 sm:block">{pageContext.subtitle}</p></div>
+        {/*
+          * Desktop only: below lg the sidebar is already a drawer with its own button, and a second
+          * control for the same thing would be two ways to do one job.
+          */}
+        <Button variant="ghost" className="hidden size-10 shrink-0 p-0 lg:inline-flex"
+          aria-label={collapsed ? 'Show navigation' : 'Hide navigation'}
+          aria-expanded={!collapsed}
+          onClick={() => setCollapsed((current) => !current)}>
+          {collapsed ? <PanelLeftOpen size={20} /> : <PanelLeftClose size={20} />}
+        </Button>
+        {/* min-w-0 so a long record name shortens rather than shoving the search off the bar. */}
+        <div className="ml-12 min-w-0 lg:ml-0">
+          <h1 className="truncate text-xl font-bold sm:text-2xl">{pageContext.title}</h1>
+          {pageContext.subtitle && <p className="hidden truncate text-sm text-slate-500 sm:block">{pageContext.subtitle}</p>}
+        </div>
         <GlobalSearch />
         <ThemeToggle /><Button variant="ghost" className="relative size-10 p-0" aria-label="Notifications"><Bell size={20} /><span className="absolute right-1 top-1 grid size-4 place-items-center rounded-full bg-blue-600 text-[10px] text-white">3</span></Button><Button variant="ghost" className="hidden size-10 p-0 sm:inline-flex" aria-label="Help"><CircleHelp size={20} /></Button>
       </header>
-      <div className="p-4 sm:p-6"><Outlet /></div>
+      <div className="p-4 sm:p-6">
+        <PageHeadingContext.Provider value={setHeading}><Outlet /></PageHeadingContext.Provider>
+      </div>
     </main>
   </div>
 }

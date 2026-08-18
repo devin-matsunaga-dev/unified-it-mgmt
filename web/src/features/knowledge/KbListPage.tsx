@@ -37,17 +37,8 @@ export function KbListPage() {
   const draftCount = items.filter((article) => article.status === 'Draft').length
 
   return <div className="space-y-6">
-    <div className="flex flex-col gap-4 sm:flex-row sm:items-end">
-      <div>
-        <h1 className="text-[28px] font-bold">Knowledge</h1>
-        <p className="mt-1 text-sm text-slate-500">
-          The answers the service desk has already written down — offered while a ticket is being typed, and
-          searchable from the portal once they are published.
-        </p>
-      </div>
-      <div className="sm:ml-auto">
-        <Button onClick={() => setCreating(true)}><Plus size={18} />New article</Button>
-      </div>
+    <div className="flex flex-wrap justify-end gap-2">
+      <Button onClick={() => setCreating(true)}><Plus size={18} />New article</Button>
     </div>
 
     <div className="grid gap-4 sm:grid-cols-3">

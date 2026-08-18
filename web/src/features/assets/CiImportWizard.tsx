@@ -82,13 +82,7 @@ export function CiImportWizard() {
   })
 
   return <div className="space-y-6">
-    <div className="flex flex-col gap-4 sm:flex-row sm:items-end">
-      <div>
-        <Link to="/assets" className="inline-flex items-center gap-1 text-[13px] text-slate-500 hover:text-blue-600"><ArrowLeft size={15} />Assets</Link>
-        <h1 className="mt-1 text-[28px] font-bold">Import configuration items</h1>
-        <p className="mt-1 text-sm text-slate-500">Upload a CSV or Excel file, map its columns, and review the dry run before anything is written.</p>
-      </div>
-    </div>
+    <Link to="/assets" className="inline-flex items-center gap-1 text-[13px] text-slate-500 hover:text-blue-600"><ArrowLeft size={15} />Assets</Link>
 
     <ol className="flex flex-wrap gap-2 text-[13px]">
       {(['file', 'map', 'preview', 'done'] as const).map((name, index) => <li key={name}

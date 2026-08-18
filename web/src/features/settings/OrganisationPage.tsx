@@ -105,14 +105,9 @@ export function OrganisationPage() {
   const siteList = sites.data ?? []
 
   return <div className="space-y-6">
-    <Link to="/admin/settings" className="inline-flex items-center gap-2 text-sm text-slate-500 hover:text-blue-600"><ArrowLeft size={17} />Back to settings</Link>
-
-    <div className="flex flex-col gap-4 sm:flex-row sm:items-end">
-      <div>
-        <h1 className="text-[28px] font-bold">Departments and locations</h1>
-        <p className="mt-1 text-sm text-slate-500">A department can operate at any number of locations, and a location can hold any number of departments.</p>
-      </div>
-      <Button className="sm:ml-auto" onClick={() => { setEditingDepartment(null); setEditingSite(null); setDialog(tab) }}>
+    <div className="flex flex-wrap items-center gap-3">
+      <Link to="/admin/settings" className="inline-flex items-center gap-2 text-sm text-slate-500 hover:text-blue-600"><ArrowLeft size={17} />Back to settings</Link>
+      <Button className="ml-auto" onClick={() => { setEditingDepartment(null); setEditingSite(null); setDialog(tab) }}>
         <Plus size={18} />{tab === 'departments' ? 'New department' : 'New location'}
       </Button>
     </div>

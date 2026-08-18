@@ -13,6 +13,7 @@ import {
 } from '../../api/assets'
 import { Button } from '../../components/ui/Button'
 import { DiscoveryApproveDialog } from './DiscoveryApproveDialog'
+import { usePageHeading } from '../../layout/pageHeading'
 
 /**
  * What the scans found and nothing in the CMDB claims. The human end of WP-4.2: everything the matcher
@@ -67,13 +68,10 @@ export function DiscoveryReviewPage() {
   const total = queue.data?.total ?? 0
   const lastPage = Math.max(Math.ceil(total / pageSize), 1)
   const activeTab = tabs.find((tab) => tab.value === filter.status) ?? tabs[0]
+  usePageHeading({ title: 'Discovery review', subtitle: activeTab.blurb })
 
   return <div className="space-y-6">
-    <div className="flex flex-wrap items-end justify-between gap-4">
-      <div>
-        <h1 className="text-[28px] font-bold">Discovery review</h1>
-        <p className="mt-1 text-sm text-slate-500">{activeTab.blurb}</p>
-      </div>
+    <div className="flex flex-wrap items-center justify-end gap-4">
       <div className="relative">
         <Search size={18} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
         <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Address, hostname or description"

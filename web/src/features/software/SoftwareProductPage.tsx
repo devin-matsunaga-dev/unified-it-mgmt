@@ -14,6 +14,7 @@ import {
   type SoftwareMatchKind,
 } from '../../api/software'
 import { Button } from '../../components/ui/Button'
+import { usePageHeading } from '../../layout/pageHeading'
 
 /**
  * One product: which machines carry it, what entitles them, and the rules that decide what counts as
@@ -55,6 +56,7 @@ export function SoftwareProductPage() {
   })
 
   const row = compliance.data?.rows.find((candidate) => candidate.productId === id)
+  usePageHeading(row ? { title: row.productName } : null)
 
   return <div className="space-y-6">
     <div>

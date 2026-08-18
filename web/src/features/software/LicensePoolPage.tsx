@@ -55,15 +55,10 @@ export function LicensePoolPage() {
   })
 
   return <div className="space-y-6">
-    <div className="flex flex-col gap-4 sm:flex-row sm:items-end">
-      <div>
-        <Link to="/software" className="inline-flex items-center gap-1 text-[13px] text-slate-500 hover:text-blue-600"><ArrowLeft size={15} />Back to software</Link>
-        <h1 className="mt-2 text-[28px] font-bold">Licences</h1>
-        <p className="mt-1 text-sm text-slate-500">Entitlement blocks per product. An expired pool entitles nothing from the day it lapses.</p>
-      </div>
-      <div className="flex flex-wrap gap-2 sm:ml-auto">
-        <Button onClick={() => { setEditing(null); setDialogOpen(true) }}><Plus size={18} />New licence pool</Button>
-      </div>
+    <div className="flex flex-wrap items-center gap-3">
+      <Link to="/software" className="inline-flex items-center gap-1 text-[13px] text-slate-500 hover:text-blue-600"><ArrowLeft size={15} />Back to software</Link>
+      <p className="text-sm text-slate-500">An expired pool entitles nothing from the day it lapses.</p>
+      <Button className="ml-auto" onClick={() => { setEditing(null); setDialogOpen(true) }}><Plus size={18} />New licence pool</Button>
     </div>
 
     <section className="rounded-xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">

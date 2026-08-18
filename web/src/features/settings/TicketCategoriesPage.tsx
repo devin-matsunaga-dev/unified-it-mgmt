@@ -70,13 +70,9 @@ export function TicketCategoriesPage() {
   const inactiveCount = flatten(tree).filter((row) => !row.category.isActive).length
 
   return <div className="space-y-6">
-    <Link to="/admin/settings" className="inline-flex items-center gap-2 text-sm text-slate-500 hover:text-blue-600"><ArrowLeft size={17} />Back to settings</Link>
-
-    <div className="flex flex-col gap-4 sm:flex-row sm:items-end">
-      <div>
-        <h1 className="text-[28px] font-bold">Ticket categories</h1>
-        <p className="mt-1 text-sm text-slate-500">What people choose when they raise a ticket. Nests up to {maximumDepth} levels deep.</p>
-      </div>
+    <div className="flex flex-wrap items-center gap-3">
+      <Link to="/admin/settings" className="inline-flex items-center gap-2 text-sm text-slate-500 hover:text-blue-600"><ArrowLeft size={17} />Back to settings</Link>
+      <p className="text-sm text-slate-500">Nests up to {maximumDepth} levels deep.</p>
       <div className="flex items-center gap-4 sm:ml-auto">
         {inactiveCount > 0 && <label className="flex items-center gap-2 text-[13px] font-medium text-slate-600 dark:text-slate-300">
           <input type="checkbox" className="size-4 rounded border-slate-300 text-blue-600 focus-visible:ring-2 focus-visible:ring-blue-500"

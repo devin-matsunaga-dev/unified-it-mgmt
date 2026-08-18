@@ -15,6 +15,7 @@ import { directoryApi } from '../../api/directory'
 import { Button } from '../../components/ui/Button'
 import { ciLifecycleLabel, ciLifecycleTone } from '../assets/lifecycle'
 import { ContractFormDialog } from './ContractFormDialog'
+import { usePageHeading } from '../../layout/pageHeading'
 
 /** One agreement: its terms, and every CI it covers. */
 export function ContractDetailPage() {
@@ -24,6 +25,7 @@ export function ContractDetailPage() {
   const [editing, setEditing] = useState(false)
 
   const contract = useQuery({ queryKey: ['contracts', id], queryFn: () => contractsApi.getContract(id), enabled: Boolean(id) })
+  usePageHeading(contract.data ? { title: contract.data.name } : null)
   const [covered, vendors, users] = useQueries({ queries: [
     { queryKey: ['cis', { contractId: id }], queryFn: () => assetsApi.listCis({ contractId: id, pageSize: 200 }), enabled: Boolean(id) },
     { queryKey: ['vendors'], queryFn: () => contractsApi.listVendors() },

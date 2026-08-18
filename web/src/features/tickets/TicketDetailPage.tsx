@@ -11,6 +11,7 @@ import { CannedResponsePicker } from './CannedResponsePicker'
 import { LinkedAssetsCard } from './LinkedAssetsCard'
 import { RelatedProblemsCard } from './RelatedProblemsCard'
 import { PriorityPill, StatusPill, displayStatus, formatLocal, formatRemaining, slaIcon, ticketStatuses } from './ticketUi'
+import { usePageHeading } from '../../layout/pageHeading'
 
 const workflow = ticketStatuses
 type TimelineItem = { id: string; at: string; kind: 'comment' | 'transition' | 'assignment'; internal?: boolean; actor: string; title: string; detail?: string }
@@ -25,6 +26,7 @@ export function TicketDetailPage() {
   const [resolutionNote, setResolutionNote] = useState('')
   const ticket = useQuery({ queryKey: ['tickets', id], queryFn: () => helpdeskApi.getTicket(id), enabled: Boolean(id) })
   const queues = useQuery({ queryKey: ['queues'], queryFn: helpdeskApi.listQueues })
+  usePageHeading(ticket.data ? { title: ticket.data.title } : null)
   const related = useQueries({ queries: [
     { queryKey: ['tickets', id, 'comments'], queryFn: () => helpdeskApi.getComments(id), enabled: Boolean(id) },
     { queryKey: ['tickets', id, 'transitions'], queryFn: () => helpdeskApi.getTransitions(id), enabled: Boolean(id) },

@@ -7,6 +7,8 @@ import { ApiError } from '../../api/client'
 import { monitoringApi, type Alert, type AlertPage, type DeviceStatusTile, type StatusBoard } from '../../api/monitoring'
 import { topologyApi, type Topology, type TopologyMap } from '../../api/topology'
 import type { MonitoringHubEvents } from '../monitoring/useMonitoringHub'
+import { useState, type ReactNode } from 'react'
+import { PageHeadingContext, type PageHeading } from '../../layout/pageHeading'
 import { TopologyPage } from './TopologyPage'
 
 vi.mock('../../api/topology', async (original) => {
@@ -162,12 +164,26 @@ function openAlert(overrides: Partial<Alert>): Alert {
   } as Alert
 }
 
+/**
+ * The page's title and its "what am I looking at" line are published to the shell's topbar rather
+ * than drawn here, so the harness stands in for the shell and renders what the page hands it.
+ */
 function renderPage() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   return render(
     <QueryClientProvider client={client}>
-      <MemoryRouter><TopologyPage /></MemoryRouter>
+      <MemoryRouter>
+        <ShellHeading><TopologyPage /></ShellHeading>
+      </MemoryRouter>
     </QueryClientProvider>)
+}
+
+function ShellHeading({ children }: { children: ReactNode }) {
+  const [heading, setHeading] = useState<PageHeading | null>(null)
+  return <PageHeadingContext.Provider value={setHeading}>
+    <p>{heading?.subtitle}</p>
+    {children}
+  </PageHeadingContext.Provider>
 }
 
 beforeEach(() => {

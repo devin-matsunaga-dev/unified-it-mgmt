@@ -65,18 +65,13 @@ export function ChangeCalendarPage() {
   const muting = (windows.data?.items ?? []).filter((window) => window.status === 'InProgress').length
 
   return <div className="space-y-6">
-    <div className="flex flex-col gap-4 sm:flex-row sm:items-end">
-      <div>
-        <h1 className="text-[28px] font-bold">Changes</h1>
-        <p className="mt-1 text-sm text-slate-500">
-          Planned work on the estate. Approving a change opens a maintenance window over the items it
-          covers, so the alerts the work itself causes are withheld for exactly as long as it was agreed
-          to take.
-        </p>
-      </div>
-      <div className="flex flex-wrap gap-2 sm:ml-auto">
-        <Button onClick={() => setCreating(true)}><Plus size={18} />New change</Button>
-      </div>
+    <div className="flex flex-wrap items-center gap-3">
+      {/* What approval actually does is the thing nobody guesses, so it stays on the screen. */}
+      <p className="text-sm text-slate-500">
+        Approving a change opens a maintenance window over the items it covers, so the alerts the work
+        itself causes are withheld for exactly as long as it was agreed to take.
+      </p>
+      <Button className="ml-auto" onClick={() => setCreating(true)}><Plus size={18} />New change</Button>
     </div>
 
     <div className="grid gap-4 sm:grid-cols-3">

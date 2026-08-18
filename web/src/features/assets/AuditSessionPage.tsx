@@ -13,6 +13,7 @@ import {
 } from '../../api/reconciliation'
 import { Button } from '../../components/ui/Button'
 import { ciLifecycleLabel, ciLifecycleTone } from './lifecycle'
+import { usePageHeading } from '../../layout/pageHeading'
 
 /**
  * One count, being walked. The scan box is the working half — a wedge scanner types a code and presses
@@ -30,6 +31,7 @@ export function AuditSessionPage() {
     queryFn: () => reconciliationApi.getAuditReport(id),
     enabled: id !== '',
   })
+  usePageHeading(report.data ? { title: report.data.session.name } : null)
 
   // A wedge scanner fires its code and its Enter at whatever moment the trigger is pulled, so the
   // field has to hold focus before anybody thinks to tap it — the same rule WP-2.7's scan page follows.

@@ -7,6 +7,7 @@ import { helpdeskApi, type Ticket as HelpdeskTicket } from '../../api/helpdesk'
 import { Button } from '../../components/ui/Button'
 import { ciLifecycleLabel, ciLifecycleTone } from '../assets/lifecycle'
 import { PriorityPill, StatusPill, formatLocal } from '../tickets/ticketUi'
+import { usePageHeading } from '../../layout/pageHeading'
 
 /**
  * A person's 360° page: the assets they hold and the tickets they are in. Assets are keyed by the
@@ -16,6 +17,7 @@ export function UserDetailPage() {
   const { userId = '' } = useParams()
   const users = useQuery({ queryKey: ['directory', 'users'], queryFn: directoryApi.listUsers })
   const user = users.data?.find((entry) => entry.id === userId)
+  usePageHeading(user ? { title: user.displayName } : null)
 
   const [assets, requested, assigned] = useQueries({ queries: [
     { queryKey: ['cis', { ownerUserId: userId }], queryFn: () => assetsApi.listCis({ ownerUserId: userId, pageSize: 50 }), enabled: Boolean(userId) },

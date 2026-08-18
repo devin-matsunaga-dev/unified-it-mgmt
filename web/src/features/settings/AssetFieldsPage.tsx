@@ -70,17 +70,14 @@ export function AssetFieldsPage() {
   const fields = schema?.customFields ?? []
 
   return <div className="space-y-6">
-    <Link to="/admin/settings" className="inline-flex items-center gap-2 text-sm text-slate-500 hover:text-blue-600"><ArrowLeft size={17} />Back to settings</Link>
-
-    <div className="flex flex-col gap-4 sm:flex-row sm:items-end">
-      <div>
-        <h1 className="text-[28px] font-bold">Asset fields</h1>
-        <p className="mt-1 text-sm text-slate-500">
-          Extra fields each kind of CI carries. A “choose one” field becomes a filter on the asset list —
-          which is how hardware is split into laptops, desktops and printers.
-        </p>
-      </div>
-      <Button className="sm:ml-auto" onClick={() => { create.reset(); setEditing(null); setDialogOpen(true) }}>
+    <div className="flex flex-wrap items-center gap-3">
+      <Link to="/admin/settings" className="inline-flex items-center gap-2 text-sm text-slate-500 hover:text-blue-600"><ArrowLeft size={17} />Back to settings</Link>
+      {/* The rule the topbar subtitle has no room for, and the reason the tabs below are worth using. */}
+      <p className="hidden text-sm text-slate-500 xl:block">
+        A “choose one” field becomes a filter on the asset list — which is how hardware is split into
+        laptops, desktops and printers.
+      </p>
+      <Button className="ml-auto" onClick={() => { create.reset(); setEditing(null); setDialogOpen(true) }}>
         <Plus size={18} />New field
       </Button>
     </div>

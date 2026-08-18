@@ -10,6 +10,7 @@ import { Button } from '../../components/ui/Button'
 import { formatLocal } from '../tickets/ticketUi'
 import { formatPeriod } from './changeCalendar'
 import { ChangeStatusPill, WindowStatusPill, changeActionLabel, coverageSummary } from './changeUi'
+import { usePageHeading } from '../../layout/pageHeading'
 
 /**
  * One change: what it covers, where it stands, and — once approved — the maintenance window it opened.
@@ -23,6 +24,7 @@ export function ChangeDetailPage() {
   const queryClient = useQueryClient()
 
   const change = useQuery({ queryKey: ['changes', id], queryFn: () => changesApi.get(id) })
+  usePageHeading(change.data ? { title: change.data.title } : null)
 
   // Only once approved: before that there is nothing to find, and asking would make every draft page
   // carry a request whose only possible answer is "no".

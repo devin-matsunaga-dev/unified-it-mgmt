@@ -62,15 +62,8 @@ export function ProblemListPage() {
   const knownErrorCount = items.filter((problem) => problem.isKnownError).length
 
   return <div className="space-y-6">
-    <div className="flex flex-col gap-4 sm:flex-row sm:items-end">
-      <div>
-        <h1 className="text-[28px] font-bold">Problems</h1>
-        <p className="mt-1 text-sm text-slate-500">
-          The causes behind repeated incidents, and the known errors people can work around while they are
-          being fixed.
-        </p>
-      </div>
-      <div className="flex flex-wrap gap-2 sm:ml-auto">
+    <div className="flex flex-wrap justify-end gap-2">
+      <div className="flex flex-wrap gap-2">
         <Button variant="secondary" disabled={detect.isPending} onClick={() => detect.mutate()}>
           <Radar size={18} />{detect.isPending ? 'Looking…' : 'Look for recurrences'}
         </Button>

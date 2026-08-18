@@ -41,12 +41,8 @@ export function VendorListPage() {
   return <div className="space-y-6">
     <Link to="/contracts" className="inline-flex items-center gap-2 text-sm text-slate-500 hover:text-blue-600"><ArrowLeft size={17} />Back to contracts</Link>
 
-    <div className="flex flex-col gap-4 sm:flex-row sm:items-end">
-      <div>
-        <h1 className="text-[28px] font-bold">Vendors</h1>
-        <p className="mt-1 text-sm text-slate-500">Who the organisation buys from and holds agreements with.</p>
-      </div>
-      <Button className="sm:ml-auto" onClick={() => { setEditing(null); setDialogOpen(true) }}><Plus size={18} />New vendor</Button>
+    <div className="flex flex-wrap justify-end gap-2">
+      <Button onClick={() => { setEditing(null); setDialogOpen(true) }}><Plus size={18} />New vendor</Button>
     </div>
 
     <section className="rounded-xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">

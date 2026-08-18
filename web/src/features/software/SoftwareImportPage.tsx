@@ -43,11 +43,7 @@ export function SoftwareImportPage() {
   return <div className="space-y-6">
     <div>
       <Link to="/software" className="inline-flex items-center gap-1 text-[13px] text-slate-500 hover:text-blue-600"><ArrowLeft size={15} />Back to software</Link>
-      <h1 className="mt-2 text-[28px] font-bold">Import software inventory</h1>
-      <p className="mt-1 text-sm text-slate-500">
-        A CSV or Excel export from an agent, an RMM or a WMI/SSH collection script. Each row is one piece
-        of software on one machine.
-      </p>
+      <p className="mt-2 text-sm text-slate-500">Each row is one piece of software on one machine.</p>
     </div>
 
     <section className="rounded-xl border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-slate-900">

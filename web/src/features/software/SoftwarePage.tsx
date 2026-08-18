@@ -76,12 +76,8 @@ export function SoftwarePage() {
   const report = compliance.data
 
   return <div className="space-y-6">
-    <div className="flex flex-col gap-4 sm:flex-row sm:items-end">
-      <div>
-        <h1 className="text-[28px] font-bold">Software</h1>
-        <p className="mt-1 text-sm text-slate-500">What is installed across the estate, and how it stands against what has been bought.</p>
-      </div>
-      <div className="flex flex-wrap gap-2 sm:ml-auto">
+    <div className="flex flex-wrap justify-end gap-2">
+      <div className="flex flex-wrap gap-2">
         <Button variant="secondary" disabled={runCompliance.isPending} onClick={() => runCompliance.mutate()}>
           <BellRing size={18} />{runCompliance.isPending ? 'Checking…' : 'Check compliance now'}
         </Button>

@@ -151,7 +151,7 @@ export function TicketListPage() {
   const viewPending = saveView.isPending || updateView.isPending || deleteView.isPending
 
   return <div className="space-y-6">
-    <div className="flex flex-col gap-4 sm:flex-row sm:items-end"><div><h1 className="text-[28px] font-bold">Tickets</h1><p className="mt-1 text-sm text-slate-500">Triage, assign, and resolve service work.</p></div><Button className="sm:ml-auto" onClick={() => setCreateOpen(true)}><Plus size={18} />New ticket</Button></div>
+    <div className="flex flex-wrap justify-end gap-2"><Button onClick={() => setCreateOpen(true)}><Plus size={18} />New ticket</Button></div>
     <section className="rounded-xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
       <SavedViews views={views.data ?? []} activeView={activeView} filter={filter} pending={viewPending}
         username={account?.username ?? ''}

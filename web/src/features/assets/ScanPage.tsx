@@ -60,10 +60,9 @@ export function ScanPage() {
 
   return <div className="mx-auto max-w-xl space-y-6">
     <div>
-      <h1 className="text-[28px] font-bold">Scan an asset</h1>
-      <p className="mt-1 text-sm text-slate-500">
-        Point a phone camera at a label&apos;s QR to open its asset page. Use the box below for a handheld
-        scanner, or to look an asset up by its printed asset tag or serial number.
+      <p className="text-sm text-slate-500">
+        Use the box below for a handheld scanner, or to look an asset up by its printed asset tag or
+        serial number.
       </p>
       {/* Counting a site is the same gesture aimed at a list, so the two belong beside each other. */}
       <p className="mt-2 text-sm text-slate-500">

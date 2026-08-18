@@ -19,6 +19,7 @@ import { CiLifecycleDrawer } from './CiLifecycleDrawer'
 import { CiRelationsGraph } from './CiRelationsGraph'
 import { CiTimelinePanel } from './CiTimelinePanel'
 import { ciLifecycleLabel, ciLifecycleTone, describeAssignment } from './lifecycle'
+import { usePageHeading } from '../../layout/pageHeading'
 
 /** The asset 360° page: what the CI is, what it depends on, and every ticket ever raised about it. */
 export function CiDetailPage() {
@@ -33,6 +34,7 @@ export function CiDetailPage() {
   const ci = useQuery({ queryKey: ['cis', id], queryFn: () => assetsApi.getCi(id), enabled: Boolean(id) })
   const schemas = useQuery({ queryKey: ['ci-type-schemas'], queryFn: assetsApi.listTypeSchemas, staleTime: 0, refetchOnMount: 'always' })
   const lifecycleStates = useQuery({ queryKey: ['ci-lifecycle-states'], queryFn: assetsApi.listLifecycleStates })
+  usePageHeading(ci.data ? { title: ci.data.name } : null)
   const [tickets, history, assignments] = useQueries({ queries: [
     { queryKey: ['tickets', { ciId: id }], queryFn: () => helpdeskApi.listTickets({ ciId: id }), enabled: Boolean(id) },
     { queryKey: ['ci-lifecycle-history', id], queryFn: () => assetsApi.getLifecycleHistory(id), enabled: Boolean(id) },

@@ -29,6 +29,7 @@ import {
 import { SiteBands } from './SiteBands'
 import { defaultView, topologyViews, viewById, type TopologyView } from './views'
 import { TopologyNodeCard, type TopologyNodeData } from './TopologyNodeCard'
+import { usePageHeading } from '../../layout/pageHeading'
 
 /**
  * The board reads one page of tiles and so does this — same key, same query, so the two screens share
@@ -60,6 +61,7 @@ function TopologyCanvas() {
 
   const view = viewById(viewId)
   const types = view.types
+  usePageHeading({ title: 'Topology', subtitle: view.description })
   const topology = useQuery({
     queryKey: ['topology', { types }],
     queryFn: () => topologyApi.get(types ?? undefined),
@@ -378,12 +380,6 @@ function TopologyCanvas() {
   const isLoading = topology.isLoading || (selectedMapId !== null && savedMap.isLoading)
 
   return <div className="space-y-4">
-    <div className="flex flex-wrap items-center gap-3">
-      <h1 className="text-[28px] font-bold text-slate-900 dark:text-slate-100">Topology</h1>
-      <p className="text-sm text-slate-500">{view.description}</p>
-      <div className="ml-auto"><LiveIndicator status={hub} /></div>
-    </div>
-
     <div className="flex flex-wrap items-center gap-2">
       <div role="group" aria-label="What to show" className="flex flex-wrap gap-1">
         {topologyViews.map((option) => <button key={option.id} type="button"
@@ -439,6 +435,7 @@ function TopologyCanvas() {
       <Button onClick={onSave} disabled={!dirty || save.isPending}>
         <Save size={16} /> {selectedMapId ? 'Save layout' : 'Save as new map'}
       </Button>
+      <LiveIndicator status={hub} />
     </div>
 
     {graph?.nodeLimitReached && <p role="status"

@@ -45,11 +45,6 @@ export function SettingsPage() {
   const orgCount = departments.data?.length ?? null
 
   return <div className="space-y-6">
-    <div>
-      <h1 className="text-[28px] font-bold">Settings</h1>
-      <p className="mt-1 text-sm text-slate-500">Configuration that applies across the whole service desk.</p>
-    </div>
-
     <div className="grid gap-6 sm:grid-cols-2">
       <SettingsCard
         to="/admin/settings/ticket-categories"

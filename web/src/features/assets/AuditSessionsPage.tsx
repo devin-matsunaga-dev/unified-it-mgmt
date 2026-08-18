@@ -49,14 +49,8 @@ export function AuditSessionsPage() {
   const nameError = create.error instanceof ApiError ? create.error.errors?.name?.[0] : undefined
 
   return <div className="space-y-6">
-    <div className="flex flex-col gap-4 sm:flex-row sm:items-end">
-      <div>
-        <h1 className="text-[28px] font-bold">Physical audits</h1>
-        <p className="mt-1 text-sm text-slate-500">
-          Walk a site with a scanner and confirm what is actually there. The finding is what does not
-          turn up, so a count only means something against the list it set out to walk.
-        </p>
-      </div>
+    <div className="flex flex-wrap items-center gap-3">
+      <p className="text-sm text-slate-500">The finding is what does not turn up, so a count only means something against the list it set out to walk.</p>
       <div className="flex flex-wrap gap-2 sm:ml-auto">
         <Button variant="secondary" onClick={() => navigate('/assets/drift')}>Drift report</Button>
         <Button onClick={() => setCreating((open) => !open)}><Plus size={18} />Start a count</Button>

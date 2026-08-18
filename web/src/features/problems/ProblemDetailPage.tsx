@@ -9,6 +9,7 @@ import { Button } from '../../components/ui/Button'
 import { PriorityPill, StatusPill, formatLocal } from '../tickets/ticketUi'
 import { KnowledgeDraftDialog } from './KnowledgeDraftDialog'
 import { ProblemStatusPill, problemNextStatuses, problemStatusLabel, subjectHref, subjectLabel } from './problemUi'
+import { usePageHeading } from '../../layout/pageHeading'
 
 /**
  * One problem: what it is about, the incidents it explains, and the known-error fields that decide
@@ -28,6 +29,7 @@ export function ProblemDetailPage() {
   const [linking, setLinking] = useState(false)
 
   const problem = useQuery({ queryKey: ['problems', id], queryFn: () => problemsApi.get(id), enabled: Boolean(id) })
+  usePageHeading(problem.data ? { title: problem.data.title } : null)
   const item = problem.data
 
   // Seeded from the server once, then owned by the person typing — the same rule WP-5.5 applied to the
