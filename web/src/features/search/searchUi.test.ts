@@ -48,6 +48,14 @@ describe('searchResultHref', () => {
     expect(searchResultHref(hit('Ci', 'c1'))).toBe('/assets/c1')
     expect(searchResultHref(hit('Device', 'd1'))).toBe('/monitoring/devices/d1')
     expect(searchResultHref(hit('User', 'u1'))).toBe('/people/u1')
+    // WP-5.9's kind, and the agent route: this bar lives in the agent shell, and the portal has a reader
+    // of its own at /portal/kb/:id.
+    expect(searchResultHref(hit('KbArticle', 'k1'))).toBe('/knowledge/k1')
+  })
+
+  /** The group heading is what somebody scans for, so it is the word the app uses everywhere else. */
+  it('labels the knowledge group', () => {
+    expect(searchGroupLabel('KbArticle')).toBe('Knowledge')
   })
 
   /**

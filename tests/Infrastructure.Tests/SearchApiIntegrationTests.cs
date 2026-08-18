@@ -59,7 +59,7 @@ public sealed class SearchApiIntegrationTests(InfrastructureFixture infrastructu
 
         Assert.All(response.Groups, group => Assert.Equal("Searched", group.Status));
         Assert.Equal(
-            ["Ticket", "Ci", "Device", "Alert", "User"],
+            ["Ticket", "Ci", "Device", "Alert", "User", "KbArticle"],
             response.Groups.Select(group => group.Type));
         Assert.All(response.Groups, group => Assert.NotEmpty(group.Hits));
         Assert.Contains(Hits(response, "Ticket"), hit => hit.Id == _estate.TicketId);
@@ -67,6 +67,10 @@ public sealed class SearchApiIntegrationTests(InfrastructureFixture infrastructu
         Assert.Contains(Hits(response, "Device"), hit => hit.Id == _estate.DeviceId);
         Assert.Contains(Hits(response, "Alert"), hit => hit.Id == _estate.AlertId);
         Assert.Contains(Hits(response, "User"), hit => hit.Id == _estate.UserId);
+        // WP-5.9's source, which WP-5.4 named and deliberately left out until there was a knowledge base
+        // behind it. An agent sees the draft here as well as the published article.
+        Assert.Contains(Hits(response, "KbArticle"), hit => hit.Id == _estate.ArticleId);
+        Assert.Contains(Hits(response, "KbArticle"), hit => hit.Id == _estate.DraftArticleId);
     }
 
     /// <summary>
@@ -145,7 +149,7 @@ public sealed class SearchApiIntegrationTests(InfrastructureFixture infrastructu
     {
         var response = await SearchAsync("?q=qwlkjhasdfmnbvzxc");
 
-        Assert.Equal(5, response.Groups.Count);
+        Assert.Equal(6, response.Groups.Count);
         Assert.All(response.Groups, group =>
         {
             Assert.Equal("Searched", group.Status);
@@ -196,6 +200,27 @@ public sealed class SearchApiIntegrationTests(InfrastructureFixture infrastructu
     }
 
     /// <summary>
+    /// The knowledge base is the one source an end user reads wholesale — that is what it is for — and the
+    /// draft beside it is the reason "published only" has to be a filter in the query rather than a control
+    /// the portal happens not to draw (WP-5.9).
+    /// </summary>
+    [Fact]
+    public async Task Search_AsAnEndUser_FindsPublishedArticlesAndNotDrafts()
+    {
+        var response = await SearchAsync(
+            $"?q={Marker}&limit=50", role: "EndUser", subject: _estate.RequesterId);
+
+        var articles = Assert.Single(response.Groups, group => group.Type == "KbArticle");
+        Assert.Equal("Searched", articles.Status);
+        Assert.Contains(articles.Hits, hit => hit.Id == _estate.ArticleId);
+        Assert.DoesNotContain(articles.Hits, hit => hit.Id == _estate.DraftArticleId);
+
+        // And the count is narrowed with it. A total that counted the drafts would say how many exist while
+        // pretending to hide them — the leak WP-5.4 closed for an end user's own tickets.
+        Assert.Equal(articles.Hits.Count, articles.Total);
+    }
+
+    /// <summary>
     /// The filter pushes into the sources rather than trimming the merge, following WP-5.3: the excluded
     /// kinds are never queried and say so. Filtering afterwards would make "assets only" the newest five of
     /// everything, filtered — which on a busy estate comes back empty and looks like a broken filter.
@@ -210,7 +235,7 @@ public sealed class SearchApiIntegrationTests(InfrastructureFixture infrastructu
         Assert.Equal("Searched", cis.Status);
         Assert.NotEmpty(cis.Hits);
 
-        foreach (var type in new[] { "Ticket", "Device", "Alert", "User" })
+        foreach (var type in new[] { "Ticket", "Device", "Alert", "User", "KbArticle" })
         {
             Assert.Equal("NotRequested", Assert.Single(response.Groups, g => g.Type == type).Status);
         }

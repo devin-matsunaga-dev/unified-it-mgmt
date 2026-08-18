@@ -28,12 +28,16 @@ import { TopologyPage } from './features/topology/TopologyPage'
 import { ChangeCalendarPage } from './features/changes/ChangeCalendarPage'
 import { ChangeDetailPage } from './features/changes/ChangeDetailPage'
 import { HomeRoute } from './pages/HomeRoute'
+import { KbArticlePage } from './features/knowledge/KbArticlePage'
+import { KbListPage } from './features/knowledge/KbListPage'
 import { ProblemListPage } from './features/problems/ProblemListPage'
 import { ProblemDetailPage } from './features/problems/ProblemDetailPage'
 import { LoginPage } from './pages/LoginPage'
 import { PlaceholderPage } from './pages/PlaceholderPage'
 import { MyRequestsPage } from './features/portal/MyRequestsPage'
 import { NewRequestPage } from './features/portal/NewRequestPage'
+import { PortalArticlePage } from './features/portal/PortalArticlePage'
+import { PortalKbPage } from './features/portal/PortalKbPage'
 import { RequestDetailPage } from './features/portal/RequestDetailPage'
 import { TicketDetailPage } from './features/tickets/TicketDetailPage'
 import { TicketListPage } from './features/tickets/TicketListPage'
@@ -47,6 +51,8 @@ export function App() {
     <Route path="portal" element={<ProtectedRoute roles={['EndUser']}><PortalShell /></ProtectedRoute>}>
       <Route index element={<MyRequestsPage />} />
       <Route path="new" element={<NewRequestPage />} />
+      <Route path="kb" element={<PortalKbPage />} />
+      <Route path="kb/:id" element={<PortalArticlePage />} />
       <Route path="requests/:id" element={<RequestDetailPage />} />
     </Route>
     <Route element={<ProtectedRoute><AppShell /></ProtectedRoute>}>
@@ -55,6 +61,8 @@ export function App() {
       <Route path="tickets/:id" element={<ProtectedRoute roles={['Admin', 'Technician', 'Manager']}><TicketDetailPage /></ProtectedRoute>} />
       <Route path="problems" element={<ProtectedRoute roles={['Admin', 'Technician', 'Manager']}><ProblemListPage /></ProtectedRoute>} />
       <Route path="problems/:id" element={<ProtectedRoute roles={['Admin', 'Technician', 'Manager']}><ProblemDetailPage /></ProtectedRoute>} />
+      <Route path="knowledge" element={<ProtectedRoute roles={['Admin', 'Technician', 'Manager']}><KbListPage /></ProtectedRoute>} />
+      <Route path="knowledge/:id" element={<ProtectedRoute roles={['Admin', 'Technician', 'Manager']}><KbArticlePage /></ProtectedRoute>} />
       <Route path="assets" element={<ProtectedRoute roles={['Admin', 'Technician', 'Manager']}><CiListPage /></ProtectedRoute>} />
       <Route path="assets/import" element={<ProtectedRoute roles={['Admin', 'Technician', 'Manager']}><CiImportWizard /></ProtectedRoute>} />
       <Route path="assets/discovery" element={<ProtectedRoute roles={['Admin', 'Technician', 'Manager']}><DiscoveryReviewPage /></ProtectedRoute>} />

@@ -1,11 +1,11 @@
 import { apiRequest } from './client'
 
 /**
- * The kinds global search reaches (WP-5.4). WP-5.9's knowledge base adds a sixth on both sides at once —
- * there is deliberately no member for it while nothing implements it, because a group that always reports
- * "nothing found" answers a real question with a confident no.
+ * The kinds global search reaches (WP-5.4). `KbArticle` is the sixth, which WP-5.4 named and deliberately
+ * left out while nothing implemented it — a group that always reports "nothing found" answers a real
+ * question with a confident no — and which WP-5.9 filled in.
  */
-export type SearchResultType = 'Ticket' | 'Ci' | 'Device' | 'Alert' | 'User'
+export type SearchResultType = 'Ticket' | 'Ci' | 'Device' | 'Alert' | 'User' | 'KbArticle'
 
 /**
  * Why a group is empty, which is three different statements and never one.

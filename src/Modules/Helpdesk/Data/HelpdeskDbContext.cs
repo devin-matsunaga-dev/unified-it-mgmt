@@ -30,6 +30,9 @@ public sealed class HelpdeskDbContext(DbContextOptions<HelpdeskDbContext> option
     public DbSet<Problem> Problems => Set<Problem>();
     public DbSet<ProblemIncident> ProblemIncidents => Set<ProblemIncident>();
     public DbSet<ProblemSuggestion> ProblemSuggestions => Set<ProblemSuggestion>();
+    public DbSet<KbArticle> KbArticles => Set<KbArticle>();
+    public DbSet<KbArticleRevision> KbArticleRevisions => Set<KbArticleRevision>();
+    public DbSet<TicketKbArticle> TicketKbArticles => Set<TicketKbArticle>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

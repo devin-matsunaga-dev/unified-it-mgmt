@@ -66,4 +66,66 @@ public sealed class SearchTermTests
     [InlineData("100%_\\", "100\\%\\_\\\\")]
     public void EscapeLike_WildcardCharacters_AreNeutralised(string value, string expected) =>
         Assert.Equal(expected, SearchTerm.EscapeLike(value));
+
+    /// <summary>
+    /// WP-5.9's tokeniser, and the whole reason it is a second one: a paragraph nobody typed as a query has
+    /// to be OR-ed. Every word ANDed — which is what the search box builds — matches no article ever
+    /// written, so the suggestions panel would be permanently empty and nothing would say why.
+    /// </summary>
+    [Fact]
+    public void ToSimilarityTsQuery_ASentence_BecomesOredWholeWords()
+    {
+        var query = SearchTerm.ToSimilarityTsQuery("VPN will not connect from home");
+
+        // Longest first, and only the words that narrow anything: "will", "not" and "from" are filler.
+        Assert.Equal("connect | home | vpn", query);
+        Assert.DoesNotContain(":*", query, StringComparison.Ordinal);
+        Assert.DoesNotContain(" & ", query, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// The words a helpdesk repeats in every ticket ever written carry no meaning and would dominate the
+    /// ranking. Postgres's own dictionary drops the classic ones; this list exists for "please", "issue"
+    /// and "problem", which it does not.
+    /// </summary>
+    [Fact]
+    public void ToSimilarityTsQuery_HelpdeskFillerAndShortWords_AreDropped()
+    {
+        var terms = Terms(SearchTerm.ToSimilarityTsQuery("Please help, I have a problem with the printer"));
+
+        Assert.Contains("printer", terms);
+        Assert.DoesNotContain("please", terms);
+        Assert.DoesNotContain("problem", terms);
+        Assert.DoesNotContain("the", terms);
+        // Two characters or fewer never narrow anything.
+        Assert.DoesNotContain("id", Terms(SearchTerm.ToSimilarityTsQuery("id printer")));
+    }
+
+    /// <summary>
+    /// Capped, longest first, and deterministic — the last of those is what makes the same ticket always
+    /// produce the same suggestions, which is the property WP-5.7's draft symptoms needed for the same reason.
+    /// </summary>
+    [Fact]
+    public void ToSimilarityTsQuery_ALongDescription_IsCappedLongestWordFirstAndIsStable()
+    {
+        var text = string.Join(' ', Enumerable.Range(0, 50).Select(index => $"word{index:00}"));
+
+        var first = SearchTerm.ToSimilarityTsQuery(text, maximumTerms: 5);
+        var second = SearchTerm.ToSimilarityTsQuery(text, maximumTerms: 5);
+
+        Assert.Equal(first, second);
+        Assert.Equal(5, Terms(first).Count);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    [InlineData("!! ?? ..")]
+    [InlineData("the and but")]
+    public void ToSimilarityTsQuery_NothingWorthAsking_ReturnsNull(string? text) =>
+        Assert.Null(SearchTerm.ToSimilarityTsQuery(text));
+
+    private static List<string> Terms(string? query) =>
+        [.. (query ?? string.Empty).Split(" | ", StringSplitOptions.RemoveEmptyEntries)];
 }

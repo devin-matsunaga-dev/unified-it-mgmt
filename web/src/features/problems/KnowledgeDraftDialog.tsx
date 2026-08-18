@@ -1,17 +1,37 @@
-import { BookOpen, Copy } from 'lucide-react'
+import { useMutation } from '@tanstack/react-query'
+import { BookOpen, Copy, FilePlus2 } from 'lucide-react'
+import { useNavigate } from 'react-router-dom'
 import { toast } from 'sonner'
+import { knowledgeApi } from '../../api/knowledge'
 import type { KnowledgeDraft } from '../../api/problems'
 import { Button } from '../../components/ui/Button'
 
 /**
  * The draft article somebody is prompted with when they close a problem.
  *
- * It is a prompt and not a save: WP-5.9 owns the knowledge base and nothing here stores an article. What
- * this is for is the moment — the person closing the problem has just finished writing every field the
- * article needs, and asking them again next week gets a worse answer or none.
+ * The prompt exists for the moment: the person closing the problem has just finished writing every field
+ * the article needs, and asking them again next week gets a worse answer or none. WP-5.7 could only offer
+ * the text; WP-5.9 built the knowledge base, so the button now writes a real draft article and records
+ * which problem it came from.
  */
 export function KnowledgeDraftDialog({ draft, onClose }: { draft: KnowledgeDraft; onClose: () => void }) {
+  const navigate = useNavigate()
   const markdown = draftAsMarkdown(draft)
+
+  const create = useMutation({
+    mutationFn: () => knowledgeApi.create({
+      title: draft.title,
+      // A summary the article can be published with, from what the problem already said. The workaround
+      // first, because that is what somebody arriving from an incident needs; the cause is why.
+      summary: (draft.workaround ?? draft.rootCause ?? `Written from ${draft.problemNumber}.`).slice(0, 500),
+      body: markdown,
+      problemId: draft.problemId,
+    }),
+    onSuccess: (article) => {
+      toast.success(`${article.number} created as a draft`)
+      navigate(`/knowledge/${article.id}`)
+    },
+  })
 
   const copy = async () => {
     try {
@@ -59,10 +79,14 @@ export function KnowledgeDraftDialog({ draft, onClose }: { draft: KnowledgeDraft
 
       <div className="flex flex-wrap items-center gap-2 border-t border-slate-200 p-4 dark:border-slate-800">
         <p className="mr-auto text-xs text-slate-500">
-          The knowledge base itself arrives in a later release. Copy this somewhere it will keep until then.
+          It is created as a draft — nobody outside the service desk sees it until you publish it.
         </p>
+        {create.error && <p role="alert" className="w-full text-sm text-red-600">{create.error.message}</p>}
         <Button variant="secondary" onClick={() => void copy()}><Copy size={16} />Copy as Markdown</Button>
-        <Button onClick={onClose}>Done</Button>
+        <Button variant="secondary" onClick={onClose}>Not now</Button>
+        <Button disabled={create.isPending} onClick={() => create.mutate()}>
+          <FilePlus2 size={16} />{create.isPending ? 'Creating…' : 'Create article'}
+        </Button>
       </div>
     </div>
   </div>

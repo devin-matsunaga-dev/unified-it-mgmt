@@ -328,6 +328,22 @@ Session lifecycle: open branch → new chat with protocol + steering files + WP 
 
 ---
 
+# PHASE 5.5 — Polish & Touch-Ups (demand-driven)
+
+*Everything from Phase 1's helpdesk through Phase 5's intelligence has been built but only partly seen on a live `aspire run`. This phase exists to close that gap: the human runs the application, finds what is wrong or awkward, and says so. **There is no pre-written scope here and none should be invented.** A session opened in this phase waits for the human's input and changes only what that input names.*
+
+**Rules for a Phase 5.5 session**
+
+1. **Wait for instruction.** Do not open this phase by choosing work. If nothing has been said yet, ask what to change and stop.
+2. **One touch-up is one branch**, named `fix/5.5-short-name` (or `chore/`, or `feat/` where the ask is genuinely additive). SESSION.md's completion protocol still applies in full — tests, report, DECISIONS, STATUS.
+3. **Any module is in range** — Helpdesk, Assets, Monitoring, Platform, poller, discovery, the SPA and the portal — but a single touch-up stays inside what was asked. "While I was in there" is out of scope; record it under **In flight** instead.
+4. **The architecture is not up for renegotiation.** ARCHITECTURE.md and DECISIONS.md still bind; a touch-up that needs a settled choice reversed is a work package, not a touch-up, and stops for a decision.
+5. **The unwalked manual checklists are the natural backlog for this phase** — fourteen of the last sixteen packages have never been verified live — but they are worked when the human raises them, not swept unprompted.
+
+**🏁 Phase 5.5 gate:** the human declares the polish pass done. Tag `v0.7-phase5.5`.
+
+---
+
 # PHASE 6 — Production Deployment
 
 *(These WPs are yours more than Codex's — use Codex for configs/scripts, but you execute on the real network.)*

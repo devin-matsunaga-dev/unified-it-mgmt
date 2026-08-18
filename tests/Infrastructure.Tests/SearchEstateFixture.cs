@@ -131,6 +131,17 @@ public sealed class SearchEstateFixture : IDisposable
         var (otherTicketId, _) = await CreateTicketAsync(
             $"{marker} switch is unreachable", $"search-tests-other-{Guid.NewGuid():N}", "Sam Elsewhere");
 
+        // WP-5.9's source, and the pair that makes its visibility rule assertable: an article an end user
+        // may find, and a draft carrying the same marker that they must not.
+        var articleId = await CreateArticleAsync(
+            $"{marker} switch replacement runbook",
+            $"What to do when the {marker} core switch has to be swapped.",
+            publish: true);
+        var draftArticleId = await CreateArticleAsync(
+            $"{marker} switch decommissioning — draft",
+            $"Unfinished notes about retiring the {marker} core switch.",
+            publish: false);
+
         Guid userId;
         await using (var scope = _application!.Services.CreateAsyncScope())
         {
@@ -224,7 +235,37 @@ public sealed class SearchEstateFixture : IDisposable
         return new Estate(
             ciId, mentionedCiId, CiCount: 2, assetTag, serialNumber,
             ticketId, ticketNumber, otherTicketId, TicketCount: 2, requesterId, requesterName,
-            userId, deviceId, address, alertId, clearedAlertId);
+            userId, deviceId, address, alertId, clearedAlertId, articleId, draftArticleId);
+    }
+
+    /// <summary>
+    /// Written through the endpoints that own it, so the generated tsvector is produced the way production
+    /// produces it — and published through the transition endpoint, because that is the only way an article
+    /// becomes published at all (creating one always leaves a draft).
+    /// </summary>
+    private async Task<Guid> CreateArticleAsync(string title, string summary, bool publish)
+    {
+        using var request = Authenticate(new HttpRequestMessage(HttpMethod.Post, "/api/kb-articles"));
+        request.Content = JsonContent.Create(new
+        {
+            title,
+            summary,
+            body = $"{summary}\n\nWritten by the global search integration fixture.",
+        });
+        using var response = await Client.SendAsync(request);
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        var article = Assert.IsType<ArticleDto>(await response.Content.ReadFromJsonAsync<ArticleDto>());
+
+        if (publish)
+        {
+            using var transition = Authenticate(
+                new HttpRequestMessage(HttpMethod.Post, $"/api/kb-articles/{article.Id}/transitions"));
+            transition.Content = JsonContent.Create(new { targetStatus = "Published" });
+            using var transitioned = await Client.SendAsync(transition);
+            Assert.Equal(HttpStatusCode.OK, transitioned.StatusCode);
+        }
+
+        return article.Id;
     }
 
     private async Task<Guid> CreateCiAsync(string name, string? assetTag, string? serial, string description)
@@ -289,6 +330,8 @@ public sealed class SearchEstateFixture : IDisposable
     }
 
     private sealed record CiDto(Guid Id, string Name);
+
+    private sealed record ArticleDto(Guid Id, string Number, string Status);
 
     private sealed record TicketDto(Guid Id, string Number, string Title);
 
@@ -420,4 +463,6 @@ public sealed record Estate(
     Guid DeviceId,
     string Address,
     Guid AlertId,
-    Guid ClearedAlertId);
+    Guid ClearedAlertId,
+    Guid ArticleId,
+    Guid DraftArticleId);

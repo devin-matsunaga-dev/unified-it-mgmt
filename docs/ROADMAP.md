@@ -118,6 +118,19 @@ Durations assume part-time-to-full-time solo effort with AI assist. Treat them a
 
 ---
 
+## Phase 5.5 — Polish & Touch-Ups (demand-driven, timeboxed by feel)
+
+**Goal:** Run the thing and fix what running it reveals — before it goes onto a corporate network where the same rough edges cost somebody else's time.
+
+- Everything from Phase 1 onward is in range: helpdesk, assets, monitoring, platform, the poller and discovery services, the agent SPA and the self-service portal.
+- **No scope is written in advance.** The work is whatever the live application turns up: wording, layout, defaults, missing filters, awkward flows, small defects, seeded-demo gaps.
+- The unwalked manual verification checklists from Phases 3-5 are the natural backlog to draw from, plus the two intermittent bus tests and the SSH.NET vulnerability gate the Phase 5 gate inherits.
+- Architectural decisions stay settled; anything needing one reversed becomes a Phase 7 work package instead.
+
+**Exit criteria:** You have used the platform for real work for a stretch and stopped wanting to change things while doing it.
+
+---
+
 ## Phase 6 — Production Hardening & Corporate Deployment (3-4 weeks)
 
 **Goal:** Same images, promoted to the corporate network.

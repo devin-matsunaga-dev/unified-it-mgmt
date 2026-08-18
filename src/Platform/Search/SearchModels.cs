@@ -11,9 +11,11 @@ namespace Platform.Search;
 /// answer "nothing found" for a whole class of record, which is the one wrong answer a search box can give.
 /// </para>
 /// <para>
-/// WP-5.4's own text names a sixth source, the knowledge base. There is no KB entity anywhere in this
-/// solution — WP-5.9 builds it — so there is deliberately no member for it here: an unimplemented member
-/// would report a real question ("is there an article about this?") as a confident no.
+/// WP-5.4 named a sixth source, the knowledge base, and deliberately left the member out because no KB
+/// entity existed — an unimplemented member would report a real question ("is there an article about
+/// this?") as a confident no. WP-5.9 built the entity, so <see cref="KbArticle"/> is that member arriving,
+/// and adding it was a source class beside Helpdesk's services plus one registration: neither the search
+/// service nor the endpoint changed, which is what the contribution interface was for.
 /// </para>
 /// </summary>
 public enum SearchResultType
@@ -32,6 +34,12 @@ public enum SearchResultType
 
     /// <summary>A person. <c>platform.user_profiles</c>.</summary>
     User = 5,
+
+    /// <summary>
+    /// A written answer. <c>helpdesk.kb_articles</c>. The only source whose rows an end user may read
+    /// wholesale, and then only the published ones — narrowed in the query, never by hiding a control.
+    /// </summary>
+    KbArticle = 6,
 }
 
 /// <summary>Why a group is empty, which is three different statements and never one.</summary>

@@ -5,6 +5,7 @@ import { useForm } from 'react-hook-form'
 import { z } from 'zod'
 import { Button } from '../../components/ui/Button'
 import type { CreateTicketInput, TicketCategory, TicketQueue } from '../../api/helpdesk'
+import { KbSuggestionList, useKbSuggestions } from '../knowledge/KbSuggestions'
 import { CategorySelect, CustomFieldInputs } from './CategoryFields'
 import { customFieldPayload, findCategory, validateCustomFields } from './categoryFields'
 
@@ -21,12 +22,20 @@ type FormInput = z.input<typeof schema>
 type FormValues = z.output<typeof schema>
 
 export function QuickCreateTicket({ open, pending, error, queues, categories, onClose, onSubmit }: { open: boolean; pending: boolean; error?: string; queues: TicketQueue[]; categories: TicketCategory[]; onClose: () => void; onSubmit: (input: CreateTicketInput) => Promise<void> }) {
-  const { register, handleSubmit, reset, formState: { errors } } = useForm<FormInput, unknown, FormValues>({ resolver: zodResolver(schema), defaultValues: { type: 'Incident', urgency: 'Medium', impact: 'Medium' } })
+  const { register, handleSubmit, reset, watch, formState: { errors } } = useForm<FormInput, unknown, FormValues>({ resolver: zodResolver(schema), defaultValues: { type: 'Incident', urgency: 'Medium', impact: 'Medium' } })
   const [categoryId, setCategoryId] = useState('')
   const [customFields, setCustomFields] = useState<Record<string, string>>({})
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({})
   const category = useMemo(() => findCategory(categories, categoryId), [categories, categoryId])
   const fields = category?.fields ?? []
+  // WP-5.9: asked while the agent types, so an answer that already exists is offered before the ticket is
+  // raised rather than found afterwards. `enabled: open` keeps a closed dialog from asking anything.
+  const suggestions = useKbSuggestions({
+    subject: watch('title') ?? '',
+    body: watch('description') ?? '',
+    categoryId: categoryId || null,
+    enabled: open,
+  })
   if (!open) return null
   const submit = handleSubmit(async (values) => {
     const invalid = validateCustomFields(fields, customFields)
@@ -43,6 +52,7 @@ export function QuickCreateTicket({ open, pending, error, queues, categories, on
       <form onSubmit={(event) => void submit(event)} className="grid gap-4 sm:grid-cols-2">
         <Field label="Title" error={errors.title?.message} className="sm:col-span-2"><input autoFocus className="input" {...register('title')} /></Field>
         <Field label="Description" error={errors.description?.message} className="sm:col-span-2"><textarea rows={4} className="input resize-y" {...register('description')} /></Field>
+        <div className="sm:col-span-2"><KbSuggestionList suggestions={suggestions.data ?? []} /></div>
         <Field label="Type"><select className="input" {...register('type')}><option value="Incident">Incident</option><option value="ServiceRequest">Service request</option></select></Field>
         <Field label="Requester ID" error={errors.requesterId?.message}><input className="input" placeholder="Defaults to you" {...register('requesterId')} /></Field>
         <Field label="Queue"><select className="input" {...register('queueId')}><option value="">Unqueued</option>{queues.map((queue) => <option key={queue.id} value={queue.id}>{queue.name}</option>)}</select></Field>

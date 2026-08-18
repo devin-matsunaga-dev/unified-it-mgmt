@@ -1,4 +1,4 @@
-import { ChevronDown, LifeBuoy, LogOut, Mail, Plus, ShieldCheck } from 'lucide-react'
+import { BookOpen, ChevronDown, LifeBuoy, LogOut, Mail, Plus, ShieldCheck } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { NavLink, Outlet } from 'react-router-dom'
 import { useAuth } from '../auth/AuthProvider'
@@ -8,6 +8,8 @@ import { Button } from '../components/ui/Button'
 
 const navigation = [
   { label: 'My requests', to: '/portal', icon: LifeBuoy, end: true },
+  // Before "New request", deliberately: the point of a help centre is that reading comes before raising.
+  { label: 'Help articles', to: '/portal/kb', icon: BookOpen, end: false },
   { label: 'New request', to: '/portal/new', icon: Plus, end: false },
 ]
 

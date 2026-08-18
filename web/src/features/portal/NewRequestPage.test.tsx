@@ -16,6 +16,12 @@ vi.mock('../../api/helpdesk', async (original) => {
   const actual = await original<typeof import('../../api/helpdesk')>()
   return { ...actual, helpdeskApi: { ...actual.helpdeskApi, listQueues: vi.fn(), listCategories: vi.fn(), createTicket: vi.fn() } }
 })
+// WP-5.9's deflection read, stubbed empty here so these cases stay about the form. The prompt itself has
+// a suite of its own — a knowledge base that suggests nothing must not change how a request is submitted.
+vi.mock('../../api/knowledge', async (original) => {
+  const actual = await original<typeof import('../../api/knowledge')>()
+  return { ...actual, knowledgeApi: { ...actual.knowledgeApi, suggest: vi.fn().mockResolvedValue([]), get: vi.fn() } }
+})
 
 const categories: TicketCategory[] = [
   {

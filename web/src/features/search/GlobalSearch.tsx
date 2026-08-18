@@ -4,6 +4,7 @@ import { useEffect, useId, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { searchApi, type SearchHit } from '../../api/search'
 import { ciLifecycleLabel, ciLifecycleTone } from '../assets/lifecycle'
+import { kbStatusTone } from '../knowledge/knowledgeUi'
 import { cn } from '../../lib/utils'
 import { severityTone } from '../monitoring/severity'
 import { displayStatus } from '../tickets/ticketUi'
@@ -223,7 +224,11 @@ function Badge({ type, badge }: { type: SearchHit['type']; badge: string }) {
     ? severityTone[badge as keyof typeof severityTone] ?? severityTone.Ok
     : type === 'Ci'
       ? ciLifecycleTone(badge)
-      : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300'
+      // A draft found by an agent has to look like a draft here too, or the one thing this badge decides —
+      // whether anybody outside the service desk can read it — is the one thing it does not say.
+      : type === 'KbArticle'
+        ? kbStatusTone(badge)
+        : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300'
   const label = type === 'Ci' ? ciLifecycleLabel(badge) : displayStatus(badge)
   return <span className={cn('shrink-0 rounded-md px-1.5 py-0.5 text-[11px] font-medium', tone)}>{label}</span>
 }

@@ -1,4 +1,4 @@
-import { AlertTriangle, Boxes, Contact, Headphones, MonitorCog } from 'lucide-react'
+import { AlertTriangle, BookOpen, Boxes, Contact, Headphones, MonitorCog } from 'lucide-react'
 import type { SearchGroup, SearchHit, SearchResultType, SearchResults } from '../../api/search'
 
 /**
@@ -13,6 +13,7 @@ const groupLabels: Record<SearchResultType, string> = {
   Device: 'Devices',
   Alert: 'Alerts',
   User: 'People',
+  KbArticle: 'Knowledge',
 }
 
 export const groupIcons: Record<SearchResultType, typeof Boxes> = {
@@ -21,6 +22,7 @@ export const groupIcons: Record<SearchResultType, typeof Boxes> = {
   Device: MonitorCog,
   Alert: AlertTriangle,
   User: Contact,
+  KbArticle: BookOpen,
 }
 
 export function searchGroupLabel(type: SearchResultType) {
@@ -53,6 +55,10 @@ export function searchResultHref(hit: Pick<SearchHit, 'type' | 'id'>) {
       return `/monitoring/alerts?alertId=${hit.id}`
     case 'User':
       return `/people/${hit.id}`
+    // The agent route, like every other one here: this bar lives in the agent shell, and the portal has its
+    // own reader at /portal/kb/:id.
+    case 'KbArticle':
+      return `/knowledge/${hit.id}`
     default:
       return '/'
   }

@@ -11,6 +11,7 @@ using Modules.Helpdesk.Features.Categories;
 using Modules.Helpdesk.Features.Dashboards;
 using Modules.Helpdesk.Features.Views;
 using Modules.Helpdesk.Features.Interactions;
+using Modules.Helpdesk.Features.Knowledge;
 using Modules.Helpdesk.Features.Problems;
 using Modules.Helpdesk.Features.Sla;
 using Modules.Helpdesk.Features.Email;
@@ -39,6 +40,9 @@ public static class HelpdeskServiceCollectionExtensions
         // WP-5.4. Registered here rather than in Platform because the query is over Helpdesk's own
         // schema; the service that merges the five holds no reference to any module.
         services.AddScoped<ISearchSource, TicketSearchSource>();
+        // WP-5.9. The sixth source WP-5.4 named and left out until there was a knowledge base to answer
+        // with — one class beside these services and one line here, which is what that interface was for.
+        services.AddScoped<ISearchSource, KbArticleSearchSource>();
         // WP-5.5. Two widgets over Helpdesk's own schema; the dashboard that shows them beside four
         // other modules' numbers references none of them.
         services.AddScoped<IDashboardWidget, SlaHealthWidget>();
@@ -59,6 +63,9 @@ public static class HelpdeskServiceCollectionExtensions
         services.AddScoped<ProblemService>();
         services.AddScoped<IProblemService>(provider => provider.GetRequiredService<ProblemService>());
         services.AddScoped<IProblemSuggestionService, ProblemSuggestionService>();
+        // WP-5.9. The knowledge base: articles, their versions, the suggestions read while a ticket is
+        // being typed, and the articles attached to a ticket as its answer.
+        services.AddScoped<IKbArticleService, KbArticleService>();
         services.AddOptions<ProblemDetectionOptions>()
             .Bind(configuration.GetSection(ProblemDetectionOptions.SectionName))
             .Validate(options => options.MinimumIncidents >= 2,
