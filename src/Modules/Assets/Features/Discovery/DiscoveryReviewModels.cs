@@ -20,11 +20,15 @@ public sealed record DiscoveredDeviceListRequest(
 /// The CI type an approval would default to, inferred from what answered. A suggestion the approver
 /// overrides freely; nothing is created from it without them pressing the button.
 /// </param>
+/// <param name="HostnameSource">
+/// Which protocol named it: <c>dns</c>, <c>mdns</c> or <c>netbios</c>. Null when nothing did.
+/// </param>
 public sealed record DiscoveredDeviceResponse(
     Guid Id,
     string IdentityKey,
     string Address,
     string? Hostname,
+    string? HostnameSource,
     bool RespondedToPing,
     IReadOnlyList<int> OpenPorts,
     DiscoveredSnmpResponse? Snmp,

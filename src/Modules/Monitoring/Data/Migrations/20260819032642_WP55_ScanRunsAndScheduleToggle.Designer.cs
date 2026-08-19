@@ -2,6 +2,7 @@
 using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Modules.Monitoring.Data;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
@@ -12,9 +13,11 @@ using NpgsqlTypes;
 namespace Modules.Monitoring.Data.Migrations
 {
     [DbContext(typeof(MonitoringDbContext))]
-    partial class MonitoringDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260819032642_WP55_ScanRunsAndScheduleToggle")]
+    partial class WP55_ScanRunsAndScheduleToggle
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -1135,10 +1138,6 @@ namespace Modules.Monitoring.Data.Migrations
                         .HasColumnType("integer")
                         .HasColumnName("addresses_probed");
 
-                    b.Property<int?>("AddressesTotal")
-                        .HasColumnType("integer")
-                        .HasColumnName("addresses_total");
-
                     b.Property<DateTimeOffset?>("CompletedAt")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("completed_at");
@@ -1170,15 +1169,6 @@ namespace Modules.Monitoring.Data.Migrations
                         .HasMaxLength(4000)
                         .HasColumnType("character varying(4000)")
                         .HasColumnName("error");
-
-                    b.Property<string>("LastRespondingAddress")
-                        .HasMaxLength(100)
-                        .HasColumnType("character varying(100)")
-                        .HasColumnName("last_responding_address");
-
-                    b.Property<DateTimeOffset?>("ProgressAt")
-                        .HasColumnType("timestamp with time zone")
-                        .HasColumnName("progress_at");
 
                     b.Property<DateTimeOffset>("RequestedAt")
                         .HasColumnType("timestamp with time zone")

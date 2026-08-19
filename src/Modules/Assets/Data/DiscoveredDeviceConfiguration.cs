@@ -13,6 +13,7 @@ public sealed class DiscoveredDeviceConfiguration : IEntityTypeConfiguration<Dis
         builder.Property(device => device.IdentityKey).HasMaxLength(300).IsRequired();
         builder.Property(device => device.Address).HasMaxLength(45).IsRequired();
         builder.Property(device => device.Hostname).HasMaxLength(255);
+        builder.Property(device => device.HostnameSource).HasMaxLength(20);
         builder.Property(device => device.OpenPortsJson).HasColumnType("jsonb").IsRequired();
         builder.Property(device => device.SysName).HasMaxLength(255);
         builder.Property(device => device.SysDescription).HasMaxLength(2_000);

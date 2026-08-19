@@ -348,6 +348,7 @@ public sealed class DriftReportApiIntegrationTests : IAsyncLifetime
                     Guid.CreateVersion7(),
                     address,
                     null,
+                    null,
                     RespondedToPing: true,
                     [],
                     sysName is null

@@ -209,6 +209,7 @@ public sealed class DiscoveryMatcherTests
         Guid.CreateVersion7(),
         address,
         hostname,
+        hostname is null ? null : "dns",
         RespondedToPing: true,
         OpenPorts: [],
         Snmp: sysName is null ? null : new DiscoveredSnmpIdentity(sysName, null, null, null, null, null),

@@ -30,8 +30,19 @@ public sealed class DiscoveredDevice
     /// <summary>The IPv4 address that answered on the most recent sighting.</summary>
     public required string Address { get; set; }
 
-    /// <summary>Reverse DNS as the scanner's resolver gave it, fully qualified.</summary>
+    /// <summary>The name the scan found, from whichever protocol answered.</summary>
     public string? Hostname { get; set; }
+
+    /// <summary>
+    /// Which protocol produced <see cref="Hostname"/> — <c>dns</c>, <c>mdns</c> or <c>netbios</c>.
+    /// <para>
+    /// Stored because the three are not equally trustworthy. A PTR record is what the network's own
+    /// administrator published; an mDNS or NetBIOS name is whatever the device says about itself, and
+    /// a device is free to say anything. The review card shows it so that somebody approving a name
+    /// into the CMDB can see what they are trusting.
+    /// </para>
+    /// </summary>
+    public string? HostnameSource { get; set; }
 
     public bool RespondedToPing { get; set; }
 

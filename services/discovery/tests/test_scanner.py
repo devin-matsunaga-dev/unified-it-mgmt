@@ -5,9 +5,10 @@ from collections.abc import Sequence
 
 from discovery.config import ScanProfile
 from discovery.identify import LLDP
+from discovery.names import ResolvedName
 from discovery.scanner import Scanner
 from discovery.snmp import SnmpTarget, SnmpValue
-from discovery.sweep import NetworkSweep, SweepResult
+from discovery.sweep import NetworkSweep, ProbeObserver, SweepResult
 
 from .test_identify import SYS_INFO, FakeTransport
 
@@ -26,10 +27,28 @@ class RecordingSweep(NetworkSweep):
         addresses: Sequence[str],
         ports: Sequence[int],
         timeout_seconds: float,
+        on_probe: ProbeObserver | None = None,
     ) -> list[SweepResult]:
         self.addresses = list(addresses)
         self.ports = list(ports)
-        return [result for result in self._found if result.address in self.addresses]
+        found = [result for result in self._found if result.address in self.addresses]
+        if on_probe is not None:
+            answered = {result.address for result in found}
+            for address in self.addresses:
+                on_probe(address, address in answered)
+        return found
+
+
+async def _no_name(address: str) -> ResolvedName | None:
+    """The default for these tests: reverse DNS found nothing and nothing else answers either.
+
+    Explicit rather than left to the real resolver, which would put a multicast query and a
+    one-second timeout per unnamed address into every test in this file."""
+    return None
+
+
+def build_scanner(sweep: NetworkSweep, **overrides: object) -> Scanner:
+    return Scanner(sweep, name_resolver=_no_name, **overrides)  # type: ignore[arg-type]
 
 
 def profile(**overrides: object) -> ScanProfile:
@@ -54,7 +73,7 @@ def alive(address: str, ports: tuple[int, ...] = ()) -> SweepResult:
 async def test_scan_expands_the_range_and_probes_every_address_in_it() -> None:
     sweep = RecordingSweep([])
 
-    outcome = await Scanner(sweep).scan(profile())
+    outcome = await build_scanner(sweep).scan(profile())
 
     assert sweep.addresses == [f"10.0.0.{octet}" for octet in range(1, 7)]
     assert sweep.ports == [22]
@@ -70,7 +89,7 @@ async def test_scan_identifies_what_answered_and_walks_its_neighbours() -> None:
             "1.0.8802.1.1.2.1.3.7.1.3": {"1": "GigabitEthernet0/1"},
         },
     )
-    scanner = Scanner(
+    scanner = build_scanner(
         RecordingSweep([alive("10.0.0.2", ports=(22,))]),
         transport=transport,
         communities=["healthy"],
@@ -90,7 +109,7 @@ async def test_scan_identifies_what_answered_and_walks_its_neighbours() -> None:
 
 async def test_scan_walks_neighbours_with_the_community_that_already_worked() -> None:
     transport = FakeTransport(community="degraded", walks={})
-    scanner = Scanner(
+    scanner = build_scanner(
         RecordingSweep([alive("10.0.0.2")]),
         transport=transport,
         communities=["healthy", "degraded"],
@@ -105,7 +124,7 @@ async def test_scan_walks_neighbours_with_the_community_that_already_worked() ->
 
 async def test_scan_with_snmp_disabled_reports_the_sweep_and_asks_nothing() -> None:
     transport = FakeTransport(community="healthy")
-    scanner = Scanner(
+    scanner = build_scanner(
         RecordingSweep([alive("10.0.0.2", ports=(22,))]),
         transport=transport,
         communities=["healthy"],
@@ -121,7 +140,7 @@ async def test_scan_with_snmp_disabled_reports_the_sweep_and_asks_nothing() -> N
 
 async def test_scan_with_neighbour_discovery_disabled_still_identifies() -> None:
     transport = FakeTransport(community="healthy")
-    scanner = Scanner(
+    scanner = build_scanner(
         RecordingSweep([alive("10.0.0.2")]),
         transport=transport,
         communities=["healthy"],
@@ -139,7 +158,7 @@ async def test_scan_with_neighbour_discovery_disabled_still_identifies() -> None
 async def test_scan_an_empty_range_is_a_clean_result_rather_than_a_failure() -> None:
     sweep = RecordingSweep([])
 
-    outcome = await Scanner(sweep).scan(profile(ranges=("192.0.2.0/29",)))
+    outcome = await build_scanner(sweep).scan(profile(ranges=("192.0.2.0/29",)))
 
     # The WP's second verification case. Six addresses probed, nothing found, no crash — and the
     # probed count is what tells that apart from a profile whose ranges never expanded.
@@ -151,7 +170,7 @@ async def test_scan_an_empty_range_is_a_clean_result_rather_than_a_failure() -> 
 async def test_scan_a_malformed_range_does_not_lose_the_ones_that_work() -> None:
     sweep = RecordingSweep([alive("10.0.0.1")])
 
-    outcome = await Scanner(sweep).scan(profile(ranges=("10.0.0.0/29", "nonsense")))
+    outcome = await build_scanner(sweep).scan(profile(ranges=("10.0.0.0/29", "nonsense")))
 
     assert sweep.addresses == [f"10.0.0.{octet}" for octet in range(1, 7)]
     assert len(outcome.range_errors) == 1
@@ -162,7 +181,7 @@ async def test_scan_a_malformed_range_does_not_lose_the_ones_that_work() -> None
 async def test_scan_with_every_range_malformed_probes_nothing_and_says_why() -> None:
     sweep = RecordingSweep([])
 
-    outcome = await Scanner(sweep).scan(profile(ranges=("nonsense", "10.0.0.0/8")))
+    outcome = await build_scanner(sweep).scan(profile(ranges=("nonsense", "10.0.0.0/8")))
 
     # "Nothing was looked at" has to be distinguishable from "nothing is there", or a profile with
     # a typo in it reads for weeks as an empty network.
@@ -174,14 +193,14 @@ async def test_scan_with_every_range_malformed_probes_nothing_and_says_why() -> 
 async def test_scan_deduplicates_addresses_across_overlapping_ranges() -> None:
     sweep = RecordingSweep([])
 
-    await Scanner(sweep).scan(profile(ranges=("10.0.0.1-3", "10.0.0.2-4")))
+    await build_scanner(sweep).scan(profile(ranges=("10.0.0.1-3", "10.0.0.2-4")))
 
     assert sweep.addresses == ["10.0.0.1", "10.0.0.2", "10.0.0.3", "10.0.0.4"]
 
 
 async def test_scan_resolves_the_local_keyword_through_the_injected_resolver() -> None:
     sweep = RecordingSweep([])
-    scanner = Scanner(sweep, local=lambda: ipaddress.IPv4Network("10.9.9.0/30"))
+    scanner = build_scanner(sweep, local=lambda: ipaddress.IPv4Network("10.9.9.0/30"))
 
     await scanner.scan(profile(ranges=("local",)))
 
@@ -189,7 +208,7 @@ async def test_scan_resolves_the_local_keyword_through_the_injected_resolver() -
 
 
 async def test_scan_gives_every_pass_its_own_scan_id() -> None:
-    scanner = Scanner(RecordingSweep([alive("10.0.0.1")]))
+    scanner = build_scanner(RecordingSweep([alive("10.0.0.1")]))
 
     first = await scanner.scan(profile())
     second = await scanner.scan(profile())
@@ -204,7 +223,7 @@ async def test_scan_an_agent_that_fails_mid_identify_does_not_lose_the_device() 
         async def get(self, target: SnmpTarget, requested: Sequence[str]) -> dict[str, SnmpValue]:
             raise RuntimeError("pysnmp returned something nobody expected")
 
-    scanner = Scanner(
+    scanner = build_scanner(
         RecordingSweep([alive("10.0.0.2", ports=(22,))]),
         transport=ExplodingTransport(values=dict(SYS_INFO)),
         communities=["healthy"],
@@ -217,3 +236,29 @@ async def test_scan_an_agent_that_fails_mid_identify_does_not_lose_the_device() 
     assert len(outcome.devices) == 1
     assert outcome.devices[0].identity is None
     assert outcome.devices[0].open_ports == (22,)
+
+
+async def test_scan_reports_progress_counting_completed_probes_and_the_last_to_answer() -> None:
+    sweep = RecordingSweep([
+        SweepResult(address="10.0.0.2", responded_to_ping=True),
+    ])
+    scanner = build_scanner(sweep)
+    seen: list[tuple[int, int, str | None]] = []
+
+    await scanner.scan(
+        profile(ranges=("10.0.0.0/30",)),
+        on_progress=lambda probed, total, last: seen.append((probed, total, last)),
+    )
+
+    # The final call always lands, whatever the throttle did with the ones before it: a progress
+    # line frozen short of the total reads as a scan that stalled.
+    assert seen[-1][0] == seen[-1][1]
+    assert seen[-1][2] == "10.0.0.2"
+
+
+async def test_scan_with_no_progress_observer_still_scans() -> None:
+    sweep = RecordingSweep([SweepResult(address="10.0.0.2", responded_to_ping=True)])
+
+    outcome = await build_scanner(sweep).scan(profile(ranges=("10.0.0.0/30",)))
+
+    assert len(outcome.devices) == 1

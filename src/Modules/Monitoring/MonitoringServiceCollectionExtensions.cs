@@ -78,6 +78,14 @@ public static class MonitoringServiceCollectionExtensions
         services.AddScoped<IRunbookCompletionService, RunbookCompletionService>();
         services.AddScoped<IRunbookDispatchService, RunbookDispatchService>();
         services.AddScoped<IRunbookTimeoutSweeper, RunbookTimeoutSweeper>();
+        // Phase 5.5. On-demand scanning, in the shape WP-5.6 established for runbooks: the operator
+        // service writes the request, the dispatch service is the scanner's fetch, and the sweeper is
+        // what notices a scanner that never came back — which nothing else can, because this service
+        // has no heartbeat.
+        services.AddScoped<IScanRunService, ScanRunService>();
+        services.AddScoped<IScanDispatchService, ScanDispatchService>();
+        services.AddScoped<IScanRunTimeoutSweeper, ScanRunTimeoutSweeper>();
+        services.AddScoped<IDiscoverySettingsService, DiscoverySettingsService>();
         services.AddScoped<IMonitoringLiveUpdateService, MonitoringLiveUpdateService>();
         services.AddScoped<IAlertNotificationService, AlertNotificationService>();
 
@@ -114,6 +122,16 @@ public static class MonitoringServiceCollectionExtensions
                 $"{PollerHeartbeatOptions.SectionName}:EvaluationIntervalSeconds must be at least 1.")
             .ValidateOnStart();
 
+        services.AddOptions<DiscoveryOptions>()
+            .Bind(configuration.GetSection(DiscoveryOptions.SectionName))
+            .Validate(options => options.DispatchBatchSize >= 1,
+                $"{DiscoveryOptions.SectionName}:DispatchBatchSize must be at least 1.")
+            .Validate(options => options.RunTimeoutMinutes >= 1,
+                $"{DiscoveryOptions.SectionName}:RunTimeoutMinutes must be at least 1.")
+            .Validate(options => options.SweepIntervalSeconds >= 1,
+                $"{DiscoveryOptions.SectionName}:SweepIntervalSeconds must be at least 1.")
+            .ValidateOnStart();
+
         services.AddOptions<RunbookOptions>()
             .Bind(configuration.GetSection(RunbookOptions.SectionName))
             .Validate(options => options.DispatchBatchSize >= 1,
@@ -136,6 +154,8 @@ public static class MonitoringServiceCollectionExtensions
             .Get<PollerHeartbeatOptions>() ?? new PollerHeartbeatOptions();
         var runbooks = configuration.GetSection(RunbookOptions.SectionName)
             .Get<RunbookOptions>() ?? new RunbookOptions();
+        var discovery = configuration.GetSection(DiscoveryOptions.SectionName)
+            .Get<DiscoveryOptions>() ?? new DiscoveryOptions();
         services.AddQuartz(quartz =>
         {
             // Frequent and cheap: one indexed query over a handful of rows. The interval is the
@@ -155,6 +175,15 @@ public static class MonitoringServiceCollectionExtensions
             quartz.AddTrigger(builder => builder.ForJob(runbookJobKey).WithIdentity("runbook-timeout-sweep")
                 .StartNow().WithSimpleSchedule(schedule => schedule
                     .WithIntervalInSeconds(runbooks.SweepIntervalSeconds).RepeatForever()));
+
+            // Phase 5.5. Rarer than the runbook sweep and over rows that exist only while somebody has
+            // asked for a scan. The interval is how late a scanner's silence can be noticed, not how
+            // long a sweep may take — that is the run's own deadline, stamped when it was handed over.
+            var scanJobKey = new JobKey("scan-run-timeouts");
+            quartz.AddJob<ScanRunTimeoutJob>(builder => builder.WithIdentity(scanJobKey));
+            quartz.AddTrigger(builder => builder.ForJob(scanJobKey).WithIdentity("scan-run-timeout-sweep")
+                .StartNow().WithSimpleSchedule(schedule => schedule
+                    .WithIntervalInSeconds(discovery.SweepIntervalSeconds).RepeatForever()));
         });
 
         return services;

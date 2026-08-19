@@ -284,6 +284,54 @@ public sealed class ScanProfileConfiguration : IEntityTypeConfiguration<ScanProf
     }
 }
 
+public sealed class ScanRunConfiguration : IEntityTypeConfiguration<ScanRun>
+{
+    public void Configure(EntityTypeBuilder<ScanRun> builder)
+    {
+        builder.ToTable("scan_runs", "monitoring");
+        builder.HasKey(run => run.Id);
+        builder.Property(run => run.ScanProfileName).HasMaxLength(200).IsRequired();
+        builder.Property(run => run.DiscoveryGroup).HasMaxLength(100).IsRequired();
+        builder.Property(run => run.Status).HasConversion<string>().HasMaxLength(20).IsRequired();
+        builder.Property(run => run.RequestedBy).HasMaxLength(200).IsRequired();
+        builder.Property(run => run.DiscoveryName).HasMaxLength(100);
+        builder.Property(run => run.LastRespondingAddress).HasMaxLength(100);
+        builder.Property(run => run.Error).HasMaxLength(4_000);
+
+        // Cascade, unlike WP-5.6's executions, and the difference is what the row records. A runbook
+        // execution is a record of something done to a machine and must outlive the runbook; a scan run
+        // is a record of a range having been swept, and the range is the profile. Deleting the profile
+        // is deleting the only thing that gave these rows meaning.
+        builder.HasOne(run => run.ScanProfile)
+            .WithMany()
+            .HasForeignKey(run => run.ScanProfileId)
+            .OnDelete(DeleteBehavior.Cascade);
+
+        // One queued run per profile, as a constraint rather than as a hope about how fast somebody
+        // clicks. A second press while one is still waiting loses this insert and is reported as the
+        // run already queued, which is the honest answer — the scan it is asking for is about to run.
+        builder.HasIndex(run => run.ScanProfileId)
+            .IsUnique()
+            .HasFilter("status = 'Queued'")
+            .HasDatabaseName("ix_scan_runs_one_queued_per_profile");
+
+        // What the scanner claims, and what the sweeper looks for.
+        builder.HasIndex(run => new { run.DiscoveryGroup, run.Status });
+        builder.HasIndex(run => new { run.Status, run.RequestedAt });
+    }
+}
+
+public sealed class DiscoverySettingsConfiguration : IEntityTypeConfiguration<DiscoverySettings>
+{
+    public void Configure(EntityTypeBuilder<DiscoverySettings> builder)
+    {
+        builder.ToTable("discovery_settings", "monitoring");
+        builder.HasKey(settings => settings.Id);
+        builder.Property(settings => settings.Id).ValueGeneratedNever();
+        builder.Property(settings => settings.UpdatedBy).HasMaxLength(200).IsRequired();
+    }
+}
+
 public sealed class MonitoringConfigChangeConfiguration : IEntityTypeConfiguration<MonitoringConfigChange>
 {
     public void Configure(EntityTypeBuilder<MonitoringConfigChange> builder)

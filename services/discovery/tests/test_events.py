@@ -18,6 +18,7 @@ CONTRACT_FIELDS = {
     "scanId",
     "address",
     "hostname",
+    "hostnameSource",
     "respondedToPing",
     "openPorts",
     "snmp",

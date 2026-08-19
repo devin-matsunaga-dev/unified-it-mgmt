@@ -14,6 +14,7 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Modules.Monitoring.Data;
+using Modules.Monitoring.Features.Discovery;
 using Platform.Data;
 
 namespace Infrastructure.Tests;
@@ -331,6 +332,339 @@ public sealed class ScanProfileApiIntegrationTests : IAsyncLifetime
         Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
     }
 
+    // ---- Phase 5.5: the schedule switches and on-demand runs ----
+
+    [Fact]
+    public async Task ScanProfile_WithItsScheduleOff_StillReachesTheScannerAndSaysSo()
+    {
+        var group = NewGroup();
+
+        var created = await CreateAsync(
+            NewName(), group, ["10.31.0.0/29"], [], scheduleEnabled: false);
+
+        Assert.False(created.ScheduleEnabled);
+        Assert.True(created.IsEnabled);
+
+        // The distinction the whole feature rests on: not scheduled, but still configured — so a
+        // requested run can name it. Filtering it out here would make "scan now" work only for the
+        // profiles that did not need it.
+        var config = await GetAsync<DiscoveryConfigDto>(
+            $"/api/discovery/{group}/scan-profiles", DiscoveryRole);
+        var profile = Assert.Single(config.Profiles);
+        Assert.Equal(created.Id, profile.ScanProfileId);
+        Assert.False(profile.ScheduleEnabled);
+    }
+
+    [Fact]
+    public async Task DiscoverySettings_ScheduledScanningSwitchedOff_IsCarriedOnEveryScannerFetch()
+    {
+        var group = NewGroup();
+        await CreateAsync(NewName(), group, ["10.32.0.0/29"], []);
+
+        var before = await GetAsync<DiscoveryConfigDto>(
+            $"/api/discovery/{group}/scan-profiles", DiscoveryRole);
+        Assert.True(before.ScheduledScanningEnabled);
+
+        var settings = await SetScheduledScanningAsync(false);
+        Assert.False(settings.ScheduledScanningEnabled);
+
+        var after = await GetAsync<DiscoveryConfigDto>(
+            $"/api/discovery/{group}/scan-profiles", DiscoveryRole);
+        Assert.False(after.ScheduledScanningEnabled);
+
+        // Still sent, still complete: the switch stops the clock rather than the scanner.
+        Assert.Single(after.Profiles);
+
+        await SetScheduledScanningAsync(true);
+    }
+
+    [Fact]
+    public async Task ScanRun_RequestedThenClaimedThenReported_IsRecordedWithWhatTheScanFound()
+    {
+        var group = NewGroup();
+        var profile = await CreateAsync(NewName(), group, ["10.33.0.0/29"], [22]);
+
+        var queued = await RequestRunAsync(profile.Id);
+        Assert.Equal("Queued", queued.Status);
+        Assert.Null(queued.DiscoveryName);
+        Assert.Equal(profile.Name, queued.ScanProfileName);
+
+        // The scanner's fetch, under its own policy. It is handed the whole profile rather than an
+        // id, so it can run one that is not in its scheduled configuration.
+        var dispatch = await GetAsync<ScanDispatchDto>(
+            $"/api/discovery/{group}/scan-runs?discoveryName=discovery-1", DiscoveryRole);
+        var claimed = Assert.Single(dispatch.Runs);
+        Assert.Equal(queued.Id, claimed.ScanRunId);
+        Assert.Equal(profile.Id, claimed.Profile.ScanProfileId);
+        Assert.Equal(["10.33.0.0/29"], claimed.Profile.Ranges);
+
+        var running = await GetAsync<ScanRunDto>($"/api/scan-runs/{queued.Id}");
+        Assert.Equal("Running", running.Status);
+        Assert.Equal("discovery-1", running.DiscoveryName);
+
+        using var report = Authenticated(
+            HttpMethod.Post, $"/api/discovery/{group}/scan-runs/{queued.Id}/results", DiscoveryRole);
+        report.Content = JsonContent.Create(new
+        {
+            outcome = "Succeeded",
+            addressesProbed = 6,
+            devicesFound = 2,
+        });
+        using var reported = await _client!.SendAsync(report);
+        Assert.Equal(HttpStatusCode.OK, reported.StatusCode);
+
+        var finished = await GetAsync<ScanRunDto>($"/api/scan-runs/{queued.Id}");
+        Assert.Equal("Succeeded", finished.Status);
+        Assert.Equal(6, finished.AddressesProbed);
+        Assert.Equal(2, finished.DevicesFound);
+        Assert.NotNull(finished.CompletedAt);
+    }
+
+    [Fact]
+    public async Task ScanRun_ClaimedOnce_IsNotHandedToTheNextScannerThatAsks()
+    {
+        var group = NewGroup();
+        var profile = await CreateAsync(NewName(), group, ["10.34.0.0/29"], []);
+        await RequestRunAsync(profile.Id);
+
+        var first = await GetAsync<ScanDispatchDto>(
+            $"/api/discovery/{group}/scan-runs?discoveryName=discovery-1", DiscoveryRole);
+        var second = await GetAsync<ScanDispatchDto>(
+            $"/api/discovery/{group}/scan-runs?discoveryName=discovery-2", DiscoveryRole);
+
+        // Two scanners may share a group; the claim is a conditional update, so only one wins.
+        Assert.Single(first.Runs);
+        Assert.Empty(second.Runs);
+    }
+
+    [Fact]
+    public async Task ScanRun_RequestedTwiceWhileOneIsWaiting_IsRefusedWithTheRunAlreadyQueued()
+    {
+        var group = NewGroup();
+        var profile = await CreateAsync(NewName(), group, ["10.35.0.0/29"], []);
+        var first = await RequestRunAsync(profile.Id);
+
+        using var again = Authenticated(HttpMethod.Post, $"/api/scan-profiles/{profile.Id}/runs");
+        again.Content = JsonContent.Create(new { note = (string?)null });
+        using var response = await _client!.SendAsync(again);
+
+        // A second press is a 409 naming the scan that is already coming, rather than a second row.
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+        var problem = await response.Content.ReadAsStringAsync();
+        Assert.Contains(profile.Name, problem, StringComparison.Ordinal);
+
+        // And exactly one run exists, which is the constraint doing the work rather than the check.
+        var runs = await GetAsync<ScanRunPageDto>($"/api/scan-runs?scanProfileId={profile.Id}");
+        Assert.Equal(1, runs.Total);
+        Assert.Equal(first.Id, runs.Items[0].Id);
+    }
+
+    [Fact]
+    public async Task ScanRun_OfADisabledProfile_IsRefusedBeforeItCanSitQueuedForever()
+    {
+        var group = NewGroup();
+        var profile = await CreateAsync(
+            NewName(), group, ["10.36.0.0/29"], [], isEnabled: false);
+
+        using var request = Authenticated(HttpMethod.Post, $"/api/scan-profiles/{profile.Id}/runs");
+        request.Content = JsonContent.Create(new { note = "why not" });
+        using var response = await _client!.SendAsync(request);
+
+        // A disabled profile has left every scanner's configuration, so a run of it would sit
+        // queued until it timed out. Saying so while somebody is looking at the button is kinder.
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task ScanRun_ReportedWithAnOutcomeAScannerMayNotDeclare_IsRejected()
+    {
+        var group = NewGroup();
+        var profile = await CreateAsync(NewName(), group, ["10.37.0.0/29"], []);
+        var queued = await RequestRunAsync(profile.Id);
+        await GetAsync<ScanDispatchDto>(
+            $"/api/discovery/{group}/scan-runs?discoveryName=discovery-1", DiscoveryRole);
+
+        using var report = Authenticated(
+            HttpMethod.Post, $"/api/discovery/{group}/scan-runs/{queued.Id}/results", DiscoveryRole);
+        // TimedOut is the platform's verdict about this scanner. Letting an agent report it would
+        // let a scanner that gave up describe itself as having been abandoned.
+        report.Content = JsonContent.Create(new { outcome = "TimedOut" });
+        using var response = await _client!.SendAsync(report);
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task ScanRun_ReportedTwice_KeepsTheFirstTerminalStateAndAnswers409()
+    {
+        var group = NewGroup();
+        var profile = await CreateAsync(NewName(), group, ["10.38.0.0/29"], []);
+        var queued = await RequestRunAsync(profile.Id);
+        await GetAsync<ScanDispatchDto>(
+            $"/api/discovery/{group}/scan-runs?discoveryName=discovery-1", DiscoveryRole);
+
+        await ReportAsync(group, queued.Id, "Succeeded", HttpStatusCode.OK);
+        await ReportAsync(group, queued.Id, "Failed", HttpStatusCode.Conflict);
+
+        var finished = await GetAsync<ScanRunDto>($"/api/scan-runs/{queued.Id}");
+        Assert.Equal("Succeeded", finished.Status);
+    }
+
+    /// <summary>
+    /// The two halves are disjoint in both directions: an operator cannot collect a run, and a
+    /// scanner cannot ask for one. It is WP-5.6's rule for the runbook channel, in the second place
+    /// this solution has an agent channel.
+    /// </summary>
+    [Fact]
+    public async Task ScanRuns_TheOperatorAndScannerChannelsAreDisjointInBothDirections()
+    {
+        var group = NewGroup();
+        var profile = await CreateAsync(NewName(), group, ["10.39.0.0/29"], []);
+
+        using var operatorClaim = Authenticated(
+            HttpMethod.Get, $"/api/discovery/{group}/scan-runs", "Technician");
+        using var claimed = await _client!.SendAsync(operatorClaim);
+        Assert.Equal(HttpStatusCode.Forbidden, claimed.StatusCode);
+
+        using var scannerRequest = Authenticated(
+            HttpMethod.Post, $"/api/scan-profiles/{profile.Id}/runs", DiscoveryRole);
+        scannerRequest.Content = JsonContent.Create(new { note = (string?)null });
+        using var requested = await _client.SendAsync(scannerRequest);
+        Assert.Equal(HttpStatusCode.Forbidden, requested.StatusCode);
+
+        // And the poller, which is a different agent again: it has no business here at all.
+        using var pollerClaim = Authenticated(
+            HttpMethod.Get, $"/api/discovery/{group}/scan-runs", PollerRole);
+        using var polled = await _client.SendAsync(pollerClaim);
+        Assert.Equal(HttpStatusCode.Forbidden, polled.StatusCode);
+    }
+
+    [Fact]
+    public async Task ScanRun_ClaimedByAScannerThatNeverReports_IsTimedOutBySweeperNotLeftRunning()
+    {
+        var group = NewGroup();
+        var profile = await CreateAsync(NewName(), group, ["10.41.0.0/29"], []);
+        var queued = await RequestRunAsync(profile.Id);
+        await GetAsync<ScanDispatchDto>(
+            $"/api/discovery/{group}/scan-runs?discoveryName=discovery-1", DiscoveryRole);
+
+        // Reach past the deadline rather than wait for it. This is the only thing that notices a
+        // dead scanner: WP-4.1 gave this service no heartbeat, so silence is the sole symptom.
+        await using (var scope = _application.Services.CreateAsyncScope())
+        {
+            var dbContext = scope.ServiceProvider.GetRequiredService<MonitoringDbContext>();
+            var run = await dbContext.ScanRuns.SingleAsync(item => item.Id == queued.Id);
+            run.DeadlineAt = DateTimeOffset.UtcNow.AddMinutes(-1);
+            await dbContext.SaveChangesAsync();
+
+            var swept = await scope.ServiceProvider
+                .GetRequiredService<IScanRunTimeoutSweeper>().SweepAsync(default);
+            Assert.True(swept >= 1);
+        }
+
+        var finished = await GetAsync<ScanRunDto>($"/api/scan-runs/{queued.Id}");
+        Assert.Equal("TimedOut", finished.Status);
+        Assert.NotNull(finished.Error);
+    }
+
+    [Fact]
+    public async Task ScanRun_ReportingProgress_MovesTheCountsWithoutFinishingTheRun()
+    {
+        var group = NewGroup();
+        var profile = await CreateAsync(NewName(), group, ["10.42.0.0/24"], []);
+        var queued = await RequestRunAsync(profile.Id);
+        await GetAsync<ScanDispatchDto>(
+            $"/api/discovery/{group}/scan-runs?discoveryName=discovery-1", DiscoveryRole);
+
+        using var progress = Authenticated(
+            HttpMethod.Post, $"/api/discovery/{group}/scan-runs/{queued.Id}/progress", DiscoveryRole);
+        progress.Content = JsonContent.Create(new
+        {
+            addressesProbed = 128,
+            addressesTotal = 254,
+            lastRespondingAddress = "172.18.0.7",
+        });
+        using var reported = await _client!.SendAsync(progress);
+        Assert.Equal(HttpStatusCode.OK, reported.StatusCode);
+
+        var running = await GetAsync<ScanRunDto>($"/api/scan-runs/{queued.Id}");
+        Assert.Equal(128, running.AddressesProbed);
+        Assert.Equal(254, running.AddressesTotal);
+        Assert.Equal("172.18.0.7", running.LastRespondingAddress);
+        Assert.NotNull(running.ProgressAt);
+
+        // The point of a separate endpoint: progress says how far, never whether it is done.
+        Assert.Equal("Running", running.Status);
+        Assert.Null(running.CompletedAt);
+    }
+
+    [Fact]
+    public async Task ScanRun_ProgressReportedAfterItFinished_IsRefusedRatherThanDraggingItBackwards()
+    {
+        var group = NewGroup();
+        var profile = await CreateAsync(NewName(), group, ["10.43.0.0/29"], []);
+        var queued = await RequestRunAsync(profile.Id);
+        await GetAsync<ScanDispatchDto>(
+            $"/api/discovery/{group}/scan-runs?discoveryName=discovery-1", DiscoveryRole);
+        await ReportAsync(group, queued.Id, "Succeeded", HttpStatusCode.OK);
+
+        using var late = Authenticated(
+            HttpMethod.Post, $"/api/discovery/{group}/scan-runs/{queued.Id}/progress", DiscoveryRole);
+        late.Content = JsonContent.Create(new { addressesProbed = 3, addressesTotal = 6 });
+        using var response = await _client!.SendAsync(late);
+
+        // A slow progress post arriving after the result must not un-finish the row.
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+
+        var finished = await GetAsync<ScanRunDto>($"/api/scan-runs/{queued.Id}");
+        Assert.Equal("Succeeded", finished.Status);
+        Assert.Equal(6, finished.AddressesProbed);
+    }
+
+    [Fact]
+    public async Task ScanRun_ProgressFromAnOperator_IsForbidden()
+    {
+        var group = NewGroup();
+        var profile = await CreateAsync(NewName(), group, ["10.44.0.0/29"], []);
+        var queued = await RequestRunAsync(profile.Id);
+
+        using var request = Authenticated(
+            HttpMethod.Post, $"/api/discovery/{group}/scan-runs/{queued.Id}/progress", "Technician");
+        request.Content = JsonContent.Create(new { addressesProbed = 1 });
+        using var response = await _client!.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+    }
+
+    private async Task<ScanRunDto> RequestRunAsync(Guid scanProfileId)
+    {
+        using var request = Authenticated(HttpMethod.Post, $"/api/scan-profiles/{scanProfileId}/runs");
+        request.Content = JsonContent.Create(new { note = "verification" });
+        using var response = await _client!.SendAsync(request);
+        Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+        return Assert.IsType<ScanRunDto>(await response.Content.ReadFromJsonAsync<ScanRunDto>());
+    }
+
+    private async Task ReportAsync(
+        string group, Guid runId, string outcome, HttpStatusCode expected)
+    {
+        using var request = Authenticated(
+            HttpMethod.Post, $"/api/discovery/{group}/scan-runs/{runId}/results", DiscoveryRole);
+        request.Content = JsonContent.Create(new { outcome, addressesProbed = 6, devicesFound = 0 });
+        using var response = await _client!.SendAsync(request);
+        Assert.Equal(expected, response.StatusCode);
+    }
+
+    private async Task<DiscoverySettingsDto> SetScheduledScanningAsync(bool enabled)
+    {
+        using var request = Authenticated(HttpMethod.Put, "/api/discovery-settings");
+        request.Content = JsonContent.Create(new { scheduledScanningEnabled = enabled });
+        using var response = await _client!.SendAsync(request);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        return Assert.IsType<DiscoverySettingsDto>(
+            await response.Content.ReadFromJsonAsync<DiscoverySettingsDto>());
+    }
+
     private static string NewGroup() => $"group-{Guid.NewGuid():N}"[..20];
 
     private static string NewName() => $"Scan {Guid.NewGuid():N}"[..20];
@@ -340,7 +674,8 @@ public sealed class ScanProfileApiIntegrationTests : IAsyncLifetime
         string discoveryGroup,
         string[] ranges,
         int[] ports,
-        bool isEnabled = true)
+        bool isEnabled = true,
+        bool scheduleEnabled = true)
     {
         using var request = Authenticated(HttpMethod.Post, "/api/scan-profiles");
         request.Content = JsonContent.Create(new
@@ -352,6 +687,7 @@ public sealed class ScanProfileApiIntegrationTests : IAsyncLifetime
             intervalMinutes = 60,
             timeoutSeconds = 2,
             isEnabled,
+            scheduleEnabled,
         });
         using var response = await _client!.SendAsync(request);
         Assert.Equal(HttpStatusCode.Created, response.StatusCode);
@@ -388,12 +724,14 @@ public sealed class ScanProfileApiIntegrationTests : IAsyncLifetime
         bool SnmpEnabled,
         bool NeighbourDiscoveryEnabled,
         bool IsEnabled,
+        bool ScheduleEnabled,
         long? AddressCount);
 
     private sealed record DiscoveryConfigDto(
         string DiscoveryGroup,
         IReadOnlyList<DiscoveryScanProfileDto> Profiles,
-        DateTimeOffset GeneratedAt);
+        DateTimeOffset GeneratedAt,
+        bool ScheduledScanningEnabled);
 
     private sealed record DiscoveryScanProfileDto(
         Guid ScanProfileId,
@@ -403,7 +741,48 @@ public sealed class ScanProfileApiIntegrationTests : IAsyncLifetime
         int IntervalSeconds,
         int TimeoutSeconds,
         bool SnmpEnabled,
-        bool NeighbourDiscoveryEnabled);
+        bool NeighbourDiscoveryEnabled,
+        bool ScheduleEnabled);
+
+    private sealed record ScanRunDto(
+        Guid Id,
+        Guid ScanProfileId,
+        string ScanProfileName,
+        string DiscoveryGroup,
+        string Status,
+        string RequestedBy,
+        DateTimeOffset RequestedAt,
+        string? DiscoveryName,
+        DateTimeOffset? DispatchedAt,
+        DateTimeOffset? DeadlineAt,
+        DateTimeOffset? CompletedAt,
+        int? AddressesProbed,
+        int? AddressesTotal,
+        int? DevicesFound,
+        string? LastRespondingAddress,
+        DateTimeOffset? ProgressAt,
+        string? Error);
+
+    private sealed record ScanRunPageDto(
+        IReadOnlyList<ScanRunDto> Items,
+        int Total,
+        int Page,
+        int PageSize);
+
+    private sealed record ScanDispatchDto(
+        string DiscoveryGroup,
+        IReadOnlyList<ScanDispatchItemDto> Runs,
+        DateTimeOffset GeneratedAt);
+
+    private sealed record ScanDispatchItemDto(
+        Guid ScanRunId,
+        DateTimeOffset DeadlineAt,
+        DiscoveryScanProfileDto Profile);
+
+    private sealed record DiscoverySettingsDto(
+        bool ScheduledScanningEnabled,
+        string UpdatedBy,
+        DateTimeOffset UpdatedAt);
 
     /// <summary>
     /// Its own host rather than a shared one, following every other API test class here. A scan profile

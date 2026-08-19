@@ -115,6 +115,9 @@ public sealed class DiscoveryEnvelopeTests
         Assert.NotEqual(Guid.Empty, discovered.ScanId);
         Assert.Equal("172.18.0.7", discovered.Address);
         Assert.Equal("sim-switch-healthy.example.test", discovered.Hostname);
+        // Which protocol named it. A field the publisher omits arrives here as null, which would
+        // read as "nothing named it" on a device reverse DNS answered for.
+        Assert.Equal("dns", discovered.HostnameSource);
         Assert.True(discovered.RespondedToPing);
         Assert.Equal([22, 161], discovered.OpenPorts);
 

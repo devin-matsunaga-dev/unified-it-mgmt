@@ -12,7 +12,8 @@ public sealed record CreateScanProfileRequest(
     int TimeoutSeconds = 2,
     bool SnmpEnabled = true,
     bool NeighbourDiscoveryEnabled = true,
-    bool IsEnabled = true);
+    bool IsEnabled = true,
+    bool ScheduleEnabled = true);
 
 /// <summary>
 /// A complete statement, like every other update in this module: an omitted port list clears the
@@ -28,7 +29,8 @@ public sealed record UpdateScanProfileRequest(
     int TimeoutSeconds = 2,
     bool SnmpEnabled = true,
     bool NeighbourDiscoveryEnabled = true,
-    bool IsEnabled = true);
+    bool IsEnabled = true,
+    bool ScheduleEnabled = true);
 
 public sealed record ScanProfileListRequest(
     string? Search = null,
@@ -54,6 +56,7 @@ public sealed record ScanProfileResponse(
     bool SnmpEnabled,
     bool NeighbourDiscoveryEnabled,
     bool IsEnabled,
+    bool ScheduleEnabled,
     long? AddressCount,
     string CreatedBy,
     DateTimeOffset CreatedAt,
@@ -81,15 +84,26 @@ public sealed record ScanProfileResult(
 /// misses a change scans the wrong range for an hour.
 /// </para>
 /// </summary>
+/// <param name="ScheduledScanningEnabled">
+/// The estate-wide switch, sent on every fetch rather than left for the scanner to ask about
+/// separately. With it false the scanner runs nothing on a timer and still collects requested runs —
+/// so a scanner that is a version behind and ignores this field keeps scanning, which is the safe way
+/// round for a field that turns work off.
+/// </param>
 public sealed record DiscoveryConfigResponse(
     string DiscoveryGroup,
     IReadOnlyList<DiscoveryScanProfileConfig> Profiles,
-    DateTimeOffset GeneratedAt);
+    DateTimeOffset GeneratedAt,
+    bool ScheduledScanningEnabled = true);
 
 /// <param name="IntervalSeconds">
 /// The profile's interval in seconds rather than minutes. The scanner schedules against a monotonic
 /// clock in seconds like the poller does, and converting on the way out means the unit is chosen once
 /// here rather than in whichever scanner implementation reads this.
+/// </param>
+/// <param name="ScheduleEnabled">
+/// Whether <paramref name="IntervalSeconds"/> means anything for this profile. False makes it
+/// on-demand only: it is still sent, so a requested run can name it, but no cycle starts it.
 /// </param>
 public sealed record DiscoveryScanProfileConfig(
     Guid ScanProfileId,
@@ -99,4 +113,5 @@ public sealed record DiscoveryScanProfileConfig(
     int IntervalSeconds,
     int TimeoutSeconds,
     bool SnmpEnabled,
-    bool NeighbourDiscoveryEnabled);
+    bool NeighbourDiscoveryEnabled,
+    bool ScheduleEnabled = true);

@@ -23,6 +23,7 @@ const headings: (PageHeading & { path: string })[] = [
   { path: '/knowledge/:id', title: 'Article' },
 
   { path: '/assets/import', title: 'Import configuration items', subtitle: 'Upload a CSV or Excel file, map its columns, and review the dry run.' },
+  { path: '/assets/discovery/profiles', title: 'Scan profiles', subtitle: 'Where the scanners look, how often, and how hard.' },
   { path: '/assets/discovery', title: 'Discovery review' },
   { path: '/assets/drift', title: 'Drift', subtitle: 'What the CMDB records, beside what the last scan observed.' },
   { path: '/assets', title: 'Assets', subtitle: 'The configuration items every ticket, alert, and device links back to.' },

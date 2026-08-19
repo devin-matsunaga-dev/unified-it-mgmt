@@ -572,6 +572,7 @@ public sealed class TopologyApiIntegrationTests : IAsyncLifetime
                     Guid.CreateVersion7(),
                     address,
                     null,
+                    null,
                     RespondedToPing: true,
                     [],
                     new DiscoveredSnmpIdentity(sysName, "Simulated switch", "1.3.6.1.4.1.8072.3.2.10", null, null, 1),

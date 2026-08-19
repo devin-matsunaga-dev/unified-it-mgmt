@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 import uuid
-from collections.abc import Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 
 from .config import ScanProfile
 from .identify import Neighbour, SnmpIdentity, identify, walk_neighbours
+from .names import SOURCE_DNS, ResolvedName, resolve_name
 from .ranges import LocalResolver, RangeError, expand_all
 from .snmp import SnmpTransport, default_transport
 from .sweep import NetworkSweep, SweepResult
@@ -21,6 +23,10 @@ logger = logging.getLogger("discovery.scanner")
 #: a burst of traffic at the exact devices the scan cares most about not upsetting.
 IDENTIFY_CONCURRENCY = 16
 
+#: How often a sweep in flight says how far it has got. A second is fast enough to look live and
+#: slow enough that a /24 costs a handful of requests rather than 254.
+PROGRESS_INTERVAL_SECONDS = 1.0
+
 
 @dataclass(frozen=True, slots=True)
 class DiscoveredDevice:
@@ -30,6 +36,10 @@ class DiscoveredDevice:
     responded_to_ping: bool
     open_ports: tuple[int, ...] = field(default_factory=tuple)
     hostname: str | None = None
+    #: Which protocol produced `hostname`: `dns`, `mdns` or `netbios`. None when nothing named it.
+    #: Carried so an approver can weigh the name — a PTR record and a NetBIOS answer are not equally
+    #: trustworthy, and the review card says which one it is showing.
+    hostname_source: str | None = None
     identity: SnmpIdentity | None = None
     neighbours: tuple[Neighbour, ...] = field(default_factory=tuple)
 
@@ -53,6 +63,75 @@ class ScanOutcome:
     range_errors: tuple[str, ...] = field(default_factory=tuple)
 
 
+def _with_name(result: SweepResult, resolved: ResolvedName | None) -> SweepResult:
+    """
+    Attaches a name and its provenance, preferring what reverse DNS already found.
+
+    A PTR record is the strongest of the three: it is what the network's own administrator
+    published, while mDNS and NetBIOS names are whatever the device says about itself.
+    """
+    if result.hostname is not None:
+        return SweepResult(
+            address=result.address,
+            responded_to_ping=result.responded_to_ping,
+            latency_ms=result.latency_ms,
+            open_ports=result.open_ports,
+            hostname=result.hostname,
+            hostname_source=SOURCE_DNS,
+        )
+
+    return SweepResult(
+        address=result.address,
+        responded_to_ping=result.responded_to_ping,
+        latency_ms=result.latency_ms,
+        open_ports=result.open_ports,
+        hostname=resolved.name if resolved else None,
+        hostname_source=resolved.source if resolved else None,
+    )
+
+
+#: Names an address when reverse DNS could not. Injectable so tests need no network.
+NameResolver = Callable[[str], Awaitable[ResolvedName | None]]
+
+
+#: Reports how far a sweep has got: addresses probed, the total, and the last one that answered.
+#: There is deliberately no "current address" — the sweep runs hundreds of probes at once.
+ScanProgress = Callable[[int, int, str | None], None]
+
+
+class _ProgressCounter:
+    """
+    Turns per-probe callbacks into a running total, and calls out at most once a second.
+
+    Throttled here rather than at the caller because the callback fires once per address: a /24 is
+    254 calls in a few seconds, and a scanner that posted each one would spend the sweep talking
+    about the sweep.
+    """
+
+    __slots__ = ("_last_address", "_probed", "_report", "_reported_at", "_total")
+
+    def __init__(self, total: int, report: ScanProgress) -> None:
+        self._total = total
+        self._report = report
+        self._probed = 0
+        self._last_address: str | None = None
+        self._reported_at = 0.0
+
+    def probed(self, address: str, answered: bool) -> None:
+        self._probed += 1
+        if answered:
+            self._last_address = address
+
+        now = time.monotonic()
+        # The last address is always reported, however late it lands: finishing silently after the
+        # final tick would leave a progress line frozen short of the total.
+        if now - self._reported_at < PROGRESS_INTERVAL_SECONDS and self._probed < self._total:
+            return
+
+        self._reported_at = now
+        self._report(self._probed, self._total, self._last_address)
+
+
 class Scanner:
     """
     Runs a profile end to end.
@@ -71,14 +150,23 @@ class Scanner:
         communities: Sequence[str] = (),
         local: LocalResolver | None = None,
         identify_concurrency: int = IDENTIFY_CONCURRENCY,
+        name_resolver: NameResolver | None = None,
     ) -> None:
         self._sweep = sweep
         self._transport = transport
         self._communities = tuple(communities)
         self._local = local
         self._identify_concurrency = max(identify_concurrency, 1)
+        # Injectable for the reason the ping and the SNMP transport are: a unit test that reached
+        # the network would wait out a real timeout per address and answer differently on every
+        # machine it ran on.
+        self._name_resolver = name_resolver or resolve_name
 
-    async def scan(self, profile: ScanProfile) -> ScanOutcome:
+    async def scan(
+        self,
+        profile: ScanProfile,
+        on_progress: ScanProgress | None = None,
+    ) -> ScanOutcome:
         scan_id = str(uuid.uuid4())
         addresses, range_errors = self._expand(profile)
 
@@ -91,8 +179,14 @@ class Scanner:
                 range_errors=range_errors,
             )
 
-        found = await self._sweep.run(addresses, profile.ports, profile.timeout_seconds)
-        devices = await self._identify_all(profile, found)
+        # The total is only knowable here: a profile scanning `local` has no size until the ranges
+        # are expanded against the machine the scanner is actually on.
+        observer = _ProgressCounter(len(addresses), on_progress) if on_progress else None
+        found = await self._sweep.run(
+            addresses, profile.ports, profile.timeout_seconds,
+            on_probe=observer.probed if observer else None)
+        named = await self._name_all(found)
+        devices = await self._identify_all(profile, named)
 
         return ScanOutcome(
             profile_id=profile.profile_id,
@@ -102,6 +196,39 @@ class Scanner:
             devices=tuple(devices),
             range_errors=range_errors,
         )
+
+    async def _name_all(self, found: Sequence[SweepResult]) -> list[SweepResult]:
+        """
+        Gives a name to whatever reverse DNS could not.
+
+        Only the addresses that answered and have no name are asked, which on a real network is most
+        of them and on a well-run one is none: a LAN with proper PTR records reaches this and does
+        nothing. Bounded to the same concurrency an identify uses, because each unnamed address is
+        two datagrams and a timeout, and a /24 of unnamed hosts would otherwise be 500 in flight.
+        """
+        unnamed = [result for result in found if result.hostname is None]
+        if not unnamed:
+            return list(found)
+
+        semaphore = asyncio.Semaphore(self._identify_concurrency)
+
+        async def named(result: SweepResult) -> tuple[str, ResolvedName | None]:
+            async with semaphore:
+                try:
+                    return result.address, await self._name_resolver(result.address)
+                except Exception:
+                    # One address that could not be named never costs the scan the other 253.
+                    return result.address, None
+
+        resolved = dict(await asyncio.gather(*[named(result) for result in unnamed]))
+        for address, name in resolved.items():
+            if name is not None:
+                logger.info(
+                    "Named an address that reverse DNS could not.",
+                    extra={"address": address, "hostname": name.name, "source": name.source},
+                )
+
+        return [_with_name(result, resolved.get(result.address)) for result in found]
 
     def _expand(self, profile: ScanProfile) -> tuple[list[str], tuple[str, ...]]:
         """
@@ -143,6 +270,7 @@ class Scanner:
                     responded_to_ping=result.responded_to_ping,
                     open_ports=result.open_ports,
                     hostname=result.hostname,
+                    hostname_source=result.hostname_source,
                 )
                 for result in found
             ]
@@ -199,6 +327,7 @@ class Scanner:
             responded_to_ping=result.responded_to_ping,
             open_ports=result.open_ports,
             hostname=result.hostname,
+            hostname_source=result.hostname_source,
             identity=identity,
             neighbours=neighbours,
         )

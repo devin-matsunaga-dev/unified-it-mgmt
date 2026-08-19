@@ -12,6 +12,7 @@ import { AuditSessionsPage } from './features/assets/AuditSessionsPage'
 import { DiscoveryReviewPage } from './features/assets/DiscoveryReviewPage'
 import { DriftReportPage } from './features/assets/DriftReportPage'
 import { ScanPage } from './features/assets/ScanPage'
+import { ScanProfilesPage } from './features/assets/ScanProfilesPage'
 import { ContractDetailPage } from './features/contracts/ContractDetailPage'
 import { ContractListPage } from './features/contracts/ContractListPage'
 import { VendorListPage } from './features/contracts/VendorListPage'
@@ -71,6 +72,7 @@ export function App() {
       <Route path="assets" element={<ProtectedRoute roles={['Admin', 'Technician', 'Manager']}><CiListPage /></ProtectedRoute>} />
       <Route path="assets/import" element={<ProtectedRoute roles={['Admin', 'Technician', 'Manager']}><CiImportWizard /></ProtectedRoute>} />
       <Route path="assets/discovery" element={<ProtectedRoute roles={['Admin', 'Technician', 'Manager']}><DiscoveryReviewPage /></ProtectedRoute>} />
+      <Route path="assets/discovery/profiles" element={<ProtectedRoute roles={['Admin', 'Technician', 'Manager']}><ScanProfilesPage /></ProtectedRoute>} />
       <Route path="assets/drift" element={<ProtectedRoute roles={['Admin', 'Technician', 'Manager']}><DriftReportPage /></ProtectedRoute>} />
       <Route path="assets/:id" element={<ProtectedRoute roles={['Admin', 'Technician', 'Manager']}><CiDetailPage /></ProtectedRoute>} />
       <Route path="changes" element={<ProtectedRoute roles={['Admin', 'Technician', 'Manager']}><ChangeCalendarPage /></ProtectedRoute>} />

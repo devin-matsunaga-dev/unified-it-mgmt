@@ -42,6 +42,7 @@ const stranger: DiscoveredDevice = {
   identityKey: 'snmp:sim-switch-healthy',
   address: '172.18.0.7',
   hostname: 'sim-switch-healthy.example.test',
+  hostnameSource: 'dns',
   respondedToPing: true,
   openPorts: [22],
   snmp: {
@@ -107,6 +108,31 @@ describe('DiscoveryReviewPage', () => {
     expect(screen.getByText('IT Platform simulated switch, healthy profile')).toBeInTheDocument()
     expect(screen.getByText(/dc1-core-rtr-01/)).toBeInTheDocument()
     expect(discoveryApi.listDiscovered).toHaveBeenCalledWith(expect.objectContaining({ status: 'Pending' }))
+  })
+
+  it('says how a device was named, because the three protocols are not equally trustworthy', async () => {
+    vi.mocked(discoveryApi.listDiscovered).mockResolvedValue({
+      items: [{ ...stranger, hostname: 'DESKTOP-7F2K', hostnameSource: 'netbios', suggestedName: 'DESKTOP-7F2K' }],
+      total: 1, page: 1, pageSize: 25,
+    })
+
+    renderPage()
+
+    // A PTR record is what the network's administrator published; a NetBIOS name is whatever the
+    // device says about itself, and the approver should be able to tell them apart.
+    expect(await screen.findByText('via NetBIOS')).toBeInTheDocument()
+  })
+
+  it('shows no provenance label for a device nothing could name', async () => {
+    vi.mocked(discoveryApi.listDiscovered).mockResolvedValue({
+      items: [{ ...stranger, hostname: null, hostnameSource: null, suggestedName: '192.168.1.9' }],
+      total: 1, page: 1, pageSize: 25,
+    })
+
+    renderPage()
+
+    await screen.findByText('192.168.1.9')
+    expect(screen.queryByText(/^via /)).not.toBeInTheDocument()
   })
 
   it('switches the queue to the ignore list when the tab is chosen', async () => {

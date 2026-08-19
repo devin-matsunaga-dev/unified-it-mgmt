@@ -13,6 +13,7 @@
     "scanId": "0199c0de-4100-7000-8000-000000005ca4",
     "address": "172.18.0.7",
     "hostname": "sim-switch-healthy.example.test",
+    "hostnameSource": "dns",
     "respondedToPing": true,
     "openPorts": [
       22,

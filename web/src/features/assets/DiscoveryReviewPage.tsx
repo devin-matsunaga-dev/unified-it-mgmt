@@ -7,12 +7,14 @@ import {
   ciTypeLabel,
   discoveryApi,
   discoveryMatchRuleLabel,
+  hostnameSourceLabel,
   type DiscoveredDevice,
   type DiscoveredDeviceFilter,
   type DiscoveredDeviceStatus,
 } from '../../api/assets'
 import { Button } from '../../components/ui/Button'
 import { DiscoveryApproveDialog } from './DiscoveryApproveDialog'
+import { DiscoveryTabs } from './DiscoveryTabs'
 import { usePageHeading } from '../../layout/pageHeading'
 
 /**
@@ -47,9 +49,14 @@ export function DiscoveryReviewPage() {
     return () => window.clearTimeout(timer)
   }, [search])
 
+  // Polled, because what fills this queue happens somewhere else entirely: a scanner sweeps on its
+  // own schedule or because somebody pressed "Scan now" on the next tab, and the events then travel
+  // the bus. Without this the page shows "nothing needs review" until something forces a refetch —
+  // which reads exactly like a scan that found nothing, and is the first thing anybody reports.
   const queue = useQuery({
     queryKey: ['discovered-devices', filter],
     queryFn: () => discoveryApi.listDiscovered(filter),
+    refetchInterval: 10_000,
     placeholderData: keepPreviousData,
   })
 
@@ -71,13 +78,11 @@ export function DiscoveryReviewPage() {
   usePageHeading({ title: 'Discovery review', subtitle: activeTab.blurb })
 
   return <div className="space-y-6">
-    <div className="flex flex-wrap items-center justify-end gap-4">
-      <div className="relative">
-        <Search size={18} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-        <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Address, hostname or description"
-          aria-label="Search discovered devices" className="input h-10 w-72 pl-10" />
-      </div>
-    </div>
+    <DiscoveryTabs right={<div className="relative">
+      <Search size={18} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+      <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Address, hostname or description"
+        aria-label="Search discovered devices" className="input h-10 w-72 pl-10" />
+    </div>} />
 
     <div className="flex flex-wrap gap-1 border-b border-slate-200 dark:border-slate-800" role="tablist">
       {tabs.map((tab) => <button key={tab.value} role="tab" aria-selected={filter.status === tab.value}
@@ -138,8 +143,15 @@ function DiscoveryCard({ device, confirming, rejecting, onApprove, onReject, onC
     <div className="flex items-start justify-between gap-3">
       <div className="min-w-0">
         <h2 className="truncate font-semibold">{device.suggestedName}</h2>
-        <p className="mt-0.5 text-[13px] text-slate-500">
-          {device.address}{device.hostname && ` · ${device.hostname}`}
+        <p className="mt-0.5 flex flex-wrap items-center gap-x-1.5 text-[13px] text-slate-500">
+          <span>{device.address}{device.hostname && ` · ${device.hostname}`}</span>
+          {/* Where the name came from. A PTR record is what the network's administrator published;
+              mDNS and NetBIOS names are whatever the device says about itself, and somebody
+              approving one into the CMDB should be able to see which they are trusting. */}
+          {device.hostname && device.hostnameSource && <span
+            className="rounded bg-slate-100 px-1.5 py-0.5 text-[11px] font-medium text-slate-600 dark:bg-slate-800 dark:text-slate-300">
+            {hostnameSourceLabel(device.hostnameSource)}
+          </span>}
         </p>
       </div>
       <span className={`shrink-0 rounded-md px-2 py-0.5 text-xs font-medium ${statusTones[device.status]}`}>{device.status}</span>

@@ -15,6 +15,8 @@ public sealed class MonitoringDbContext(DbContextOptions<MonitoringDbContext> op
     public DbSet<DeviceInterface> DeviceInterfaces => Set<DeviceInterface>();
     public DbSet<Alert> Alerts => Set<Alert>();
     public DbSet<ScanProfile> ScanProfiles => Set<ScanProfile>();
+    public DbSet<ScanRun> ScanRuns => Set<ScanRun>();
+    public DbSet<DiscoverySettings> DiscoverySettings => Set<DiscoverySettings>();
     public DbSet<Runbook> Runbooks => Set<Runbook>();
     public DbSet<RunbookTrigger> RunbookTriggers => Set<RunbookTrigger>();
     public DbSet<RunbookExecution> RunbookExecutions => Set<RunbookExecution>();

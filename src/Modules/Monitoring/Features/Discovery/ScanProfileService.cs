@@ -10,7 +10,8 @@ namespace Modules.Monitoring.Features.Discovery;
 
 public sealed class ScanProfileService(
     MonitoringDbContext dbContext,
-    IAuditService auditService) : IScanProfileService
+    IAuditService auditService,
+    IDiscoverySettingsService settingsService) : IScanProfileService
 {
     /// <summary>Where a profile lands when the caller does not say which scanner runs it.</summary>
     public const string DefaultDiscoveryGroup = "default";
@@ -100,6 +101,7 @@ public sealed class ScanProfileService(
             SnmpEnabled = request.SnmpEnabled,
             NeighbourDiscoveryEnabled = request.NeighbourDiscoveryEnabled,
             IsEnabled = request.IsEnabled,
+            ScheduleEnabled = request.ScheduleEnabled,
             CreatedBy = actorId,
             CreatedAt = now,
             UpdatedBy = actorId,
@@ -155,6 +157,7 @@ public sealed class ScanProfileService(
         profile.SnmpEnabled = request.SnmpEnabled;
         profile.NeighbourDiscoveryEnabled = request.NeighbourDiscoveryEnabled;
         profile.IsEnabled = request.IsEnabled;
+        profile.ScheduleEnabled = request.ScheduleEnabled;
         profile.UpdatedBy = GetActorId(actor);
         profile.UpdatedAt = DateTimeOffset.UtcNow;
 
@@ -197,22 +200,35 @@ public sealed class ScanProfileService(
             .OrderBy(profile => profile.Name).ThenBy(profile => profile.Id)
             .ToListAsync(cancellationToken);
 
+        // A profile whose schedule is off is still sent. It has to be: an on-demand run names a profile
+        // the scanner must already hold, and filtering it out here would make "scan now" work only for
+        // the profiles that did not need it.
+        var settings = await settingsService.GetAsync(cancellationToken);
+
         // An unknown group is an empty configuration rather than a 404. A scanner is deployed before
         // anybody writes it a profile, and answering 404 would make "nothing to scan yet" and "this
         // platform has never heard of you" the same message on its first cycle.
         return new(
             group,
-            [.. profiles.Select(profile => new DiscoveryScanProfileConfig(
-                profile.Id,
-                profile.Name,
-                DeserializeRanges(profile.RangesJson),
-                DeserializePorts(profile.PortsJson),
-                profile.IntervalMinutes * 60,
-                profile.TimeoutSeconds,
-                profile.SnmpEnabled,
-                profile.NeighbourDiscoveryEnabled))],
-            DateTimeOffset.UtcNow);
+            [.. profiles.Select(ToConfig)],
+            DateTimeOffset.UtcNow,
+            settings.ScheduledScanningEnabled);
     }
+
+    /// <summary>
+    /// One profile as the scanner reads it. Shared by the config fetch and the dispatch of a requested
+    /// run, so that a profile means the same thing however the scanner came to hear about it.
+    /// </summary>
+    internal static DiscoveryScanProfileConfig ToConfig(ScanProfile profile) =>
+        new(profile.Id,
+            profile.Name,
+            DeserializeRanges(profile.RangesJson),
+            DeserializePorts(profile.PortsJson),
+            profile.IntervalMinutes * 60,
+            profile.TimeoutSeconds,
+            profile.SnmpEnabled,
+            profile.NeighbourDiscoveryEnabled,
+            profile.ScheduleEnabled);
 
     internal static ScanProfileResponse Map(ScanProfile profile)
     {
@@ -229,6 +245,7 @@ public sealed class ScanProfileService(
             profile.SnmpEnabled,
             profile.NeighbourDiscoveryEnabled,
             profile.IsEnabled,
+            profile.ScheduleEnabled,
             // A stored range was validated on the way in, so anything unparseable here is a row edited
             // behind the API's back. It reads as "unknown size" rather than throwing on a list request.
             ScanProfileRules.Parse(ranges) is { } parsed ? ScanRange.TotalAddresses(parsed) : null,

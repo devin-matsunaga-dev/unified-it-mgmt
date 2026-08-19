@@ -39,6 +39,7 @@ def build_discovered(
         "scanId": outcome.scan_id,
         "address": device.address,
         "hostname": device.hostname,
+        "hostnameSource": device.hostname_source,
         "respondedToPing": device.responded_to_ping,
         "openPorts": list(device.open_ports),
         "snmp": _identity(device.identity),

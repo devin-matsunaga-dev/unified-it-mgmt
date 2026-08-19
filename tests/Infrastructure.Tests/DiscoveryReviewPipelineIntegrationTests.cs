@@ -104,6 +104,43 @@ public sealed class DiscoveryReviewPipelineIntegrationTests : IAsyncLifetime
     }
 
     /// <summary>
+    /// A LAN with no PTR records names nothing over DNS, which is the ordinary case on a home or
+    /// small-office network — so a scan asks mDNS and NetBIOS as well, and the card has to say which
+    /// answered. The three are not equally trustworthy and an approver is trusting one of them.
+    /// </summary>
+    [Fact]
+    public async Task Discovery_NamedByAProtocolOtherThanDns_KeepsBothTheNameAndHowItWasLearned()
+    {
+        var address = NewAddress();
+
+        var result = await IngestAsync(
+            Discovery(address, hostname: "DESKTOP-7F2K", hostnameSource: "netbios"));
+
+        var queued = await GetAsync<DiscoveredDeviceDto>($"/api/discovered-devices/{result.DiscoveredDeviceId}");
+        Assert.Equal("DESKTOP-7F2K", queued.Hostname);
+        Assert.Equal("netbios", queued.HostnameSource);
+
+        // And the name is what the card is titled with, which is the whole point of asking. It is
+        // lower-cased by `DiscoveryIdentity.ShortHostname`, which every name in this pipeline goes
+        // through so that matching a discovery to a CI is case-insensitive — NetBIOS shouting its
+        // names in capitals is exactly the case that normalisation exists for.
+        Assert.Equal("desktop-7f2k", queued.SuggestedName);
+    }
+
+    [Fact]
+    public async Task Discovery_ThatNothingCouldName_CarriesNoSourceAndFallsBackToItsAddress()
+    {
+        var address = NewAddress();
+
+        var result = await IngestAsync(Discovery(address));
+
+        var queued = await GetAsync<DiscoveredDeviceDto>($"/api/discovered-devices/{result.DiscoveredDeviceId}");
+        Assert.Null(queued.Hostname);
+        Assert.Null(queued.HostnameSource);
+        Assert.Equal(address, queued.SuggestedName);
+    }
+
+    /// <summary>
     /// The WP's first verification, on the strongest rung: something the platform already polls is
     /// recognised rather than offered up as a stranger, and its CI gets the last-seen and the reported
     /// description the WP asks discovery to keep current.
@@ -644,7 +681,9 @@ public sealed class DiscoveryReviewPipelineIntegrationTests : IAsyncLifetime
         string address,
         string? sysName = null,
         string? sysDescription = null,
-        IReadOnlyList<DiscoveredNeighbour>? neighbours = null) => new(
+        IReadOnlyList<DiscoveredNeighbour>? neighbours = null,
+        string? hostname = null,
+        string? hostnameSource = null) => new(
         Guid.CreateVersion7(),
         DateTimeOffset.UtcNow,
         "discovery-tests",
@@ -652,7 +691,8 @@ public sealed class DiscoveryReviewPipelineIntegrationTests : IAsyncLifetime
         "Integration sweep",
         Guid.CreateVersion7(),
         address,
-        null,
+        hostname,
+        hostnameSource,
         RespondedToPing: true,
         OpenPorts: [22],
         Snmp: sysName is null && sysDescription is null
@@ -687,6 +727,7 @@ public sealed class DiscoveryReviewPipelineIntegrationTests : IAsyncLifetime
         string IdentityKey,
         string Address,
         string? Hostname,
+        string? HostnameSource,
         bool RespondedToPing,
         IReadOnlyList<int> OpenPorts,
         SnmpDto? Snmp,

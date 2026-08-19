@@ -321,3 +321,128 @@ export const monitoringApi = {
   getInventory: (deviceId: string) =>
     apiRequest<DeviceInventory>(`/api/monitored-devices/${deviceId}/inventory`),
 }
+
+// --- Scan profiles, on-demand runs and the estate switch (Phase 5.5) ---
+
+/**
+ * One range list a scanner sweeps, and how thoroughly it interrogates what answers.
+ *
+ * `isEnabled` and `scheduleEnabled` are deliberately different switches. Disabled removes the profile
+ * from every scanner's configuration entirely; schedule-off leaves it configured and reachable by a
+ * requested run, and only stops the clock starting it.
+ */
+export type ScanProfile = {
+  id: string
+  name: string
+  description: string | null
+  discoveryGroup: string
+  ranges: string[]
+  ports: number[]
+  intervalMinutes: number
+  timeoutSeconds: number
+  snmpEnabled: boolean
+  neighbourDiscoveryEnabled: boolean
+  isEnabled: boolean
+  scheduleEnabled: boolean
+  /** How many addresses the ranges expand to. Null when a range is `local`, whose size only the scanner knows. */
+  addressCount: number | null
+  createdBy: string
+  createdAt: string
+  updatedBy: string
+  updatedAt: string
+}
+
+export type ScanProfilePage = {
+  items: ScanProfile[]
+  total: number
+  page: number
+  pageSize: number
+}
+
+export type ScanProfileInput = {
+  name: string
+  ranges: string[]
+  description?: string | null
+  discoveryGroup?: string | null
+  ports?: number[]
+  intervalMinutes: number
+  timeoutSeconds: number
+  snmpEnabled: boolean
+  neighbourDiscoveryEnabled: boolean
+  isEnabled: boolean
+  scheduleEnabled: boolean
+}
+
+/**
+ * Queued rather than started, and the UI has to say so: a scanner collects the run on its own next
+ * cycle, because ARCHITECTURE §4 forbids pushing a command at an agent.
+ */
+export type ScanRunStatus = 'Queued' | 'Running' | 'Succeeded' | 'Failed' | 'TimedOut'
+
+export type ScanRun = {
+  id: string
+  scanProfileId: string
+  scanProfileName: string
+  discoveryGroup: string
+  status: ScanRunStatus
+  requestedBy: string
+  requestedAt: string
+  discoveryName: string | null
+  dispatchedAt: string | null
+  deadlineAt: string | null
+  completedAt: string | null
+  /** Moves while the sweep is in flight, then settles as the final count. */
+  addressesProbed: number | null
+  /** How many the ranges expanded to. Only the scanner can know it — `local` has no size until resolved. */
+  addressesTotal: number | null
+  devicesFound: number | null
+  /** The last address that *answered*. Deliberately not "the one being scanned" — hundreds are in flight. */
+  lastRespondingAddress: string | null
+  progressAt: string | null
+  error: string | null
+}
+
+export type ScanRunPage = {
+  items: ScanRun[]
+  total: number
+  page: number
+  pageSize: number
+}
+
+export type DiscoverySettings = {
+  scheduledScanningEnabled: boolean
+  updatedBy: string
+  updatedAt: string
+}
+
+export const scanProfilesApi = {
+  list: (params: { search?: string; discoveryGroup?: string; isEnabled?: boolean; page?: number; pageSize?: number } = {}) =>
+    apiRequest<ScanProfilePage>(`/api/scan-profiles${query(params)}`),
+
+  get: (id: string) => apiRequest<ScanProfile>(`/api/scan-profiles/${id}`),
+
+  create: (input: ScanProfileInput) =>
+    apiRequest<ScanProfile>('/api/scan-profiles', { method: 'POST', body: JSON.stringify(input) }),
+
+  update: (id: string, input: ScanProfileInput) =>
+    apiRequest<ScanProfile>(`/api/scan-profiles/${id}`, { method: 'PUT', body: JSON.stringify(input) }),
+
+  remove: (id: string) => apiRequest<void>(`/api/scan-profiles/${id}`, { method: 'DELETE' }),
+
+  requestRun: (id: string, note?: string | null) =>
+    apiRequest<ScanRun>(`/api/scan-profiles/${id}/runs`, {
+      method: 'POST',
+      body: JSON.stringify({ note: note ?? null }),
+    }),
+
+  listRuns: (params: { scanProfileId?: string; status?: ScanRunStatus; page?: number; pageSize?: number } = {}) =>
+    apiRequest<ScanRunPage>(`/api/scan-runs${query(params)}`),
+
+  getSettings: () => apiRequest<DiscoverySettings>('/api/discovery-settings'),
+
+  updateSettings: (scheduledScanningEnabled: boolean) =>
+    apiRequest<DiscoverySettings>('/api/discovery-settings', {
+      method: 'PUT',
+      body: JSON.stringify({ scheduledScanningEnabled }),
+    }),
+}

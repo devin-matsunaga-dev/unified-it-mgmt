@@ -111,3 +111,44 @@ def test_apply_an_empty_response_leaves_nothing_scheduled() -> None:
 
     assert state.profiles == {}
     assert applied.profile_count == 0
+
+
+# --- the schedule switches (Phase 5.5) ---
+
+
+def test_a_profile_without_the_schedule_flag_is_scheduled() -> None:
+    parsed = parse_profiles(response(profile()))
+
+    # Absent means on, like every other flag here. A response from a platform older than the switch
+    # must not read as "this estate asked to stop scanning".
+    assert parsed[0].schedule_enabled is True
+
+
+def test_a_response_without_the_estate_switch_leaves_scheduled_scanning_on() -> None:
+    state = ConfigState()
+
+    applied = state.apply(response(profile()))
+
+    assert state.scheduled_scanning_enabled is True
+    assert applied.scheduled_scanning_enabled is True
+
+
+def test_the_estate_switch_off_empties_the_scheduled_list_and_keeps_the_profiles() -> None:
+    state = ConfigState()
+    document = response(profile("a"), profile("b"))
+    document["scheduledScanningEnabled"] = False
+
+    state.apply(document)
+
+    # Held, not forgotten: an on-demand run names a profile the scanner must still be holding.
+    assert set(state.profiles) == {"a", "b"}
+    assert state.scheduled() == []
+
+
+def test_a_profile_with_its_own_schedule_off_is_held_but_not_scheduled() -> None:
+    state = ConfigState()
+
+    state.apply(response(profile("a"), profile("b", scheduleEnabled=False)))
+
+    assert set(state.profiles) == {"a", "b"}
+    assert [item.profile_id for item in state.scheduled()] == ["a"]

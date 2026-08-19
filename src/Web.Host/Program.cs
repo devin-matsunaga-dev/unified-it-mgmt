@@ -161,6 +161,7 @@ app.MapInterfaceEndpoints();
 app.MapPollerEndpoints();
 app.MapRunbookEndpoints();
 app.MapScanProfileEndpoints();
+app.MapScanRunEndpoints();
 app.MapAlertEndpoints();
 app.MapDashboardEndpoints();
 app.MapHub<MonitoringHub>("/hubs/monitoring");

@@ -565,11 +565,15 @@ export type DiscoveredNeighbour = {
 
 export type DiscoveryContender = { ciId: string; name: string; type: CiType }
 
+/** Which protocol named a device. Not equally trustworthy, which is why the card says which it was. */
+export type HostnameSource = 'dns' | 'mdns' | 'netbios'
+
 export type DiscoveredDevice = {
   id: string
   identityKey: string
   address: string
   hostname: string | null
+  hostnameSource: HostnameSource | null
   respondedToPing: boolean
   openPorts: number[]
   snmp: DiscoveredSnmp | null
@@ -640,6 +644,22 @@ const matchRuleLabels: Record<DiscoveryMatchRule, string> = {
   Hostname: 'Hostname on record',
   Name: 'CI named after this device',
   Ambiguous: 'Two CIs claim it',
+}
+
+/**
+ * How a name was learned, in the words an operator would use.
+ *
+ * A PTR record is what the network's own administrator published; the other two are whatever the
+ * device says about itself, and a device is free to say anything. Somebody approving a name into the
+ * CMDB should be able to tell those apart.
+ */
+export function hostnameSourceLabel(source: HostnameSource) {
+  const labels: Record<HostnameSource, string> = {
+    dns: 'via DNS',
+    mdns: 'via mDNS',
+    netbios: 'via NetBIOS',
+  }
+  return labels[source]
 }
 
 export function discoveryMatchRuleLabel(rule: string) {

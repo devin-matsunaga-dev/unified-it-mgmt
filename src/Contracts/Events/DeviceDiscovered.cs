@@ -19,7 +19,15 @@ namespace Contracts.Events;
 /// a consumer can tell "the estate as this scan saw it" from two scans interleaved.
 /// </param>
 /// <param name="Address">The IPv4 address that answered. The one field always present.</param>
-/// <param name="Hostname">Reverse DNS, where the resolver answered; null otherwise.</param>
+/// <param name="Hostname">
+/// The name the scan found, from whichever protocol answered; null when nothing named it.
+/// </param>
+/// <param name="HostnameSource">
+/// Which protocol produced <paramref name="Hostname"/> — <c>dns</c>, <c>mdns</c> or <c>netbios</c>;
+/// null when there is no name. Carried because the three are not equally trustworthy: a PTR record is
+/// what the network's own administrator published, while an mDNS or NetBIOS name is whatever the
+/// device says about itself, and somebody approving it into the CMDB should be able to see which.
+/// </param>
 /// <param name="RespondedToPing">
 /// False for a device found only because a fingerprinted port was open — a host that drops ICMP is
 /// still a host, and treating silence as absence is how half an estate goes missing.
@@ -36,6 +44,7 @@ public sealed record DeviceDiscovered(
     Guid ScanId,
     string Address,
     string? Hostname,
+    string? HostnameSource,
     bool RespondedToPing,
     IReadOnlyList<int> OpenPorts,
     DiscoveredSnmpIdentity? Snmp,

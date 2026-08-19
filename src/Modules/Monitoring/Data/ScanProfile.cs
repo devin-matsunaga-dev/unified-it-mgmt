@@ -48,6 +48,18 @@ public sealed class ScanProfile
     /// <summary>How long between runs of this profile. Minutes, because a subnet sweep is not a poll.</summary>
     public int IntervalMinutes { get; set; }
 
+    /// <summary>
+    /// Whether <see cref="IntervalMinutes"/> is honoured at all. Off makes this an on-demand profile:
+    /// it stays configured, it is still sent to its scanner, and it runs only when somebody asks.
+    /// <para>
+    /// Deliberately separate from <see cref="IsEnabled"/>, which removes the profile from the scanner's
+    /// configuration entirely. "Do not sweep this on a timer" and "forget this range exists" are
+    /// different instructions, and collapsing them would mean the only way to stop a scheduled sweep is
+    /// to also make it un-runnable by hand.
+    /// </para>
+    /// </summary>
+    public bool ScheduleEnabled { get; set; } = true;
+
     /// <summary>Seconds one probe against one address may take — the ping, the connect, the SNMP get.</summary>
     public int TimeoutSeconds { get; set; }
 

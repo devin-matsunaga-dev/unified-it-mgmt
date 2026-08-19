@@ -566,6 +566,7 @@ public sealed class DiscoveryReviewService(
         row.IdentityKey = DiscoveryIdentity.KeyFor(fingerprint);
         row.Address = discovery.Address;
         row.Hostname = discovery.Hostname;
+        row.HostnameSource = discovery.HostnameSource;
         row.RespondedToPing = discovery.RespondedToPing;
         row.OpenPortsJson = Serialise(discovery.OpenPorts);
         row.SysName = discovery.Snmp?.SysName;
@@ -613,6 +614,7 @@ public sealed class DiscoveryReviewService(
                 row.IdentityKey,
                 row.Address,
                 row.Hostname,
+                row.HostnameSource,
                 row.RespondedToPing,
                 Deserialise<int>(row.OpenPortsJson),
                 Snmp(row.SysName, row.SysDescription, row.SysObjectId, row.SysLocation, row.SysContact, row.UptimeSeconds),
