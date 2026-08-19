@@ -484,3 +484,6 @@ $RECYCLE.BIN/
 # Python virtual environments (services/*)
 .venv/
 *.egg-info/
+
+# Local development certificates (scripts/dev-certs.sh) — per-machine, never shared
+certs/

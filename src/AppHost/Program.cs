@@ -29,13 +29,50 @@ var publicHost = builder.AddParameter("public-host", publicHostValue);
 // therefore tied to the same parameter rather than applied unconditionally — a default `aspire run`
 // stays exactly as private as it was, and only a run that has already declared itself LAN-facing
 // opens the three endpoints a browser off this box has to reach.
-var bindHost = string.Equals(publicHostValue, "localhost", StringComparison.OrdinalIgnoreCase)
-    ? "localhost"
-    : "0.0.0.0";
+var isLanRun = !string.Equals(publicHostValue, "localhost", StringComparison.OrdinalIgnoreCase);
+var bindHost = isLanRun ? "0.0.0.0" : "localhost";
 
-var keycloakAuthority = ReferenceExpression.Create($"http://{publicHost}:8080/realms/it-platform");
-var apiBaseUrl = ReferenceExpression.Create($"http://{publicHost}:5000");
-var webOrigin = ReferenceExpression.Create($"http://{publicHost}:5173");
+// A LAN run is served over TLS, and not for the usual reason. `oidc-client-ts` builds its PKCE
+// challenge with `crypto.subtle`, which the browser only exposes in a secure context, and the
+// library hardcodes S256 — so on plain HTTP a phone loads the SPA and can never sign in, with no
+// weaker-PKCE fallback to reach for. That makes HTTPS the price of the printed-label journey
+// working at all. Three origins need it: the SPA, because it is the secure context; the API,
+// because an HTTPS page may not fetch an HTTP one; and Keycloak, because the code-for-token
+// exchange is a fetch from that same page. All three present the one leaf certificate written by
+// `scripts/dev-certs.sh`, which carries the LAN address and localhost as subject alternative
+// names and chains to a local CA installed once on the phone.
+// Everything here is gated on the same parameter the LAN binding is: a plain `aspire run` keeps
+// its HTTP endpoints, its ports and its realm exactly as they were.
+var certDir = Path.GetFullPath(Path.Combine(builder.Environment.ContentRootPath, "..", "..", "certs"));
+var serverCertPath = Path.Combine(certDir, "dev-server.crt");
+var serverKeyPath = Path.Combine(certDir, "dev-server.key");
+// What the API trusts when it calls Keycloak by its public name. .NET on Linux validates through
+// OpenSSL, which reads SSL_CERT_FILE — so the CA is handed to the one process that needs it
+// rather than installed machine-wide.
+var caBundlePath = Path.Combine(certDir, "dev-ca-bundle.crt");
+if (isLanRun && !(File.Exists(serverCertPath) && File.Exists(serverKeyPath) && File.Exists(caBundlePath)))
+{
+    throw new InvalidOperationException(
+        $"A LAN run serves TLS, and no certificate was found in '{certDir}'. "
+        + $"Run scripts/dev-certs.sh {publicHostValue} first.");
+}
+
+// The scheme is fixed at this point rather than interpolated, because a reference expression can
+// only interpolate resources — a plain string has to be part of the literal.
+var keycloakAuthority = isLanRun
+    ? ReferenceExpression.Create($"https://{publicHost}:8443/realms/it-platform")
+    : ReferenceExpression.Create($"http://{publicHost}:8080/realms/it-platform");
+var apiBaseUrl = isLanRun
+    ? ReferenceExpression.Create($"https://{publicHost}:5000")
+    : ReferenceExpression.Create($"http://{publicHost}:5000");
+var webOrigin = isLanRun
+    ? ReferenceExpression.Create($"https://{publicHost}:5173")
+    : ReferenceExpression.Create($"http://{publicHost}:5173");
+// The same two origins as plain strings, for the realm document, which is rendered on disk here
+// rather than resolved by Aspire. The localhost pair is kept so that a LAN run is still usable
+// from a browser on this machine, whose scheme has moved with everything else.
+var webOriginValue = isLanRun ? $"https://{publicHostValue}:5173" : $"http://{publicHostValue}:5173";
+var localOriginValue = isLanRun ? "https://localhost:5173" : "http://localhost:5173";
 
 var postgres = builder.AddPostgres("postgres")
     .WithImage("timescale/timescaledb-ha", "pg17")
@@ -108,7 +145,8 @@ Directory.CreateDirectory(Path.GetDirectoryName(renderedRealmPath)!);
 File.WriteAllText(
     renderedRealmPath,
     File.ReadAllText(realmTemplatePath)
-        .Replace("${PUBLIC_HOST}", publicHostValue, StringComparison.Ordinal)
+        .Replace("${WEB_ORIGIN}", webOriginValue, StringComparison.Ordinal)
+        .Replace("${LOCAL_ORIGIN}", localOriginValue, StringComparison.Ordinal)
         .Replace("${POLLER_CLIENT_SECRET}", await ValueOf(pollerClientSecret), StringComparison.Ordinal)
         .Replace("${DISCOVERY_CLIENT_SECRET}", await ValueOf(discoveryClientSecret), StringComparison.Ordinal));
 
@@ -120,7 +158,9 @@ var keycloak = builder.AddContainer("keycloak", "quay.io/keycloak/keycloak", "26
     // client was a browser or the API, and both call Keycloak by the same name; the poller is the
     // first client inside a container, which must dial host.docker.internal and would otherwise be
     // handed a token stamped with an issuer the API rejects. One name, whatever the route.
-    .WithEnvironment("KC_HOSTNAME", ReferenceExpression.Create($"http://{publicHost}:8080"))
+    .WithEnvironment("KC_HOSTNAME", isLanRun
+        ? ReferenceExpression.Create($"https://{publicHost}:8443")
+        : ReferenceExpression.Create($"http://{publicHost}:8080"))
     .WithEnvironment("KC_BOOTSTRAP_ADMIN_USERNAME", keycloakAdmin)
     .WithEnvironment("KC_BOOTSTRAP_ADMIN_PASSWORD", keycloakPassword)
     .WithHttpEndpoint(port: 8080, targetPort: 8080, name: "http")
@@ -140,7 +180,35 @@ var keycloak = builder.AddContainer("keycloak", "quay.io/keycloak/keycloak", "26
     // WP-1.9 made for the Postgres volume and for the same reason: everything here is rendered from
     // the repository, so there is nothing in Keycloak worth keeping that is not also in git. The
     // cost is that a hand-made realm change does not survive a restart, which is the point.
-    .WithHttpHealthCheck("/health/ready", endpointName: "management");
+    // A LAN run cannot use this probe. Keycloak's management interface inherits TLS from the main
+    // HTTPS certificate — it says so on start-up, "Management interface listening on
+    // https://0.0.0.0:9000" — and 26.3 has no option to hold it on HTTP: the only related setting,
+    // https-management-certificate-file, documents itself as inherited from the HTTP options when
+    // absent. An HTTP probe of an HTTPS port never answers, so the resource stays unhealthy and
+    // every resource that waits on Keycloak — the API, and through it the SPA, the poller, the
+    // scanner and the seeder — never starts at all.
+    // The realm document on the plain HTTP listener stands in for it, and is the better signal
+    // anyway: it is served only once the realm has been imported, which is the thing everything
+    // downstream is actually waiting for, where /health/ready only says the process is up.
+    .WithHttpHealthCheck(
+        isLanRun ? "/realms/it-platform" : "/health/ready",
+        endpointName: isLanRun ? "http" : "management");
+
+// The HTTPS listener a LAN run adds, on 8443 beside the HTTP one rather than replacing it. The
+// browser and the issuer move to it; the poller, the discovery scanner and the API's Keycloak
+// connection string keep dialling 8080 in the clear, which is what saves those containers from
+// needing the CA in a trust store of their own. KC_HOSTNAME above is what makes the two agree on
+// one issuer whichever listener answers.
+if (isLanRun)
+{
+    keycloak
+        .WithEnvironment("KC_HTTPS_CERTIFICATE_FILE", "/etc/x509/https/tls.crt")
+        .WithEnvironment("KC_HTTPS_CERTIFICATE_KEY_FILE", "/etc/x509/https/tls.key")
+        .WithBindMount(serverCertPath, "/etc/x509/https/tls.crt", isReadOnly: true)
+        .WithBindMount(serverKeyPath, "/etc/x509/https/tls.key", isReadOnly: true)
+        .WithHttpsEndpoint(port: 8443, targetPort: 8443, name: "https")
+        .WithEndpoint("https", endpoint => endpoint.TargetHost = bindHost);
+}
 
 var minioAccessKey = builder.AddParameter("minio-access-key", "minioadmin");
 var minioSecretKey = AddGeneratedPassword(builder, "minio-secret-key");
@@ -172,7 +240,10 @@ var mailhog = builder.AddContainer(MailHogHost, "mailhog/mailhog", "v1.0.1")
     .WithEndpoint(targetPort: MailHogSmtpPort, name: "smtp")
     .WithHttpEndpoint(targetPort: MailHogHttpPort, name: "http");
 
-var webHost = builder.AddProject<Projects.Web_Host>("web-host")
+// The `https` launch profile publishes both an HTTPS and an HTTP URL; the `http` one publishes
+// only HTTP. Which profile is used decides which endpoints exist at all, so it is chosen here
+// rather than patched afterwards.
+var webHost = builder.AddProject<Projects.Web_Host>("web-host", isLanRun ? "https" : "http")
     .WithReference(database)
     .WithReference(redis)
     .WithReference(rabbitMq)
@@ -207,10 +278,40 @@ var webHost = builder.AddProject<Projects.Web_Host>("web-host")
     .WaitFor(mailhog)
     .WithEndpoint("http", endpoint =>
     {
-        endpoint.Port = 5000;
+        // 5000 is the browser's port, and in a LAN run the browser is on the HTTPS endpoint
+        // below. This one keeps serving the poller, the scanner and the seeder — all of which
+        // resolve it through Aspire and neither know nor care which port it landed on.
+        if (!isLanRun)
+        {
+            endpoint.Port = 5000;
+        }
+
         endpoint.TargetHost = bindHost;
     })
-    .WithHttpHealthCheck("/health");
+    // Named rather than left to the default, which is what a LAN run turns into a trap. The `https`
+    // launch profile lists its HTTPS URL first, so the default probe picks that endpoint and the
+    // AppHost's own client — which has no reason to know about a certificate authority invented for
+    // this machine — rejects it with PartialChain. The API answers 200 on both listeners the whole
+    // time and still never reports healthy. Probing the HTTP endpoint sidesteps the question: it
+    // exists in both modes, it is loopback-or-LAN local either way, and it is already the route the
+    // poller, the scanner and the seeder take.
+    .WithHttpHealthCheck("/health", endpointName: "http");
+
+if (isLanRun)
+{
+    webHost
+        .WithEndpoint("https", endpoint =>
+        {
+            endpoint.Port = 5000;
+            endpoint.TargetHost = bindHost;
+        })
+        // PEM certificate and key, which Kestrel reads directly — no PFX, no password, and the
+        // same pair every other origin here presents.
+        .WithEnvironment("ASPNETCORE_Kestrel__Certificates__Default__Path", serverCertPath)
+        .WithEnvironment("ASPNETCORE_Kestrel__Certificates__Default__KeyPath", serverKeyPath)
+        // Read when the JWT handler fetches the realm's metadata and signing keys over HTTPS.
+        .WithEnvironment("SSL_CERT_FILE", caBundlePath);
+}
 
 // The devices the poller polls. One container answers as several devices: snmpsim serves a different
 // recording per community string, so "healthy" and "degraded" are one process and one port. Stopping
@@ -397,7 +498,7 @@ builder.AddProject<Projects.Seeder>("seeder")
     .WaitFor(snmpSim)
     .WaitFor(mailhog);
 
-builder.AddViteApp("web", "../../web")
+var web = builder.AddViteApp("web", "../../web")
     .WithReference(webHost)
     // Both are baked into the page the browser downloads, so they have to name a host that browser
     // can resolve — "localhost" on a phone is the phone.
@@ -408,9 +509,26 @@ builder.AddViteApp("web", "../../web")
     {
         endpoint.Port = 5173;
         endpoint.TargetHost = bindHost;
+        if (isLanRun)
+        {
+            // The endpoint Aspire creates for a Vite app is HTTP by name; a LAN run serves TLS on
+            // it, and the scheme has to say so or the dashboard and the QR payload disagree about
+            // what the SPA is reachable as.
+            endpoint.UriScheme = "https";
+        }
     })
     .WaitFor(webHost)
     .WaitFor(keycloak);
+
+if (isLanRun)
+{
+    web
+        // Read by vite.config.ts, which turns on its own HTTPS when both are present. Not
+        // VITE_-prefixed on purpose: these are paths on this machine and have no business being
+        // baked into the bundle the browser downloads.
+        .WithEnvironment("DEV_TLS_CERT_FILE", serverCertPath)
+        .WithEnvironment("DEV_TLS_KEY_FILE", serverKeyPath);
+}
 
 builder.Build().Run();
 

@@ -30,11 +30,11 @@
       "standardFlowEnabled": true,
       "directAccessGrantsEnabled": true,
       "protocol": "openid-connect",
-      "redirectUris": ["http://localhost:5173/*", "http://${PUBLIC_HOST}:5173/*"],
-      "webOrigins": ["http://localhost:5173", "http://${PUBLIC_HOST}:5173"],
+      "redirectUris": ["${LOCAL_ORIGIN}/*", "${WEB_ORIGIN}/*"],
+      "webOrigins": ["${LOCAL_ORIGIN}", "${WEB_ORIGIN}"],
       "attributes": {
         "pkce.code.challenge.method": "S256",
-        "post.logout.redirect.uris": "http://localhost:5173/*##http://${PUBLIC_HOST}:5173/*"
+        "post.logout.redirect.uris": "${LOCAL_ORIGIN}/*##${WEB_ORIGIN}/*"
       },
       "protocolMappers": [
         {

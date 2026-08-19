@@ -28,8 +28,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     let active = true
+    /**
+     * Which update is the current one. Two of them race on every redirect sign-in: the initial
+     * getUser() and the userLoaded event, and whichever settles last must not overwrite a newer
+     * answer with a staler one.
+     */
+    let latest = 0
     const updateUser = async (nextUser: User | null) => {
       if (!active) return
+      const request = ++latest
       setUser(nextUser)
       if (!nextUser || nextUser.expired) {
         setRoles([])
@@ -37,19 +44,28 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setIsLoading(false)
         return
       }
+      /**
+       * A user has arrived but their roles have not: they come from /api/me, a round trip away.
+       * This has to go back to loading, because the initial getUser() resolves null on the callback
+       * page and clears it — and ProtectedRoute reads an empty role list on a user who is present
+       * as "forbidden", not as "not answered yet". On loopback /api/me returned before the callback
+       * navigated and nothing showed; over a real network it does not, and a QR scan landed on
+       * /forbidden with the roles arriving just too late to matter.
+       */
+      setIsLoading(true)
       try {
         const currentUser = await apiRequest<CurrentUser>('/api/me')
-        if (active) {
+        if (active && request === latest) {
           setRoles(normalizeRoles(currentUser.roles))
           setAccount(currentUser)
         }
       } catch {
-        if (active) {
+        if (active && request === latest) {
           setRoles([])
           setAccount(null)
         }
       } finally {
-        if (active) setIsLoading(false)
+        if (active && request === latest) setIsLoading(false)
       }
     }
     const handleUserLoaded = (nextUser: User) => void updateUser(nextUser)
