@@ -12,6 +12,8 @@ const equivalents: [RegExp, (match: RegExpMatchArray) => string][] = [
   [/^\/scan\/?$/, () => '/field/scan'],
   [/^\/audits\/([^/]+)\/?$/, (match) => `/field/audits/${match[1]}`],
   [/^\/audits\/?$/, () => '/field/audits'],
+  [/^\/tickets\/([^/]+)\/?$/, (match) => `/field/tickets/${match[1]}`],
+  [/^\/tickets\/?$/, () => '/field/tickets'],
 ]
 
 export function fieldPathFor(pathname: string): string {

@@ -5,7 +5,7 @@ import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { vi } from 'vitest'
 import { assetsApi, type Ci } from '../../api/assets'
 import { helpdeskApi, type Ticket } from '../../api/helpdesk'
-import { FieldTicketPage } from './FieldTicketPage'
+import { FieldNewTicketPage } from './FieldNewTicketPage'
 
 vi.mock('../../api/assets', async (original) => {
   const actual = await original<typeof import('../../api/assets')>()
@@ -23,7 +23,7 @@ function renderPage() {
   return render(<MemoryRouter initialEntries={['/field/ci/ci-1/ticket']}>
     <QueryClientProvider client={client}>
       <Routes>
-        <Route path="/field/ci/:id/ticket" element={<FieldTicketPage />} />
+        <Route path="/field/ci/:id/ticket" element={<FieldNewTicketPage />} />
         <Route path="/field/ci/:id" element={<h1>Field asset page</h1>} />
       </Routes>
     </QueryClientProvider>
@@ -35,7 +35,7 @@ async function fillIn() {
   await userEvent.type(screen.getByLabelText('What did you see?'), 'No lights, no fan.')
 }
 
-describe('FieldTicketPage', () => {
+describe('FieldNewTicketPage', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     vi.mocked(assetsApi.getCi).mockResolvedValue(laptop)

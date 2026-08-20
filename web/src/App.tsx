@@ -9,8 +9,10 @@ import { CiDetailPage } from './features/assets/CiDetailPage'
 import { FieldAuditPage } from './features/field/FieldAuditPage'
 import { FieldAuditsPage } from './features/field/FieldAuditsPage'
 import { FieldCiPage } from './features/field/FieldCiPage'
+import { FieldTicketDetailPage } from './features/field/FieldTicketDetailPage'
+import { FieldTicketsPage } from './features/field/FieldTicketsPage'
 import { FieldScanPage } from './features/field/FieldScanPage'
-import { FieldTicketPage } from './features/field/FieldTicketPage'
+import { FieldNewTicketPage } from './features/field/FieldNewTicketPage'
 import { HandheldRedirect } from './features/field/HandheldRedirect'
 import { CiImportWizard } from './features/assets/CiImportWizard'
 import { CiListPage } from './features/assets/CiListPage'
@@ -65,7 +67,9 @@ export function App() {
       <Route index element={<FieldScanPage />} />
       <Route path="scan" element={<FieldScanPage />} />
       <Route path="ci/:id" element={<FieldCiPage />} />
-      <Route path="ci/:id/ticket" element={<FieldTicketPage />} />
+      <Route path="ci/:id/ticket" element={<FieldNewTicketPage />} />
+      <Route path="tickets" element={<FieldTicketsPage />} />
+      <Route path="tickets/:id" element={<FieldTicketDetailPage />} />
       <Route path="audits" element={<FieldAuditsPage />} />
       <Route path="audits/:id" element={<FieldAuditPage />} />
     </Route>

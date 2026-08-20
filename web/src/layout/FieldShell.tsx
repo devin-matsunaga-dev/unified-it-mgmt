@@ -1,4 +1,4 @@
-import { ClipboardCheck, LogOut, ScanLine } from 'lucide-react'
+import { ClipboardCheck, LogOut, ScanLine, Ticket } from 'lucide-react'
 import { Link, NavLink, Outlet } from 'react-router-dom'
 import { useAuth } from '../auth/AuthProvider'
 import { cn } from '../lib/utils'
@@ -22,6 +22,7 @@ export function FieldShell() {
         <nav aria-label="Field navigation" className="ml-auto flex items-center gap-1">
           {[
             { to: '/field/scan', label: 'Scan', icon: ScanLine },
+            { to: '/field/tickets', label: 'Tickets', icon: Ticket },
             { to: '/field/audits', label: 'Counts', icon: ClipboardCheck },
           ].map(({ to, label, icon: Icon }) => <NavLink
             key={to}

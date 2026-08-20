@@ -17,6 +17,7 @@ function renderAt(path: string) {
     <Routes>
       <Route element={<HandheldRedirect><h1>Agent shell</h1></HandheldRedirect>}>
         <Route path="/assets/:id" element={null} />
+        <Route path="/admin/settings/sla" element={null} />
         <Route path="/tickets" element={null} />
         <Route path="/scan" element={null} />
       </Route>
@@ -36,8 +37,14 @@ describe('fieldPathFor', () => {
     expect(fieldPathFor('/scan')).toBe('/field/scan')
   })
 
+  it('keeps the ticket and count a desktop route named', () => {
+    expect(fieldPathFor('/tickets')).toBe('/field/tickets')
+    expect(fieldPathFor('/tickets/t-1')).toBe('/field/tickets/t-1')
+    expect(fieldPathFor('/audits')).toBe('/field/audits')
+    expect(fieldPathFor('/audits/a-1')).toBe('/field/audits/a-1')
+  })
+
   it('falls back to the scan screen for anything with no field equivalent', () => {
-    expect(fieldPathFor('/tickets')).toBe('/field/scan')
     expect(fieldPathFor('/admin/settings/sla')).toBe('/field/scan')
     expect(fieldPathFor('/')).toBe('/field/scan')
   })
@@ -54,7 +61,7 @@ describe('HandheldRedirect', () => {
 
   it('keeps a phone out of every other agent route, not just the asset page', () => {
     setViewport({ handheld: true })
-    renderAt('/tickets')
+    renderAt('/admin/settings/sla')
     expect(screen.getByRole('heading', { name: 'Field scan page' })).toBeInTheDocument()
     expect(screen.queryByRole('heading', { name: 'Agent shell' })).not.toBeInTheDocument()
   })

@@ -21,7 +21,7 @@ const urgencies: { value: TicketLevel; label: string }[] = [
   { value: 'High', label: 'High' },
 ]
 
-export function FieldTicketPage() {
+export function FieldNewTicketPage() {
   const { id = '' } = useParams()
   const navigate = useNavigate()
   const [title, setTitle] = useState('')
