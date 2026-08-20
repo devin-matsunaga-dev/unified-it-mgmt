@@ -23,6 +23,7 @@ public sealed class AssetsDbContext(DbContextOptions<AssetsDbContext> options) :
     public DbSet<DiscoveredDevice> DiscoveredDevices => Set<DiscoveredDevice>();
     public DbSet<CiDiscoveryFacts> CiDiscoveryFacts => Set<CiDiscoveryFacts>();
     public DbSet<ProductCatalogEntry> ProductCatalogEntries => Set<ProductCatalogEntry>();
+    public DbSet<DeviceLookupMemo> DeviceLookupMemos => Set<DeviceLookupMemo>();
     public DbSet<PhysicalAuditSession> PhysicalAuditSessions => Set<PhysicalAuditSession>();
     public DbSet<PhysicalAuditScan> PhysicalAuditScans => Set<PhysicalAuditScan>();
     public DbSet<TopologyMap> TopologyMaps => Set<TopologyMap>();

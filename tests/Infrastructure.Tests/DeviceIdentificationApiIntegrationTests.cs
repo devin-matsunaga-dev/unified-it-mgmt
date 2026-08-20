@@ -231,7 +231,12 @@ public sealed class DeviceIdentificationApiIntegrationTests : IAsyncLifetime
         Converters = { new JsonStringEnumConverter() },
     };
 
-    private static string UniqueCode() => $"T{Guid.CreateVersion7():N}"[..16].ToUpperInvariant();
+    /// <summary>
+    /// Version 4, not 7. A version-7 GUID leads with a timestamp, so truncating one gives tests that
+    /// run in the same millisecond the same "unique" code — which fails only when the suite is run
+    /// together, and passes whenever the failing test is run alone.
+    /// </summary>
+    private static string UniqueCode() => $"T{Guid.NewGuid():N}"[..16].ToUpperInvariant();
 
     private async Task<IdentifyResponseDto> IdentifyAsync(params string[] scans)
     {

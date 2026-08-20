@@ -14,6 +14,7 @@ using Modules.Assets.Features.Import;
 using Modules.Assets.Features.Labels;
 using Modules.Assets.Features.Lifecycle;
 using Modules.Assets.Features.DeviceIdentification;
+using Modules.Assets.Features.DeviceIdentification.Dell;
 using Modules.Assets.Features.PhysicalAudits;
 using Modules.Assets.Features.Relationships;
 using Modules.Assets.Features.Search;
@@ -57,6 +58,16 @@ public static class AssetsServiceCollectionExtensions
         // Registered as one of many: a manufacturer provider is an added registration here rather
         // than an edit to the service, which is the point of the abstraction.
         services.AddScoped<IDeviceLookupProvider, LocalCatalogLookupProvider>();
+        // Between the catalogue and anything external: what a provider already said about this exact
+        // device, so a second scan of it never leaves the building.
+        services.AddScoped<IDeviceLookupProvider, CachedLookupProvider>();
+        services.AddOptions<DellOptions>().Bind(configuration.GetSection(DellOptions.SectionName));
+        services.AddScoped<IDellEntitlementMapper, DellEntitlementMapper>();
+        // Singleton: a token outlives a request, and the provider that uses it does not.
+        services.AddSingleton<DellTokenCache>();
+        // Registered unconditionally and inert without configuration, so a deployment with no
+        // TechDirect account behaves exactly as it did before this existed.
+        services.AddScoped<IDeviceLookupProvider, DellLookupProvider>();
         services.AddScoped<ICiRelationshipService, CiRelationshipService>();
         services.AddScoped<ICiDependencyDirectory, CiDependencyDirectory>();
         services.AddScoped<ICiImportService, CiImportService>();
