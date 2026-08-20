@@ -8,13 +8,13 @@
 
   <ItemGroup>
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
-    <PackageReference Include="FluentValidation" Version="12.0.0" />
-    <PackageReference Include="Microsoft.EntityFrameworkCore" Version="10.0.0" />
-    <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="10.0.0" />
+    <PackageReference Include="FluentValidation" Version="12.1.1" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore" Version="10.0.11" />
+    <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="10.0.3" />
     <!-- WP-3.5: alert state machines live in Redis (ARCHITECTURE §5). The host already carries this
          transitively through Aspire.StackExchange.Redis; naming it here is what lets the module hold
          an IConnectionMultiplexer without depending on how the host acquired one. -->
-    <PackageReference Include="StackExchange.Redis" Version="2.13.1" />
+    <PackageReference Include="StackExchange.Redis" Version="3.1.13" />
   </ItemGroup>
 
   <ItemGroup>
