@@ -1,5 +1,5 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Columns3, ArrowDown, ArrowUp, ArrowUpDown, ChevronLeft, ChevronRight, Layers, Pencil, Plus, QrCode, Search, Server, SlidersHorizontal, Upload } from 'lucide-react'
+import { Columns3, ArrowDown, ArrowUp, ArrowUpDown, ChevronLeft, ChevronRight, Layers, Pencil, Plus, QrCode, ScanLine, Search, Server, SlidersHorizontal, Upload } from 'lucide-react'
 import { Fragment, useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { toast } from 'sonner'
@@ -9,7 +9,8 @@ import { directoryApi } from '../../api/directory'
 import { Button } from '../../components/ui/Button'
 import { cn } from '../../lib/utils'
 import { CiBulkEditDialog } from './CiBulkEditDialog'
-import { CiFormDialog, type CiFormSubmit } from './CiFormDialog'
+import { CiFormDialog, type CiFormSeed, type CiFormSubmit } from './CiFormDialog'
+import { ScanDeviceDialog } from './ScanDeviceDialog'
 import { CiLabelDialog } from './CiLabelDialog'
 import { CiLifecycleDrawer } from './CiLifecycleDrawer'
 import { CiStatsRow } from './CiStatsRow'
@@ -30,6 +31,9 @@ export function CiListPage() {
   const [filter, setFilter] = useState<CiFilter>({ page: 1, pageSize: 25 })
   const [dialogOpen, setDialogOpen] = useState(false)
   const [editing, setEditing] = useState<Ci | null>(null)
+  const [scanOpen, setScanOpen] = useState(false)
+  /** What a confirmed identification carries into the New CI form. Null for an ordinary create. */
+  const [seed, setSeed] = useState<CiFormSeed | null>(null)
   const [peeking, setPeeking] = useState<Ci | null>(null)
   const [selectedIds, setSelectedIds] = useState<string[]>([])
   const [bulkOpen, setBulkOpen] = useState(false)
@@ -126,7 +130,8 @@ export function CiListPage() {
   return <div className="space-y-6">
     <div className="flex flex-wrap justify-end gap-2">
       <Button variant="secondary" onClick={() => navigate('/assets/import')}><Upload size={18} />Import</Button>
-      <Button onClick={() => { setEditing(null); setDialogOpen(true) }}><Plus size={18} />New CI</Button>
+      <Button variant="secondary" onClick={() => setScanOpen(true)}><ScanLine size={18} />Scan device</Button>
+      <Button onClick={() => { setEditing(null); setSeed(null); setDialogOpen(true) }}><Plus size={18} />New CI</Button>
     </div>
 
     {/*
@@ -274,7 +279,19 @@ export function CiListPage() {
       </footer>
     </section>
 
-    <CiFormDialog open={dialogOpen} ci={editing} schemas={schemas.data ?? []} pending={save.isPending}
+    <ScanDeviceDialog
+      open={scanOpen}
+      onClose={() => setScanOpen(false)}
+      onConfirm={(identified) => {
+        // Confirming an identification opens the form; it does not create anything. The technician
+        // still has to save, and everything here is editable before they do.
+        setScanOpen(false)
+        setEditing(null)
+        setSeed(identified)
+        setDialogOpen(true)
+      }} />
+
+    <CiFormDialog open={dialogOpen} ci={editing} seed={seed} schemas={schemas.data ?? []} pending={save.isPending}
       error={save.error instanceof Error ? save.error.message : undefined}
       onClose={() => { if (!save.isPending) closeDialog() }}
       onSubmit={async (input) => { await save.mutateAsync(input) }} />

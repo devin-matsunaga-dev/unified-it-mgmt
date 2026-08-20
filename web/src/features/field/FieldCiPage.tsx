@@ -1,11 +1,12 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { ArrowRight, MapPin, ScanLine, TicketPlus, UserRound } from 'lucide-react'
+import { ArrowRight, ArrowRightLeft, MapPin, ScanLine, ShieldCheck, TicketPlus, UserRound } from 'lucide-react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { toast } from 'sonner'
-import { assetsApi, ciTypeLabel, type CiLifecycleState } from '../../api/assets'
+import { assetsApi, ciTypeLabel, type Ci, type CiLifecycleState } from '../../api/assets'
+import { contractStatusLabel, contractStatusTone, describeDaysRemaining } from '../../api/contracts'
 import { Button } from '../../components/ui/Button'
 import { FieldActionBar } from '../../layout/FieldShell'
-import { cn } from '../../lib/utils'
+import { cn, formatDateOnly } from '../../lib/utils'
 import { allowedTargets, ciLifecycleLabel, ciLifecycleTone } from '../assets/lifecycle'
 
 /**
@@ -77,6 +78,8 @@ export function FieldCiPage() {
       </dl>
     </section>
 
+    <Coverage coverage={item.coverage} />
+
     <section className="mt-3 rounded-xl border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-slate-900">
       <h2 className="text-base font-semibold">Move to</h2>
       {targets.length === 0
@@ -96,6 +99,14 @@ export function FieldCiPage() {
           </div>}
     </section>
 
+    {/* Its own section rather than a fourth button in the bar: the bar is for what a technician came
+        to this screen to do, and handing an asset over is a decision with a screen behind it. */}
+    <button
+      type="button"
+      onClick={() => navigate(`/field/ci/${item.id}/assign`)}
+      className="mt-3 flex h-12 w-full items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white text-[15px] font-medium text-slate-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300"
+    ><ArrowRightLeft size={17} />Hand over or move</button>
+
     <FieldActionBar>
       <Button className="h-12 w-full text-[15px]" onClick={() => navigate(`/field/ci/${item.id}/ticket`)}>
         <TicketPlus size={18} />Open a ticket
@@ -105,4 +116,47 @@ export function FieldCiPage() {
       </Button>
     </FieldActionBar>
   </>
+}
+
+/**
+ * Whether this is still someone else's problem to fix. A technician standing at a broken device asks
+ * it before they decide to repair or replace, and the answer is already in the CI payload — so this
+ * costs a render, not a request. The status pill leads because the date is the supporting detail:
+ * "expired" changes what happens next, "expired on 3 March" only says when it started to.
+ */
+function Coverage({ coverage }: { coverage: Ci['coverage'] }) {
+  const { warrantyStatus, warrantyExpiresAt, warrantyDaysRemaining, contractName, vendorName } = coverage
+  const covered = Boolean(warrantyStatus || contractName)
+
+  return <section className="mt-3 rounded-xl border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-slate-900">
+    <h2 className="flex items-center gap-2 text-base font-semibold"><ShieldCheck size={17} className="text-slate-400" />Cover</h2>
+    {!covered
+      ? <p className="mt-2 text-[15px] text-slate-500">No warranty or contract is recorded for this asset.</p>
+      : <dl className="mt-3 space-y-2 text-[15px]">
+          {warrantyStatus && <div className="flex items-center gap-2">
+            <dt className="w-28 shrink-0 text-slate-500">Warranty</dt>
+            <dd className="flex flex-wrap items-center gap-2">
+              <span className={cn('rounded-md px-2 py-0.5 text-xs font-medium', contractStatusTone(warrantyStatus))}>
+                {contractStatusLabel(warrantyStatus)}
+              </span>
+              {warrantyDaysRemaining !== null && <span className="text-[13px] text-slate-500">
+                {warrantyStatus === 'Expired'
+                  ? `expired ${describeDaysRemaining(warrantyDaysRemaining)}`
+                  : `ends ${describeDaysRemaining(warrantyDaysRemaining)}`}
+              </span>}
+            </dd>
+          </div>}
+          {warrantyExpiresAt && <div className="flex gap-2">
+            <dt className="w-28 shrink-0 text-slate-500">Until</dt>
+            <dd className="font-medium">{formatDateOnly(warrantyExpiresAt)}</dd>
+          </div>}
+          {contractName && <div className="flex gap-2">
+            <dt className="w-28 shrink-0 text-slate-500">Contract</dt>
+            <dd className="min-w-0 font-medium">
+              <span className="block truncate">{contractName}</span>
+              {vendorName && <span className="block text-[13px] font-normal text-slate-500">{vendorName}</span>}
+            </dd>
+          </div>}
+        </dl>}
+  </section>
 }

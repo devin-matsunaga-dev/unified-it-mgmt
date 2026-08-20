@@ -13,6 +13,7 @@ using Modules.Assets.Features.Impact;
 using Modules.Assets.Features.Import;
 using Modules.Assets.Features.Labels;
 using Modules.Assets.Features.Lifecycle;
+using Modules.Assets.Features.DeviceIdentification;
 using Modules.Assets.Features.PhysicalAudits;
 using Modules.Assets.Features.Relationships;
 using Modules.Assets.Features.Search;
@@ -52,6 +53,10 @@ public static class AssetsServiceCollectionExtensions
         services.AddScoped<IDashboardWidget, LicenseComplianceWidget>();
         services.AddScoped<ICiDirectory, CiDirectory>();
         services.AddScoped<ICiLifecycleService, CiLifecycleService>();
+        services.AddScoped<IDeviceIdentificationService, DeviceIdentificationService>();
+        // Registered as one of many: a manufacturer provider is an added registration here rather
+        // than an edit to the service, which is the point of the abstraction.
+        services.AddScoped<IDeviceLookupProvider, LocalCatalogLookupProvider>();
         services.AddScoped<ICiRelationshipService, CiRelationshipService>();
         services.AddScoped<ICiDependencyDirectory, CiDependencyDirectory>();
         services.AddScoped<ICiImportService, CiImportService>();

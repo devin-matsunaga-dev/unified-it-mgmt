@@ -313,6 +313,52 @@ export type Ci = {
 
 export type CiPage = { items: Ci[]; total: number; page: number; pageSize: number }
 
+/** What a scanned string turned out to be. Classified server-side — the browser never parses. */
+export type IdentifierKind = 'Unknown' | 'SerialNumber' | 'ModelIdentifier' | 'AssetLabel'
+
+/** Ordered: anything below High is shown but never applied without a person reading it. */
+export type IdentificationConfidence = 'Unknown' | 'Low' | 'Medium' | 'High'
+
+export type IdentifierView = { scanned: string; value: string; kind: IdentifierKind }
+
+export type DeviceIdentificationResult = {
+  manufacturer: string | null
+  model: string | null
+  productNumber: string | null
+  serialNumber: string | null
+  deviceType: string | null
+  source: string
+  confidence: IdentificationConfidence
+}
+
+export type IdentifyDeviceResponse = {
+  identifiers: IdentifierView[]
+  /** Scans refused outright — too long, or carrying characters an identifier never has. */
+  rejected: string[]
+  result: DeviceIdentificationResult
+}
+
+export type ProductCatalogEntry = {
+  id: string
+  modelIdentifier: string
+  manufacturer: string
+  model: string
+  productNumber: string | null
+  deviceType: string | null
+  source: string
+  createdBy: string
+  createdAt: string
+  updatedAt: string
+}
+
+export type SaveProductCatalogEntryInput = {
+  modelIdentifier: string
+  manufacturer: string
+  model: string
+  productNumber?: string | null
+  deviceType?: string | null
+}
+
 /** One "this CI's value for that field is exactly this" constraint. Several are AND-ed. */
 export type CiCustomFieldFilter = { fieldId: string; value: string }
 
@@ -518,6 +564,15 @@ export const assetsApi = {
   getCiLabelSheet: (ciIds: string[], size: CiLabelSize) =>
     apiDownload('/api/ci-labels/sheets', { method: 'POST', body: JSON.stringify({ ciIds, size }) }),
   // The scan page's one call: a label URL, a bare id, an asset tag, or a serial number in; the CI out.
+  /** Every scan taken so far, posted whole. Stateless: nothing is written until an asset is created. */
+  identifyDevice: (scans: string[]) =>
+    apiRequest<IdentifyDeviceResponse>('/api/device-identifications', {
+      method: 'POST', body: JSON.stringify({ scans }),
+    }),
+  listProductCatalog: (search?: string) =>
+    apiRequest<ProductCatalogEntry[]>(`/api/product-catalog${search ? `?search=${encodeURIComponent(search)}` : ''}`),
+  saveProductCatalogEntry: (input: SaveProductCatalogEntryInput) =>
+    apiRequest<ProductCatalogEntry>('/api/product-catalog', { method: 'POST', body: JSON.stringify(input) }),
   lookupCi: (code: string) => apiRequest<Ci>(`/api/cis/lookup?code=${encodeURIComponent(code)}`),
   bulkEditCis: (input: BulkEditCisInput) =>
     apiRequest<BulkEditReport>('/api/cis/bulk-edit', { method: 'POST', body: JSON.stringify(input) }),

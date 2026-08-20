@@ -15,9 +15,24 @@ export type CiFormSubmit = {
   customFields: Record<string, string>
 }
 
-export function CiFormDialog({ open, ci, schemas, pending, error, onClose, onSubmit }: {
+/**
+ * Values to open a *new* CI form with. Separate from `ci` on purpose: passing a CI switches the
+ * dialog to editing — the type locks, the title changes, the active checkbox appears — and a device
+ * that has been identified but not yet created is none of those things.
+ */
+export type CiFormSeed = {
+  type?: CiType
+  name?: string
+  assetTag?: string
+  serialNumber?: string
+  attributes?: Record<string, string>
+}
+
+export function CiFormDialog({ open, ci, seed, schemas, pending, error, onClose, onSubmit }: {
   open: boolean
   ci: Ci | null
+  /** Prefill for a new CI. Ignored when `ci` is set, which is an edit. */
+  seed?: CiFormSeed | null
   schemas: CiTypeSchema[]
   pending: boolean
   error?: string
@@ -37,16 +52,16 @@ export function CiFormDialog({ open, ci, schemas, pending, error, onClose, onSub
   // Reopening the dialog reloads it from the CI being edited, so a previous edit never leaks in.
   useEffect(() => {
     if (!open) return
-    setType(ci?.type ?? 'Hardware')
-    setName(ci?.name ?? '')
-    setAssetTag(ci?.assetTag ?? '')
-    setSerialNumber(ci?.serialNumber ?? '')
+    setType(ci?.type ?? seed?.type ?? 'Hardware')
+    setName(ci?.name ?? seed?.name ?? '')
+    setAssetTag(ci?.assetTag ?? seed?.assetTag ?? '')
+    setSerialNumber(ci?.serialNumber ?? seed?.serialNumber ?? '')
     setDescription(ci?.description ?? '')
     setIsActive(ci?.isActive ?? true)
-    setAttributes(ci?.attributes ?? {})
+    setAttributes(ci?.attributes ?? seed?.attributes ?? {})
     setCustomFields(Object.fromEntries((ci?.customFields ?? []).map((value) => [value.key, value.value])))
     setErrors({})
-  }, [open, ci])
+  }, [open, ci, seed])
 
   const schema = useMemo(() => schemaFor(schemas, type), [schemas, type])
   const definitions = schema?.attributes ?? []

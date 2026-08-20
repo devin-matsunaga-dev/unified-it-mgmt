@@ -1,7 +1,7 @@
 import { useMutation } from '@tanstack/react-query'
-import { Camera, ScanLine, X } from 'lucide-react'
+import { Camera, PackagePlus, ScanLine, X } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { ApiError } from '../../api/client'
 import { assetsApi } from '../../api/assets'
 import { Button } from '../../components/ui/Button'
@@ -104,7 +104,15 @@ export function FieldScanPage() {
         // technician then has to pinch back out one-handed.
         className="mt-1.5 h-12 w-full rounded-lg border border-slate-200 bg-white px-3 text-base focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 dark:border-slate-700 dark:bg-slate-900"
       />
-      {notFound && <p role="alert" className="mt-2 text-[13px] text-red-600">No asset carries that code.</p>}
+      {notFound && <div role="alert" className="mt-2">
+        <p className="text-[13px] text-red-600">No asset carries that code.</p>
+        {/* The most likely reason on a phone is that it has just been delivered and nobody has
+            registered it yet, so the recovery is offered rather than left to be found. */}
+        <Link
+          to={`/field/receive?code=${encodeURIComponent(code.trim())}&checked=1`}
+          className="mt-2 flex h-12 items-center justify-center gap-2 rounded-lg border border-slate-200 bg-white text-[15px] font-medium text-slate-600 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300"
+        ><PackagePlus size={17} />Receive it as a new asset</Link>
+      </div>}
       {lookup.isError && !notFound && <p role="alert" className="mt-2 text-[13px] text-red-600">{(lookup.error as Error).message}</p>}
 
       <FieldActionBar>
@@ -117,6 +125,10 @@ export function FieldScanPage() {
         <Button type="submit" variant="secondary" className="h-12 w-full text-[15px]" disabled={!code.trim() || lookup.isPending}>
           <ScanLine size={18} />{lookup.isPending ? 'Looking up…' : 'Find asset'}
         </Button>
+        <Link
+          to="/field/receive"
+          className="flex h-12 w-full items-center justify-center gap-2 rounded-lg text-[15px] font-medium text-blue-600"
+        ><PackagePlus size={17} />Receive a new asset</Link>
       </FieldActionBar>
     </form>
   </>

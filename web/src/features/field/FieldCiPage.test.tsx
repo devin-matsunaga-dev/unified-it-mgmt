@@ -43,6 +43,7 @@ function renderPage() {
         <Route path="/field/ci/:id" element={<FieldCiPage />} />
         <Route path="/field/scan" element={<h1>Scan screen</h1>} />
         <Route path="/field/ci/:id/ticket" element={<h1>Ticket form</h1>} />
+        <Route path="/field/ci/:id/assign" element={<h1>Hand over form</h1>} />
       </Routes>
     </QueryClientProvider>
   </MemoryRouter>)
@@ -93,6 +94,45 @@ describe('FieldCiPage', () => {
     expect(screen.getByRole('button', { name: 'Try again' })).toBeInTheDocument()
   })
 
+  it('leads the cover with the status, because that is what decides repair or replace', async () => {
+    vi.mocked(assetsApi.getCi).mockResolvedValue({
+      ...laptop,
+      coverage: {
+        ...laptop.coverage, contractName: 'Dell ProSupport', vendorName: 'Dell',
+        warrantyExpiresAt: '2027-03-12', warrantyStatus: 'Active', warrantyDaysRemaining: 204,
+      },
+    })
+
+    renderPage()
+
+    expect(await screen.findByText('Active')).toBeInTheDocument()
+    expect(screen.getByText('ends in 204 days')).toBeInTheDocument()
+    expect(screen.getByText('Dell ProSupport')).toBeInTheDocument()
+  })
+
+  it('words an expired warranty as expired rather than ending', async () => {
+    vi.mocked(assetsApi.getCi).mockResolvedValue({
+      ...laptop,
+      coverage: {
+        ...laptop.coverage, warrantyExpiresAt: '2026-08-12',
+        warrantyStatus: 'Expired', warrantyDaysRemaining: -8,
+      },
+    })
+
+    renderPage()
+
+    expect(await screen.findByText('Expired')).toBeInTheDocument()
+    expect(screen.getByText('expired 8 days ago')).toBeInTheDocument()
+  })
+
+  it('says plainly when nothing covers the asset, rather than showing an empty block', async () => {
+    vi.mocked(assetsApi.getCi).mockResolvedValue(laptop)
+
+    renderPage()
+
+    expect(await screen.findByText(/No warranty or contract is recorded/)).toBeInTheDocument()
+  })
+
   it('offers no way into the agent shell, which a handset cannot use', async () => {
     vi.mocked(assetsApi.getCi).mockResolvedValue(laptop)
 
@@ -111,6 +151,16 @@ describe('FieldCiPage', () => {
     await userEvent.click(await screen.findByRole('button', { name: /Open a ticket/ }))
 
     expect(await screen.findByRole('heading', { name: 'Ticket form' })).toBeInTheDocument()
+  })
+
+  it('reaches the hand-over screen from the asset', async () => {
+    vi.mocked(assetsApi.getCi).mockResolvedValue(laptop)
+
+    renderPage()
+
+    await userEvent.click(await screen.findByRole('button', { name: /Hand over or move/ }))
+
+    expect(await screen.findByRole('heading', { name: 'Hand over form' })).toBeInTheDocument()
   })
 
   it('goes back to scanning without a trip through the desktop app', async () => {

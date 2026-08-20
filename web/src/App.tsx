@@ -8,9 +8,11 @@ import { ForbiddenPage } from './pages/ForbiddenPage'
 import { CiDetailPage } from './features/assets/CiDetailPage'
 import { FieldAuditPage } from './features/field/FieldAuditPage'
 import { FieldAuditsPage } from './features/field/FieldAuditsPage'
+import { FieldAssignPage } from './features/field/FieldAssignPage'
 import { FieldCiPage } from './features/field/FieldCiPage'
 import { FieldTicketDetailPage } from './features/field/FieldTicketDetailPage'
 import { FieldTicketsPage } from './features/field/FieldTicketsPage'
+import { FieldReceivePage } from './features/field/FieldReceivePage'
 import { FieldScanPage } from './features/field/FieldScanPage'
 import { FieldNewTicketPage } from './features/field/FieldNewTicketPage'
 import { HandheldRedirect } from './features/field/HandheldRedirect'
@@ -66,8 +68,10 @@ export function App() {
     <Route path="field" element={<ProtectedRoute roles={['Admin', 'Technician', 'Manager']}><FieldShell /></ProtectedRoute>}>
       <Route index element={<FieldScanPage />} />
       <Route path="scan" element={<FieldScanPage />} />
+      <Route path="receive" element={<FieldReceivePage />} />
       <Route path="ci/:id" element={<FieldCiPage />} />
       <Route path="ci/:id/ticket" element={<FieldNewTicketPage />} />
+      <Route path="ci/:id/assign" element={<FieldAssignPage />} />
       <Route path="tickets" element={<FieldTicketsPage />} />
       <Route path="tickets/:id" element={<FieldTicketDetailPage />} />
       <Route path="audits" element={<FieldAuditsPage />} />
