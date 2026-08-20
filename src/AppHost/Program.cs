@@ -281,11 +281,14 @@ var webHost = builder.AddProject<Projects.Web_Host>("web-host", isLanRun ? "http
         // 5000 is the browser's port, and in a LAN run the browser is on the HTTPS endpoint
         // below. This one keeps serving the poller, the scanner and the seeder — all of which
         // resolve it through Aspire and neither know nor care which port it landed on.
-        if (!isLanRun)
-        {
-            endpoint.Port = 5000;
-        }
-
+        // Pinned in both modes, and in a LAN run this is load-bearing rather than tidy. Left to
+        // Aspire, DCP picks a port and then tries to bind it across every address 0.0.0.0 expands
+        // to — 127.0.0.1, the WSL loopback and the LAN address. When it cannot it logs "Could not
+        // use the same port for all addresses" and keeps a listener on each anyway, but only some
+        // of them forward. The dead one is the loopback, which is exactly the address the health
+        // check resolves, so the API answers 200 on every real address and still reports unhealthy
+        // — and `web` waits on that health, so the SPA never starts and 5173 refuses.
+        endpoint.Port = isLanRun ? 5001 : 5000;
         endpoint.TargetHost = bindHost;
     })
     // Named rather than left to the default, which is what a LAN run turns into a trap. The `https`

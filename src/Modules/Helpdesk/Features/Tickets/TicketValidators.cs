@@ -12,6 +12,11 @@ public sealed class CreateTicketRequestValidator : AbstractValidator<CreateTicke
         RuleFor(request => request.Urgency).IsInEnum();
         RuleFor(request => request.Impact).IsInEnum();
         RuleFor(request => request.RequesterId).MaximumLength(200);
+        // An empty Guid reaches the CI directory as a lookup that can never match, so it is refused
+        // at the edge where the caller can read why rather than as a "does not exist" further in.
+        RuleForEach(request => request.CiIds)
+            .NotEqual(Guid.Empty)
+            .WithMessage("A linked CI id must not be empty.");
     }
 }
 

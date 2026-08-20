@@ -305,6 +305,57 @@ public sealed class TicketCiLinkApiIntegrationTests : IAsyncLifetime
         Assert.Empty(card.OpenRelatedTickets);
     }
 
+    /// <summary>
+    /// The field surface's reason for CiIds: a technician standing at the asset raises the ticket in
+    /// one call, because on the connection a plant room has, a follow-up link request is the one that
+    /// fails — leaving a ticket that names no asset and a technician who believes it does.
+    /// </summary>
+    [Fact]
+    public async Task CreateTicket_WithCiIds_LinksTheCiInTheSameCall()
+    {
+        var ci = await CreateCiAsync("Hardware", "Stockroom laptop");
+
+        using var request = Authenticated(HttpMethod.Post, "/api/tickets");
+        request.Content = JsonContent.Create(new
+        {
+            title = "Will not power on",
+            description = "No lights, no fan.",
+            type = "Incident",
+            urgency = "Medium",
+            impact = "Medium",
+            ciIds = new[] { ci.Id },
+        });
+        using var response = await _client!.SendAsync(request);
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        var ticket = Assert.IsType<TicketDto>(await response.Content.ReadFromJsonAsync<TicketDto>());
+
+        var links = await GetAsync<List<LinkDto>>($"/api/tickets/{ticket.Id}/cis");
+        Assert.Equal(ci.Id, Assert.Single(links).CiId);
+    }
+
+    /// <summary>The failure path: an unknown CI id is the caller's mistake and no ticket is written.</summary>
+    [Fact]
+    public async Task CreateTicket_WithAnUnknownCiId_IsRefusedAndWritesNoTicket()
+    {
+        var title = $"Ticket that should not exist {Guid.CreateVersion7()}";
+        using var request = Authenticated(HttpMethod.Post, "/api/tickets");
+        request.Content = JsonContent.Create(new
+        {
+            title,
+            description = "Raised against a CI that does not exist.",
+            type = "Incident",
+            urgency = "Medium",
+            impact = "Medium",
+            ciIds = new[] { Guid.CreateVersion7() },
+        });
+        using var response = await _client!.SendAsync(request);
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+
+        await using var scope = _application.Services.CreateAsyncScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<HelpdeskDbContext>();
+        Assert.False(await dbContext.Tickets.AnyAsync(item => item.Title == title));
+    }
+
     private async Task SetWarrantyAsync(Guid ciId, DateOnly expiresAt)
     {
         using var request = Authenticated(HttpMethod.Put, $"/api/cis/{ciId}/coverage");

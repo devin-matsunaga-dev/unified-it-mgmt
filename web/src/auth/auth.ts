@@ -21,7 +21,14 @@ const settings: UserManagerSettings = {
   scope: 'openid profile email',
   automaticSilentRenew: true,
   silent_redirect_uri: `${window.location.origin}/auth/silent-callback`,
-  userStore: new WebStorageStateStore({ store: window.sessionStorage }),
+  /**
+   * localStorage, not sessionStorage, because sessionStorage is per-tab and a scanned QR opens a new
+   * one: a technician working through a stockroom was sent round the full redirect sign-in on every
+   * label. The trade-off is deliberate — the session now survives closing the tab, so a shared or
+   * mislaid handset stays signed in until the token expires or someone signs out. oidc-client-ts
+   * already keeps its PKCE state in localStorage by default, so this only aligns the user with it.
+   */
+  userStore: new WebStorageStateStore({ store: window.localStorage }),
 }
 
 export const userManager = new UserManager(settings)

@@ -43,6 +43,7 @@ public enum TicketWriteOutcome
     QueueNotFound,
     CategoryNotFound,
     InvalidCustomFields,
+    CiNotFound,
 }
 
 public sealed record TicketWriteResult(

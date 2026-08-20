@@ -2,9 +2,16 @@ import { Route, Routes } from 'react-router-dom'
 import { ProtectedRoute } from './auth/ProtectedRoute'
 import { AppShell } from './layout/AppShell'
 import { PortalShell } from './layout/PortalShell'
+import { FieldShell } from './layout/FieldShell'
 import { AuthCallbackPage } from './pages/AuthCallbackPage'
 import { ForbiddenPage } from './pages/ForbiddenPage'
 import { CiDetailPage } from './features/assets/CiDetailPage'
+import { FieldAuditPage } from './features/field/FieldAuditPage'
+import { FieldAuditsPage } from './features/field/FieldAuditsPage'
+import { FieldCiPage } from './features/field/FieldCiPage'
+import { FieldScanPage } from './features/field/FieldScanPage'
+import { FieldTicketPage } from './features/field/FieldTicketPage'
+import { HandheldRedirect } from './features/field/HandheldRedirect'
 import { CiImportWizard } from './features/assets/CiImportWizard'
 import { CiListPage } from './features/assets/CiListPage'
 import { AuditSessionPage } from './features/assets/AuditSessionPage'
@@ -54,6 +61,14 @@ export function App() {
     <Route path="/auth/callback" element={<AuthCallbackPage />} />
     <Route path="/auth/silent-callback" element={<AuthCallbackPage silent />} />
     <Route path="/forbidden" element={<ForbiddenPage />} />
+    <Route path="field" element={<ProtectedRoute roles={['Admin', 'Technician', 'Manager']}><FieldShell /></ProtectedRoute>}>
+      <Route index element={<FieldScanPage />} />
+      <Route path="scan" element={<FieldScanPage />} />
+      <Route path="ci/:id" element={<FieldCiPage />} />
+      <Route path="ci/:id/ticket" element={<FieldTicketPage />} />
+      <Route path="audits" element={<FieldAuditsPage />} />
+      <Route path="audits/:id" element={<FieldAuditPage />} />
+    </Route>
     <Route path="portal" element={<ProtectedRoute roles={['EndUser']}><PortalShell /></ProtectedRoute>}>
       <Route index element={<MyRequestsPage />} />
       <Route path="new" element={<NewRequestPage />} />
@@ -61,7 +76,7 @@ export function App() {
       <Route path="kb/:id" element={<PortalArticlePage />} />
       <Route path="requests/:id" element={<RequestDetailPage />} />
     </Route>
-    <Route element={<ProtectedRoute><AppShell /></ProtectedRoute>}>
+    <Route element={<ProtectedRoute><HandheldRedirect><AppShell /></HandheldRedirect></ProtectedRoute>}>
       <Route index element={<HomeRoute />} />
       <Route path="tickets" element={<ProtectedRoute roles={['Admin', 'Technician', 'Manager']}><TicketListPage /></ProtectedRoute>} />
       <Route path="tickets/:id" element={<ProtectedRoute roles={['Admin', 'Technician', 'Manager']}><TicketDetailPage /></ProtectedRoute>} />

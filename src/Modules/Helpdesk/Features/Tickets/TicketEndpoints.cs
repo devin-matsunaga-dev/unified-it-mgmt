@@ -40,6 +40,7 @@ public static class TicketEndpoints
                         [nameof(request.CategoryId)] = ["Category not found or inactive."],
                     }),
                 TicketWriteOutcome.InvalidCustomFields => Results.ValidationProblem(result.Errors!),
+                TicketWriteOutcome.CiNotFound => Results.ValidationProblem(result.Errors!),
                 var outcome => throw new InvalidOperationException($"Unknown ticket write outcome '{outcome}'."),
             };
         });

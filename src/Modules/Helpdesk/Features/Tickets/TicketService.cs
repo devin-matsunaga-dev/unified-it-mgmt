@@ -7,6 +7,7 @@ using Microsoft.EntityFrameworkCore;
 using Modules.Helpdesk.Data;
 using Platform.Auditing;
 using Platform.Directory;
+using Platform.Integration;
 using Platform.Notifications;
 using Platform.Search;
 using Modules.Helpdesk.Features.Sla;
@@ -20,7 +21,8 @@ public sealed class TicketService(
     IAuditService auditService,
     ISlaService slaService,
     INotificationService notificationService,
-    IDirectoryService directoryService) : ITicketService
+    IDirectoryService directoryService,
+    ICiDirectory ciDirectory) : ITicketService
 {
     /// <summary>
     /// The text-search dictionary the generated tsvector columns are built with. One definition for the
@@ -45,6 +47,23 @@ public sealed class TicketService(
         if (bound.Errors.Count > 0)
         {
             return new(TicketWriteOutcome.InvalidCustomFields, Errors: bound.Errors);
+        }
+
+        var ciIds = request.CiIds?.Distinct().ToList() ?? [];
+        if (ciIds.Count > 0)
+        {
+            var known = (await ciDirectory.GetSummariesAsync(ciIds, cancellationToken))
+                .Select(summary => summary.Id).ToHashSet();
+            var missing = ciIds.Where(id => !known.Contains(id)).ToList();
+            if (missing.Count > 0)
+            {
+                // Checked before the transaction opens rather than inside it: an unknown id is the
+                // caller's mistake, and it should read as one rather than as a failed write.
+                return new(TicketWriteOutcome.CiNotFound, Errors: new Dictionary<string, string[]>
+                {
+                    [nameof(request.CiIds)] = [.. missing.Select(id => $"CI '{id}' does not exist.")],
+                });
+            }
         }
 
         var requesterId = IsEndUser(actor) ? GetActorId(actor) : request.RequesterId ?? GetActorId(actor);
@@ -117,12 +136,26 @@ public sealed class TicketService(
                 ActorId = GetActorId(actor), OccurredAt = now,
             });
         }
+        foreach (var ciId in ciIds)
+        {
+            dbContext.TicketCiLinks.Add(new TicketCiLink
+            {
+                Id = Guid.CreateVersion7(), TicketId = ticket.Id, Ticket = ticket, CiId = ciId,
+                LinkedById = GetActorId(actor), LinkedByName = GetActorDisplayName(actor), LinkedAt = now,
+            });
+        }
         await dbContext.SaveChangesAsync(cancellationToken);
         await dbContext.Entry(ticket).Reference(item => item.Status).LoadAsync(cancellationToken);
         await slaService.StartAsync(ticket, now, cancellationToken);
         await publishEndpoint.Publish(new TicketCreated(
             Guid.CreateVersion7(), now, ticket.Id, ticket.Number, ticket.RequesterId,
             ticket.Type.ToString(), ticket.Priority.ToString()), cancellationToken);
+        foreach (var ciId in ciIds)
+        {
+            await publishEndpoint.Publish(
+                new TicketCiLinked(Guid.CreateVersion7(), now, ticket.Id, ticket.Number, ciId, GetActorId(actor)),
+                cancellationToken);
+        }
         await dbContext.SaveChangesAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
 

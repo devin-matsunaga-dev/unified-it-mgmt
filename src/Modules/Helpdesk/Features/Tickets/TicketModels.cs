@@ -12,7 +12,14 @@ public sealed record CreateTicketRequest(
     string? RequesterId,
     Guid? QueueId,
     Guid? CategoryId = null,
-    IReadOnlyDictionary<string, string?>? CustomFields = null);
+    IReadOnlyDictionary<string, string?>? CustomFields = null,
+    /// <summary>
+    /// CIs to link as the ticket is created, in the same transaction. A field technician raising a
+    /// ticket about the asset in their hand would otherwise need a second call, and on the kind of
+    /// connection a loading dock has, the second call is the one that fails — leaving a ticket that
+    /// names no asset and a technician who believes it does.
+    /// </summary>
+    IReadOnlyList<Guid>? CiIds = null);
 
 public sealed record UpdateTicketRequest(
     string Title,

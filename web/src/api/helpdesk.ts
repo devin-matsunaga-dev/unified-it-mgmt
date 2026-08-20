@@ -145,6 +145,8 @@ export type CreateTicketInput = {
   queueId: string | null
   categoryId: string | null
   customFields: Record<string, string>
+  /** Linked as the ticket is created, in one call — see CreateTicketRequest.CiIds on the server. */
+  ciIds?: string[]
 }
 export type Comment = { id: string; ticketId: string; body: string; isInternal: boolean; authorId: string; authorName: string; createdAt: string }
 export type Transition = { id: string; ticketId: string; fromStatus: string; toStatus: string; resolutionNote: string | null; actorId: string; occurredAt: string }
