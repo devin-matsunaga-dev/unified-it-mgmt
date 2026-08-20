@@ -44,9 +44,20 @@ export function createReader() {
  * `continuous` mode it keeps going for a stock count, where the whole job is scanning label after
  * label without touching the phone between them.
  */
+/**
+ * The slice of the frame that is actually decoded, as a fraction of each side. Anything outside it is
+ * ignored, which is what makes the on-screen guide mean something: device labels put the serial, the
+ * product code and a shipping reference within a couple of centimetres of each other, and a decoder
+ * reading the whole frame returns whichever it happened to resolve first.
+ *
+ * Defaults to a wide, short band because that is the shape of a 1D barcode and the shape of the guide
+ * drawn over it. A QR screen passes a square.
+ */
+export type ScanRegion = { widthRatio: number; heightRatio: number }
+
 export function useQrCamera(
   onCode: (code: string) => void,
-  { continuous = false }: { continuous?: boolean } = {},
+  { continuous = false, region }: { continuous?: boolean; region?: ScanRegion } = {},
 ) {
   const videoRef = useRef<HTMLVideoElement>(null)
   const [status, setStatus] = useState<CameraStatus>('idle')
@@ -106,10 +117,20 @@ export function useQrCamera(
           frameRef.current = requestAnimationFrame(readFrame)
           return
         }
-        canvas.width = video.videoWidth
-        canvas.height = video.videoHeight
-        context.drawImage(video, 0, 0, canvas.width, canvas.height)
-        const frame = context.getImageData(0, 0, canvas.width, canvas.height)
+        // Only the guide's area is drawn onto the canvas, so only it can be decoded. Cropping here
+        // rather than filtering results afterwards is what makes aiming work at all — a decoder given
+        // the whole frame has already chosen before anything downstream could reject its choice.
+        const widthRatio = region?.widthRatio ?? 1
+        const heightRatio = region?.heightRatio ?? 1
+        const sourceWidth = Math.max(1, Math.round(video.videoWidth * widthRatio))
+        const sourceHeight = Math.max(1, Math.round(video.videoHeight * heightRatio))
+        const sourceX = Math.round((video.videoWidth - sourceWidth) / 2)
+        const sourceY = Math.round((video.videoHeight - sourceHeight) / 2)
+        canvas.width = sourceWidth
+        canvas.height = sourceHeight
+        context.drawImage(
+          video, sourceX, sourceY, sourceWidth, sourceHeight, 0, 0, sourceWidth, sourceHeight)
+        const frame = context.getImageData(0, 0, sourceWidth, sourceHeight)
         const found = decode(reader, frame)
         if (found) {
           const now = Date.now()
@@ -128,7 +149,7 @@ export function useQrCamera(
       // holding the phone: one is fixed in Settings, the other means typing the tag instead.
       setStatus((error as Error).name === 'NotAllowedError' ? 'denied' : 'unavailable')
     }
-  }, [continuous])
+  }, [continuous, region?.widthRatio, region?.heightRatio])
 
   // The camera must not outlive the screen that opened it — a live rear camera behind a page the
   // technician has walked away from is both a battery drain and a light left on.

@@ -14,6 +14,7 @@ using Modules.Assets.Features.Import;
 using Modules.Assets.Features.Labels;
 using Modules.Assets.Features.Lifecycle;
 using Modules.Assets.Features.DeviceIdentification;
+using Modules.Assets.Features.DeviceIdentification.Cisco;
 using Modules.Assets.Features.DeviceIdentification.Dell;
 using Modules.Assets.Features.PhysicalAudits;
 using Modules.Assets.Features.Relationships;
@@ -64,10 +65,13 @@ public static class AssetsServiceCollectionExtensions
         services.AddOptions<DellOptions>().Bind(configuration.GetSection(DellOptions.SectionName));
         services.AddScoped<IDellEntitlementMapper, DellEntitlementMapper>();
         // Singleton: a token outlives a request, and the provider that uses it does not.
-        services.AddSingleton<DellTokenCache>();
+        services.AddSingleton<OAuthTokenCache>();
         // Registered unconditionally and inert without configuration, so a deployment with no
         // TechDirect account behaves exactly as it did before this existed.
         services.AddScoped<IDeviceLookupProvider, DellLookupProvider>();
+        services.AddOptions<CiscoOptions>().Bind(configuration.GetSection(CiscoOptions.SectionName));
+        services.AddScoped<ICiscoCoverageMapper, CiscoCoverageMapper>();
+        services.AddScoped<IDeviceLookupProvider, CiscoLookupProvider>();
         services.AddScoped<ICiRelationshipService, CiRelationshipService>();
         services.AddScoped<ICiDependencyDirectory, CiDependencyDirectory>();
         services.AddScoped<ICiImportService, CiImportService>();

@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-label="ITManager">
+  <!--
+    The tab mark. Drawn to DESIGN.md §3 rather than picked: blue-600 (#2563EB) is the one accent the
+    whole application uses, and a favicon is the smallest place the palette shows — a stray hue here
+    is the first thing that looks like it belongs to a different product.
+
+    An SVG rather than a .ico so it stays sharp on every display, and simple enough to read at 16px:
+    a mark with fine detail becomes grey mush in a tab, which is the only size that matters.
+  -->
+  <rect width="32" height="32" rx="7" fill="#2563EB"/>
+  <path d="M9 11.5h14M9 16h14M9 20.5h9" stroke="#fff" stroke-width="2.75"
+        stroke-linecap="round" fill="none"/>
+</svg>

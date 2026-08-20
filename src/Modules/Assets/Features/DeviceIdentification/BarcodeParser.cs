@@ -81,6 +81,20 @@ public static class BarcodeParser
 
     private static readonly char[] Separators = [':', '-', '=', ' ', '.', '#'];
 
+    /// <summary>
+    /// Cisco prints a product identifier beside a hardware version — <c>SRW2016-K9 V01</c>, or
+    /// spelled out as <c>PID: SRW2016-K9 VID: V01</c>. One barcode often carries both.
+    /// <para>
+    /// **The PID is kept and the VID is dropped**, deliberately: a VID is a hardware revision of the
+    /// same product, so V01 and V02 are the same model and keying a catalogue on the pair would split
+    /// one product into a row per revision — and then the next switch off a later line would identify
+    /// as nothing.
+    /// </para>
+    /// </summary>
+    private static readonly Regex PidVid = new(
+        @"^(?:PID\s*[:=]?\s*)?(?<pid>[A-Z0-9][A-Z0-9\-_.]*)\s+(?:VID\s*[:=]?\s*)?V\d{1,3}$",
+        RegexOptions.Compiled);
+
     private static readonly Regex Allowed = new(@"^[A-Z0-9][A-Z0-9\-_.]*$", RegexOptions.Compiled);
 
     /// <summary>
@@ -99,12 +113,22 @@ public static class BarcodeParser
 
         var normalised = raw.ToUpperInvariant();
 
+        // Before the prefix reader, not after: "PID: SRW2016-K9 VID: V01" would otherwise match the
+        // PID prefix, hand back a remainder carrying a space, and be refused as free text — so the
+        // labelled form of the very thing this exists to read would never reach it.
+        if (PidVid.Match(normalised) is { Success: true } pidVid
+            && Usable(pidVid.Groups["pid"].Value))
+        {
+            return new ParsedIdentifier(raw, pidVid.Groups["pid"].Value, IdentifierKind.ModelIdentifier);
+        }
+
         if (TryReadPrefix(normalised, out var body, out var declaredKind))
         {
             return Usable(body) ? new ParsedIdentifier(raw, body, declaredKind) : null;
         }
 
         if (TrySplitCombined(normalised) is { } combined) return combined with { RawValue = raw };
+
 
         if (LooksLikeOurLabel(raw)) return new ParsedIdentifier(raw, normalised, IdentifierKind.AssetLabel);
 

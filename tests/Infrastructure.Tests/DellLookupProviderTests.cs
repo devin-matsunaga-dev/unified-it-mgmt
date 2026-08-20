@@ -53,7 +53,7 @@ public sealed class DellLookupProviderTests : IAsyncLifetime
 
     /// <summary>The API is keyed per device; a product identifier is not something it answers about.</summary>
     [Fact]
-    public async Task Lookup_WithNoSerialAmongTheScans_AsksNobody()
+    public async Task Lookup_WithOnlyAProductIdentifier_AsksNobody()
     {
         var handler = new StubHandler();
         var provider = Build(handler, Configured());
@@ -63,6 +63,61 @@ public sealed class DellLookupProviderTests : IAsyncLifetime
 
         Assert.Equal(IdentificationConfidence.Unknown, result.Confidence);
         Assert.Empty(handler.Requests);
+    }
+
+    /// <summary>
+    /// The gap this closed: most manufacturers print a bare alphanumeric, which the parser refuses to
+    /// call a serial because it will not *store* a guess. Asking is a different act — the vendor
+    /// either recognises the string or does not, and its answer is authoritative.
+    /// </summary>
+    [Fact]
+    public async Task Lookup_WithAnUnclassifiedScan_StillAsksTheManufacturer()
+    {
+        var tag = $"FDO{Guid.NewGuid():N}"[..11].ToUpperInvariant();
+        var handler = new StubHandler();
+        var provider = Build(handler, Configured(), new StubMapper(Answer()));
+
+        var result = await provider.LookupAsync(
+            [new(tag, tag, IdentifierKind.Unknown)], CancellationToken.None);
+
+        Assert.Equal("Dell", result.Source);
+        Assert.Contains(handler.Requests, uri => uri.Contains(tag, StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// A classified serial is asked about before an unclassified string, so a labelled barcode is
+    /// never passed over in favour of a shipping reference that happened to be scanned first.
+    /// </summary>
+    [Fact]
+    public async Task Lookup_PrefersAClassifiedSerialOverAnUnclassifiedScan()
+    {
+        var handler = new StubHandler();
+        var provider = Build(handler, Configured(), new StubMapper(Answer()));
+
+        await provider.LookupAsync(
+            [
+                new("SHIP4402", "SHIP4402", IdentifierKind.Unknown),
+                new("S/N: 7XKLM92", "7XKLM92", IdentifierKind.SerialNumber),
+            ],
+            CancellationToken.None);
+
+        var asked = handler.Requests.First(uri => !uri.Contains("/token", StringComparison.Ordinal));
+        Assert.Contains("7XKLM92", asked, StringComparison.Ordinal);
+    }
+
+    /// <summary>Bounded: a scanner that read a whole label must not become a burst of API calls.</summary>
+    [Fact]
+    public async Task Lookup_WithManyUnclassifiedScans_AsksAboutAtMostThree()
+    {
+        var handler = new StubHandler();
+        var provider = Build(handler, Configured(), new StubMapper(null));
+
+        await provider.LookupAsync(
+            [.. Enumerable.Range(0, 8).Select(index =>
+                new IdentifierView($"CODE{index}", $"CODE{index}", IdentifierKind.Unknown))],
+            CancellationToken.None);
+
+        Assert.Equal(3, handler.Requests.Count(uri => !uri.Contains("/token", StringComparison.Ordinal)));
     }
 
     [Fact]
@@ -217,7 +272,7 @@ public sealed class DellLookupProviderTests : IAsyncLifetime
         StubHandler handler, DellOptions dellOptions, IDellEntitlementMapper? mapper = null) =>
         // A fresh cache per provider, so no test case inherits a token another one fetched.
         new(Options.Create(dellOptions), new StubHttpClientFactory(handler),
-            mapper ?? new StubMapper(null), new DellTokenCache(), _dbContext,
+            mapper ?? new StubMapper(null), new OAuthTokenCache(), _dbContext,
             NullLogger<DellLookupProvider>.Instance);
 
     private sealed class StubMapper(DeviceIdentificationResult? result) : IDellEntitlementMapper

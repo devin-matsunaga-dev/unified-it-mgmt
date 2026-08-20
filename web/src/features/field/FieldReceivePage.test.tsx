@@ -1,9 +1,10 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { vi } from 'vitest'
 import { assetsApi, type Ci, type CiTypeSchema, type IdentifyDeviceResponse } from '../../api/assets'
+import { ApiError } from '../../api/client'
 import { FieldReceivePage } from './FieldReceivePage'
 
 vi.mock('../../api/assets', async (original) => {
@@ -16,11 +17,18 @@ vi.mock('../../api/assets', async (original) => {
       createCi: vi.fn(),
       listTypeSchemas: vi.fn(),
       saveProductCatalogEntry: vi.fn(),
+      lookupCi: vi.fn(),
     },
   }
 })
+let emitCode: (code: string) => void = () => {}
+let scanRegion: unknown
 vi.mock('./useQrCamera', () => ({
-  useQrCamera: () => ({ videoRef: { current: null }, status: 'idle', start: vi.fn(), stop: vi.fn() }),
+  useQrCamera: (onCode: (code: string) => void, options?: { region?: unknown }) => {
+    emitCode = onCode
+    scanRegion = options?.region
+    return { videoRef: { current: null }, status: 'idle', start: vi.fn(), stop: vi.fn() }
+  },
 }))
 
 /** Manufacturer and model are required for Hardware, exactly as CiTypeSchema declares them. */
@@ -71,6 +79,8 @@ describe('FieldReceivePage', () => {
     vi.clearAllMocks()
     vi.mocked(assetsApi.listTypeSchemas).mockResolvedValue(schemas)
     vi.mocked(assetsApi.identifyDevice).mockResolvedValue(identified())
+    // Not registered is the ordinary answer for a device being received.
+    vi.mocked(assetsApi.lookupCi).mockRejectedValue(new ApiError(404, 'Not found'))
   })
 
   it('identifies a code carried in from the scan screen without a second scan', async () => {
@@ -103,9 +113,10 @@ describe('FieldReceivePage', () => {
     renderPage('/field/receive?code=1S12RQ000KUSMZ00H8S2')
 
     const list = await screen.findByRole('list', { name: 'Scanned identifiers' })
-    // Scoped to the list: "Serial number" is also a form label further down the page.
+    // Scoped to the list: "Serial number" is also a form label further down the page. Both rows here
+    // have been assigned, so each says the role it plays rather than the kind the parser gave it.
     expect(within(list).getByText('12RQ000KUS')).toBeInTheDocument()
-    expect(within(list).getByText('Model / product')).toBeInTheDocument()
+    expect(within(list).getByText('Model code')).toBeInTheDocument()
     expect(within(list).getByText('MZ00H8S2')).toBeInTheDocument()
     expect(within(list).getByText('Serial number')).toBeInTheDocument()
   })
@@ -147,7 +158,7 @@ describe('FieldReceivePage', () => {
     renderPage('/field/receive?code=' + 'A'.repeat(140))
 
     await waitFor(() => expect(assetsApi.identifyDevice).toHaveBeenCalled())
-    expect(screen.getByText('Nothing yet.')).toBeInTheDocument()
+    expect(screen.getByText('No code scanned yet.')).toBeInTheDocument()
   })
 
   it('does not overwrite something the technician has already typed', async () => {
@@ -169,7 +180,7 @@ describe('FieldReceivePage', () => {
     await screen.findByLabelText('Manufacturer')
     expect(screen.getByRole('button', { name: /Register it/ })).toBeDisabled()
 
-    await userEvent.type(screen.getByLabelText('What is it?'), 'Latitude 5450')
+    await userEvent.type(screen.getByLabelText('Device name'), 'Latitude 5450')
     await userEvent.type(screen.getByLabelText('Manufacturer'), 'Dell')
     expect(screen.getByRole('button', { name: /Register it/ })).toBeDisabled()
 
@@ -183,7 +194,7 @@ describe('FieldReceivePage', () => {
     vi.mocked(assetsApi.saveProductCatalogEntry).mockResolvedValue({} as never)
 
     renderPage('/field/receive?code=1S12RQ000KUSMZ00H8S2')
-    await userEvent.type(await screen.findByLabelText('What is it?'), 'Reception laptop')
+    await userEvent.type(await screen.findByLabelText('Device name'), 'Reception laptop')
     await userEvent.click(screen.getByRole('button', { name: /Register it/ }))
 
     await waitFor(() => expect(assetsApi.createCi).toHaveBeenCalledWith(expect.objectContaining({
@@ -204,7 +215,7 @@ describe('FieldReceivePage', () => {
     vi.mocked(assetsApi.createCi).mockResolvedValue({ id: 'ci-new', name: 'x' } as Ci)
 
     renderPage('/field/receive?code=1S12RQ000KUSMZ00H8S2')
-    await userEvent.type(await screen.findByLabelText('What is it?'), 'Reception laptop')
+    await userEvent.type(await screen.findByLabelText('Device name'), 'Reception laptop')
     await userEvent.click(screen.getByRole('checkbox', { name: /Remember this model/ }))
     await userEvent.click(screen.getByRole('button', { name: /Register it/ }))
 
@@ -219,7 +230,7 @@ describe('FieldReceivePage', () => {
     vi.mocked(assetsApi.saveProductCatalogEntry).mockRejectedValue(new Error('Network request failed'))
 
     renderPage('/field/receive?code=1S12RQ000KUSMZ00H8S2')
-    await userEvent.type(await screen.findByLabelText('What is it?'), 'Reception laptop')
+    await userEvent.type(await screen.findByLabelText('Device name'), 'Reception laptop')
     await userEvent.click(screen.getByRole('button', { name: /Register it/ }))
 
     expect(await screen.findByRole('heading', { name: 'Field asset page' })).toBeInTheDocument()
@@ -231,6 +242,310 @@ describe('FieldReceivePage', () => {
     renderPage('/field/receive?code=1S12RQ000KUSMZ00H8S2')
     await userEvent.click(await screen.findByRole('button', { name: 'Remove 12RQ000KUS' }))
 
-    await waitFor(() => expect(screen.getByText('Nothing yet.')).toBeInTheDocument())
+    await waitFor(() => expect(screen.getByText('No code scanned yet.')).toBeInTheDocument())
+  })
+
+  /**
+   * Device labels crowd the serial, the product code and a shipping reference within a couple of
+   * centimetres. Decoding the whole frame returns whichever resolved first, which is what made the
+   * aiming guide a lie — it now decodes only the guide's area.
+   */
+  it('decodes only the aiming window, not the whole frame', async () => {
+    renderPage()
+
+    await screen.findByLabelText('Device name')
+    expect(scanRegion).toEqual({ widthRatio: 0.85, heightRatio: 0.28 })
+  })
+
+  /**
+   * The technician aimed at the serial barcode and said so, which beats any pattern the parser could
+   * apply — so the read is labelled a serial on the way to identification, not left unclassified.
+   */
+  it('puts a declared serial straight in the field and identifies it as one', async () => {
+    renderPage()
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Scan serial number' }))
+    act(() => emitCode('FDO12345678'))
+
+    await waitFor(() => expect(screen.getByLabelText('Serial number')).toHaveValue('FDO12345678'))
+    expect(assetsApi.identifyDevice).toHaveBeenLastCalledWith(['S/N: FDO12345678'])
+  })
+
+  it('still adds an undeclared scan to the identification set rather than the serial field', async () => {
+    renderPage()
+
+    await userEvent.click(await screen.findByRole('button', { name: /Scan the model code/ }))
+    act(() => emitCode('WS-C2960X-24TS-L'))
+
+    await waitFor(() => expect(assetsApi.identifyDevice).toHaveBeenLastCalledWith(['WS-C2960X-24TS-L']))
+    expect(screen.getByLabelText('Serial number')).toHaveValue('')
+  })
+
+  /**
+   * Reported from the field: a scanned serial left the field empty and had to be retyped. Most
+   * manufacturers print a bare alphanumeric, which the parser will not classify — but refusing to
+   * classify it is no reason to make somebody type what they just scanned.
+   */
+  it('fills the serial from the only unclassified scan when the server named none', async () => {
+    vi.mocked(assetsApi.identifyDevice).mockResolvedValue(identified({
+      identifiers: [{ scanned: 'FDO12345678', value: 'FDO12345678', kind: 'Unknown' }],
+    }))
+
+    renderPage('/field/receive?code=FDO12345678')
+
+    await waitFor(() => expect(screen.getByLabelText('Serial number')).toHaveValue('FDO12345678'))
+  })
+
+  /** With two unclassified codes, which one is the serial is a guess — so it stays a tap. */
+  it('does not guess the serial when more than one scan could be it', async () => {
+    vi.mocked(assetsApi.identifyDevice).mockResolvedValue(identified({
+      identifiers: [
+        { scanned: 'FDO12345678', value: 'FDO12345678', kind: 'Unknown' },
+        { scanned: 'WS-C2960X', value: 'WS-C2960X', kind: 'Unknown' },
+      ],
+    }))
+
+    renderPage('/field/receive?code=FDO12345678')
+
+    await screen.findByRole('list', { name: 'Scanned identifiers' })
+    expect(screen.getByLabelText('Serial number')).toHaveValue('')
+  })
+
+  it('sets the serial from its own field rather than from a row', async () => {
+    vi.mocked(assetsApi.identifyDevice).mockResolvedValue(identified({
+      identifiers: [
+        { scanned: 'DNI152602HL', value: 'DNI152602HL', kind: 'Unknown' },
+        { scanned: 'WS-C2960X', value: 'WS-C2960X', kind: 'Unknown' },
+      ],
+    }))
+
+    renderPage('/field/receive?code=DNI152602HL')
+
+    // Rows place the model code only; the serial has a dedicated field with its own scan button, and
+    // two controls for one job is what this removed.
+    const list = await screen.findByRole('list', { name: 'Scanned identifiers' })
+    expect(within(list).queryByRole('button', { name: 'Serial' })).not.toBeInTheDocument()
+
+    await userEvent.click(screen.getByRole('button', { name: 'Scan serial number' }))
+    act(() => emitCode('DNI152602HL'))
+
+    await waitFor(() => expect(screen.getByLabelText('Serial number')).toHaveValue('DNI152602HL'))
+  })
+
+  it('does not overwrite a serial the technician already typed', async () => {
+    renderPage()
+
+    await userEvent.type(await screen.findByLabelText('Serial number'), 'TYPED123')
+    vi.mocked(assetsApi.identifyDevice).mockResolvedValue(identified({
+      identifiers: [{ scanned: 'FDO12345678', value: 'FDO12345678', kind: 'Unknown' }],
+    }))
+    await userEvent.type(screen.getByLabelText('Type a code'), 'FDO12345678')
+    await userEvent.click(screen.getByRole('button', { name: 'Add' }))
+
+    await waitFor(() => expect(assetsApi.identifyDevice).toHaveBeenCalled())
+    expect(screen.getByLabelText('Serial number')).toHaveValue('TYPED123')
+  })
+
+  /**
+   * Reported from the field: two switches of one model, and the second did not identify. The
+   * catalogue is keyed on a product code, both scans were bare serials, so nothing was written — with
+   * the box ticked and nothing said. A ticked box that saves nothing is worse than an unticked one.
+   */
+  it('says so when there is nothing to remember the model by', async () => {
+    vi.mocked(assetsApi.identifyDevice).mockResolvedValue(identified({
+      identifiers: [{ scanned: 'DNI152602HL', value: 'DNI152602HL', kind: 'Unknown' }],
+    }))
+
+    renderPage('/field/receive?code=DNI152602HL')
+
+    expect(await screen.findByText(/No model code yet/)).toBeInTheDocument()
+  })
+
+  it('lets the technician name the model code, and then remembers it', async () => {
+    vi.mocked(assetsApi.identifyDevice).mockResolvedValue(identified({
+      identifiers: [
+        { scanned: 'DNI152602HL', value: 'DNI152602HL', kind: 'Unknown' },
+        { scanned: 'WS-C2960X-24TS-L', value: 'WS-C2960X-24TS-L', kind: 'Unknown' },
+      ],
+    }))
+    vi.mocked(assetsApi.createCi).mockResolvedValue({ id: 'ci-new', name: 'Switch' } as Ci)
+    vi.mocked(assetsApi.saveProductCatalogEntry).mockResolvedValue({} as never)
+
+    renderPage('/field/receive?code=DNI152602HL')
+
+    const list = await screen.findByRole('list', { name: 'Scanned identifiers' })
+    await userEvent.click(within(list).getAllByRole('button', { name: 'Model' })[1])
+    expect(screen.queryByText(/No model code yet/)).not.toBeInTheDocument()
+
+    await userEvent.type(screen.getByLabelText('Device name'), 'Access switch')
+    await userEvent.type(screen.getByLabelText('Manufacturer'), 'Cisco')
+    await userEvent.type(screen.getByLabelText('Model'), 'Catalyst 2960-X')
+    await userEvent.click(screen.getByRole('button', { name: /Register it/ }))
+
+    await waitFor(() => expect(assetsApi.saveProductCatalogEntry).toHaveBeenCalledWith({
+      modelIdentifier: 'WS-C2960X-24TS-L',
+      manufacturer: 'Cisco',
+      model: 'Catalyst 2960-X',
+    }))
+  })
+
+  /**
+   * A regression this screen once had and lost in the rewrite: a device already in the CMDB let
+   * somebody fill in a whole form before the server refused the duplicate serial.
+   */
+  it('warns when a scanned code already belongs to a registered asset', async () => {
+    vi.mocked(assetsApi.identifyDevice).mockResolvedValue(identified({
+      identifiers: [{ scanned: 'DNI152602HL', value: 'DNI152602HL', kind: 'Unknown' }],
+    }))
+    vi.mocked(assetsApi.lookupCi).mockResolvedValue({ id: 'ci-old', name: 'Comms room switch' } as Ci)
+
+    renderPage('/field/receive?code=DNI152602HL')
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Already registered')
+    expect(screen.getByText('Comms room switch')).toBeInTheDocument()
+  })
+
+  it('opens the existing asset rather than making a second record for it', async () => {
+    vi.mocked(assetsApi.identifyDevice).mockResolvedValue(identified({
+      identifiers: [{ scanned: 'DNI152602HL', value: 'DNI152602HL', kind: 'Unknown' }],
+    }))
+    vi.mocked(assetsApi.lookupCi).mockResolvedValue({ id: 'ci-old', name: 'Comms room switch' } as Ci)
+
+    renderPage('/field/receive?code=DNI152602HL')
+    await userEvent.click(await screen.findByRole('button', { name: 'Open it instead' }))
+
+    expect(await screen.findByRole('heading', { name: 'Field asset page' })).toBeInTheDocument()
+  })
+
+  it('does not warn about a device nobody has registered', async () => {
+    vi.mocked(assetsApi.identifyDevice).mockResolvedValue(identified({
+      identifiers: [{ scanned: 'DNI152602HL', value: 'DNI152602HL', kind: 'Unknown' }],
+    }))
+
+    renderPage('/field/receive?code=DNI152602HL')
+
+    await screen.findByRole('list', { name: 'Scanned identifiers' })
+    expect(screen.queryByText('Already registered')).not.toBeInTheDocument()
+  })
+
+  /**
+   * The flow was turned around at the human's request: a serial names one device and can never
+   * identify the next, so the main button now aims at the model or product code and the serial has
+   * its own field.
+   */
+  it('treats the main scan as the model code, so remembering works by default', async () => {
+    vi.mocked(assetsApi.identifyDevice).mockResolvedValue(identified({
+      identifiers: [{ scanned: 'WS-C2960X-24TS-L', value: 'WS-C2960X-24TS-L', kind: 'Unknown' }],
+    }))
+    vi.mocked(assetsApi.createCi).mockResolvedValue({ id: 'ci-new', name: 'Switch' } as Ci)
+    vi.mocked(assetsApi.saveProductCatalogEntry).mockResolvedValue({} as never)
+
+    renderPage()
+    await userEvent.click(await screen.findByRole('button', { name: /Scan the model code/ }))
+    act(() => emitCode('WS-C2960X-24TS-L'))
+
+    // No warning: the primary scan named a model code, which is the point of turning it around.
+    await waitFor(() => expect(screen.queryByText(/No model code yet/)).not.toBeInTheDocument())
+
+    await userEvent.type(screen.getByLabelText('Device name'), 'Access switch')
+    await userEvent.type(screen.getByLabelText('Manufacturer'), 'Cisco')
+    await userEvent.type(screen.getByLabelText('Model'), 'Catalyst 2960-X')
+    await userEvent.click(screen.getByRole('button', { name: /Register it/ }))
+
+    await waitFor(() => expect(assetsApi.saveProductCatalogEntry).toHaveBeenCalledWith({
+      modelIdentifier: 'WS-C2960X-24TS-L',
+      manufacturer: 'Cisco',
+      model: 'Catalyst 2960-X',
+    }))
+  })
+
+  it('does not let a second code overwrite the model already named', async () => {
+    vi.mocked(assetsApi.identifyDevice).mockResolvedValue(identified({
+      identifiers: [
+        { scanned: 'WS-C2960X-24TS-L', value: 'WS-C2960X-24TS-L', kind: 'Unknown' },
+        { scanned: 'SOMETHING-ELSE', value: 'SOMETHING-ELSE', kind: 'Unknown' },
+      ],
+    }))
+
+    renderPage()
+    await userEvent.click(await screen.findByRole('button', { name: /Scan the model code/ }))
+    act(() => emitCode('WS-C2960X-24TS-L'))
+    await waitFor(() => expect(screen.getByRole('button', { name: /Scan another code/ })).toBeInTheDocument())
+
+    await userEvent.click(screen.getByRole('button', { name: /Scan another code/ }))
+    act(() => emitCode('SOMETHING-ELSE'))
+
+    // Exactly one row is the model code, and it is the first one scanned.
+    const list = await screen.findByRole('list', { name: 'Scanned identifiers' })
+    await waitFor(() => expect(within(list).getAllByText('Model code')).toHaveLength(1))
+    const rows = within(list).getAllByRole('listitem')
+    expect(within(rows[0]).getByText('Model code')).toBeInTheDocument()
+  })
+
+  it('keeps the serial on its own field rather than the main scan', async () => {
+    renderPage()
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Scan serial number' }))
+    act(() => emitCode('DNI152602HL'))
+
+    await waitFor(() => expect(screen.getByLabelText('Serial number')).toHaveValue('DNI152602HL'))
+    expect(assetsApi.identifyDevice).toHaveBeenLastCalledWith(['S/N: DNI152602HL'])
+  })
+
+  /**
+   * Reported from the field: the model code was landing in the serial field. The "fill the serial
+   * from the only unclassified scan" rule claimed it, and could not see it was already spoken for
+   * because the assignment had not re-rendered when the response arrived.
+   */
+  it('never puts the model code in the serial field', async () => {
+    vi.mocked(assetsApi.identifyDevice).mockResolvedValue(identified({
+      identifiers: [{ scanned: 'WS-C2960X-24TS-L', value: 'WS-C2960X-24TS-L', kind: 'Unknown' }],
+    }))
+
+    renderPage()
+    await userEvent.click(await screen.findByRole('button', { name: /Scan the model code/ }))
+    act(() => emitCode('WS-C2960X-24TS-L'))
+
+    await waitFor(() => expect(screen.getByLabelText('Model code')).toHaveValue('WS-C2960X-24TS-L'))
+    expect(screen.getByLabelText('Serial number')).toHaveValue('')
+  })
+
+  it('shows the scanned model code in its own field', async () => {
+    vi.mocked(assetsApi.identifyDevice).mockResolvedValue(recognised)
+
+    renderPage('/field/receive?code=1S12RQ000KUSMZ00H8S2')
+
+    // The combined Lenovo label carries both, and each lands in the field it belongs to.
+    await waitFor(() => expect(screen.getByLabelText('Model code')).toHaveValue('12RQ000KUS'))
+    expect(screen.getByLabelText('Serial number')).toHaveValue('MZ00H8S2')
+  })
+
+  it('lets the model code be typed when no barcode carries it', async () => {
+    vi.mocked(assetsApi.createCi).mockResolvedValue({ id: 'ci-new', name: 'Switch' } as Ci)
+    vi.mocked(assetsApi.saveProductCatalogEntry).mockResolvedValue({} as never)
+
+    renderPage()
+    await userEvent.type(await screen.findByLabelText('Model code'), 'WS-C2960X-24TS-L')
+    await userEvent.type(screen.getByLabelText('Device name'), 'Access switch')
+    await userEvent.type(screen.getByLabelText('Manufacturer'), 'Cisco')
+    await userEvent.type(screen.getByLabelText('Model'), 'Catalyst 2960-X')
+    await userEvent.click(screen.getByRole('button', { name: /Register it/ }))
+
+    await waitFor(() => expect(assetsApi.saveProductCatalogEntry).toHaveBeenCalledWith({
+      modelIdentifier: 'WS-C2960X-24TS-L',
+      manufacturer: 'Cisco',
+      model: 'Catalyst 2960-X',
+    }))
+  })
+
+  /** A read aimed at the field is a correction and replaces what is there. */
+  it('replaces the model code when the scan came from its own field', async () => {
+    renderPage()
+
+    await userEvent.type(await screen.findByLabelText('Model code'), 'WRONG-CODE')
+    await userEvent.click(screen.getByRole('button', { name: 'Scan model code' }))
+    act(() => emitCode('WS-C2960X-24TS-L'))
+
+    await waitFor(() => expect(screen.getByLabelText('Model code')).toHaveValue('WS-C2960X-24TS-L'))
   })
 })

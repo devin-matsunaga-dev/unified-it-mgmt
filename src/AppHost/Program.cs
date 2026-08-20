@@ -65,14 +65,35 @@ var keycloakAuthority = isLanRun
 var apiBaseUrl = isLanRun
     ? ReferenceExpression.Create($"https://{publicHost}:5000")
     : ReferenceExpression.Create($"http://{publicHost}:5000");
+// The SPA's port, and the one thing a person types. 5173 by default; set to 443 to drop it from the
+// address bar entirely — `env 'Parameters__web-port=443'`. Opt-in rather than automatic because 443
+// is privileged: binding it needs `net.ipv4.ip_unprivileged_port_start` lowered, and a run that
+// assumed it would fail to start on any machine without that.
+var webPortValue = int.TryParse(builder.Configuration["Parameters:web-port"], out var configuredPort)
+    && configuredPort is > 0 and < 65536
+        ? configuredPort
+        : 5173;
+// Omitted when it is the scheme's own default, because "https://host:443" is the same origin as
+// "https://host" to a browser but a different string everywhere it is compared — the realm's
+// redirect URIs and the API's CORS origin among them.
+var webPortSuffix = (isLanRun, webPortValue) switch
+{
+    (true, 443) => string.Empty,
+    (false, 80) => string.Empty,
+    _ => $":{webPortValue}",
+};
 var webOrigin = isLanRun
-    ? ReferenceExpression.Create($"https://{publicHost}:5173")
-    : ReferenceExpression.Create($"http://{publicHost}:5173");
+    ? ReferenceExpression.Create($"https://{publicHost}{webPortSuffix}")
+    : ReferenceExpression.Create($"http://{publicHost}{webPortSuffix}");
 // The same two origins as plain strings, for the realm document, which is rendered on disk here
 // rather than resolved by Aspire. The localhost pair is kept so that a LAN run is still usable
 // from a browser on this machine, whose scheme has moved with everything else.
-var webOriginValue = isLanRun ? $"https://{publicHostValue}:5173" : $"http://{publicHostValue}:5173";
-var localOriginValue = isLanRun ? "https://localhost:5173" : "http://localhost:5173";
+var webOriginValue = isLanRun
+    ? $"https://{publicHostValue}{webPortSuffix}"
+    : $"http://{publicHostValue}{webPortSuffix}";
+var localOriginValue = isLanRun
+    ? $"https://localhost{webPortSuffix}"
+    : $"http://localhost{webPortSuffix}";
 
 var postgres = builder.AddPostgres("postgres")
     .WithImage("timescale/timescaledb-ha", "pg17")
@@ -510,7 +531,7 @@ var web = builder.AddViteApp("web", "../../web")
     .WithEnvironment("VITE_OIDC_CLIENT_ID", "it-platform-web")
     .WithEndpoint("http", endpoint =>
     {
-        endpoint.Port = 5173;
+        endpoint.Port = webPortValue;
         endpoint.TargetHost = bindHost;
         if (isLanRun)
         {

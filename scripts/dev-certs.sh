@@ -16,8 +16,14 @@
 # is git-ignored — these are per-machine development credentials and belong to nobody else.
 #
 # Usage:
-#   scripts/dev-certs.sh              # SANs for the detected LAN address
-#   scripts/dev-certs.sh 192.168.1.5  # SANs for an address given explicitly
+#   scripts/dev-certs.sh                          # SANs for the detected LAN address
+#   scripts/dev-certs.sh 192.168.1.5              # SANs for an address given explicitly
+#   scripts/dev-certs.sh itplatform.local         # ...or a hostname
+#   scripts/dev-certs.sh itplatform.local 192.168.1.5   # both, so either reaches it
+#
+# Give every name the stack will be reached by. A certificate is checked against the string
+# in the address bar, not against where it resolves to — so a host reached by name needs a
+# DNS SAN for that name even though the IP SAN already covers the same machine.
 #
 # Re-running reuses an existing CA and reissues only the leaf, so a phone that already
 # trusts the CA keeps working when this machine's address changes.
@@ -34,11 +40,29 @@ bundle="$cert_dir/dev-ca-bundle.crt"
 
 # The address the phone dials. Taken from the default route rather than from `hostname -I`,
 # which on a mirrored-mode WSL host lists loopback aliases ahead of the real interface.
-lan_host="${1:-$(ip -4 -o route get 1.1.1.1 2>/dev/null | sed -n 's/.* src \([0-9.]*\).*/\1/p')}"
-if [[ -z "$lan_host" ]]; then
-  echo "dev-certs.sh: could not detect a LAN address; pass one explicitly." >&2
-  exit 1
+if [[ $# -gt 0 ]]; then
+  hosts=("$@")
+else
+  detected="$(ip -4 -o route get 1.1.1.1 2>/dev/null | sed -n 's/.* src \([0-9.]*\).*/\1/p')"
+  if [[ -z "$detected" ]]; then
+    echo "dev-certs.sh: could not detect a LAN address; pass one explicitly." >&2
+    exit 1
+  fi
+  hosts=("$detected")
 fi
+
+# The first is what the certificate is named after; every one becomes a SAN. An address has to
+# be declared IP: and a name DNS: — a name written as IP: produces a certificate no client will
+# accept, and the failure reads as an untrusted CA rather than as a malformed SAN.
+sans="DNS:localhost,IP:127.0.0.1,IP:::1"
+for host in "${hosts[@]}"; do
+  if [[ "$host" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ || "$host" == *:* ]]; then
+    sans="$sans,IP:$host"
+  else
+    sans="$sans,DNS:$host"
+  fi
+done
+lan_host="${hosts[0]}"
 
 mkdir -p "$cert_dir"
 
@@ -59,7 +83,7 @@ fi
 
 # 365 days, not the CA's ten years: iOS refuses to trust a server certificate with a long
 # lifetime even when its root is user-installed, and a year outlives any dev machine's IP.
-echo "Issuing leaf certificate for $lan_host"
+echo "Issuing leaf certificate for ${hosts[*]}"
 openssl req -newkey rsa:2048 -sha256 -nodes \
   -keyout "$server_key" -out "$cert_dir/dev-server.csr" \
   -subj "/CN=$lan_host/O=it-platform" 2>/dev/null
@@ -68,7 +92,7 @@ cat > "$cert_dir/dev-server.ext" <<EXT
 basicConstraints=critical,CA:FALSE
 keyUsage=critical,digitalSignature,keyEncipherment
 extendedKeyUsage=serverAuth
-subjectAltName=DNS:localhost,IP:127.0.0.1,IP:::1,IP:$lan_host
+subjectAltName=$sans
 EXT
 
 openssl x509 -req -in "$cert_dir/dev-server.csr" -sha256 -days 365 \
@@ -90,7 +114,7 @@ cat /etc/ssl/certs/ca-certificates.crt "$ca_crt" > "$bundle"
 echo
 echo "Certificates written to $cert_dir"
 echo "  CA (install this on the phone): $ca_crt"
-echo "  Leaf, valid for: localhost, 127.0.0.1, ::1, $lan_host"
+echo "  Leaf, valid for: localhost, 127.0.0.1, ::1, ${hosts[*]}"
 echo
 echo "Run the stack with:"
 echo "  env 'Parameters__public-host=$lan_host' aspire run"
