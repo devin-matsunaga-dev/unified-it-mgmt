@@ -29,7 +29,9 @@ public sealed class ContractConfiguration : IEntityTypeConfiguration<Contract>
     {
         builder.ToTable("contracts", "assets");
         builder.HasKey(contract => contract.Id);
-        builder.Property(contract => contract.ContractNumber).HasMaxLength(100).IsRequired();
+        builder.Property(contract => contract.PoNumber).HasMaxLength(100).IsRequired();
+        builder.Property(contract => contract.ContractNumber).HasMaxLength(100);
+        builder.Property(contract => contract.DepartmentName).HasMaxLength(200);
         builder.Property(contract => contract.Name).HasMaxLength(200).IsRequired();
         builder.Property(contract => contract.Type).HasConversion<string>().HasMaxLength(20).IsRequired();
         builder.Property(contract => contract.Cost).HasPrecision(18, 2);
@@ -44,7 +46,7 @@ public sealed class ContractConfiguration : IEntityTypeConfiguration<Contract>
             .HasForeignKey(contract => contract.VendorId)
             .OnDelete(DeleteBehavior.Restrict);
 
-        builder.HasIndex(contract => contract.ContractNumber).IsUnique();
+        builder.HasIndex(contract => contract.PoNumber).IsUnique();
         builder.HasIndex(contract => contract.VendorId);
         builder.HasIndex(contract => contract.EndDate);
     }
@@ -58,7 +60,9 @@ public sealed class ContractNotificationConfiguration : IEntityTypeConfiguration
         builder.HasKey(notification => notification.Id);
         builder.Property(notification => notification.Subject).HasConversion<string>().HasMaxLength(20).IsRequired();
         builder.Property(notification => notification.SubjectName).HasMaxLength(200).IsRequired();
-        builder.Property(notification => notification.Recipient).HasMaxLength(320).IsRequired();
+        // Wide enough for the configured recipient list joined end to end — the settings cap times the
+        // longest address each may be — so a notice records everyone it went to rather than a prefix.
+        builder.Property(notification => notification.Recipient).HasMaxLength(1300).IsRequired();
         builder.Property(notification => notification.Message).HasMaxLength(500).IsRequired();
 
         // The dedupe key. It carries the due date so a renewal — a new end date — starts a fresh

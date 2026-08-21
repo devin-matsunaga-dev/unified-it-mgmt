@@ -1,5 +1,7 @@
 using System.Security.Claims;
 
+using System.Text.RegularExpressions;
+
 using Microsoft.EntityFrameworkCore;
 using Modules.Assets.Data;
 using Modules.Assets.Features.Cis;
@@ -25,6 +27,11 @@ public sealed class ContractService(
         if (request.VendorId is not null)
         {
             query = query.Where(contract => contract.VendorId == request.VendorId);
+        }
+
+        if (request.DepartmentId is not null)
+        {
+            query = query.Where(contract => contract.DepartmentId == request.DepartmentId);
         }
 
         if (request.Type is not null)
@@ -54,7 +61,7 @@ public sealed class ContractService(
             var term = $"%{request.Search.Trim()}%";
             query = query.Where(contract =>
                 EF.Functions.ILike(contract.Name, term)
-                || EF.Functions.ILike(contract.ContractNumber, term)
+                || EF.Functions.ILike(contract.PoNumber, term)
                 || EF.Functions.ILike(contract.Vendor.Name, term));
         }
 
@@ -94,10 +101,10 @@ public sealed class ContractService(
             return Invalid(nameof(request.VendorId), $"Vendor '{request.VendorId}' does not exist.");
         }
 
-        var number = request.ContractNumber.Trim();
+        var number = NormalisePoNumber(request.PoNumber);
         if (await NumberTakenAsync(number, null, cancellationToken))
         {
-            return new(ContractOutcome.Duplicate, Error: $"Contract number '{number}' is already used.");
+            return new(ContractOutcome.Duplicate, Error: $"PO number '{number}' is already used.");
         }
 
         var owner = await ResolveOwnerAsync(request.OwnerUserId, cancellationToken);
@@ -106,13 +113,19 @@ public sealed class ContractService(
             return Invalid(nameof(request.OwnerUserId), ownerError);
         }
 
+        var (department, departmentError) = await ResolveDepartmentAsync(request.DepartmentId, cancellationToken);
+        if (departmentError is not null)
+        {
+            return Invalid(nameof(request.DepartmentId), departmentError);
+        }
+
         var now = DateTimeOffset.UtcNow;
         var contract = new Contract
         {
             Id = Guid.CreateVersion7(),
             VendorId = vendor.Id,
             Vendor = vendor,
-            ContractNumber = number,
+            PoNumber = number,
             Name = request.Name.Trim(),
             Type = request.Type,
             StartDate = request.StartDate,
@@ -121,6 +134,9 @@ public sealed class ContractService(
             Cost = request.Cost,
             Currency = Normalise(request.Currency)?.ToUpperInvariant(),
             OwnerUserId = owner.User?.Id,
+            DepartmentId = department?.Id,
+            DepartmentName = department?.Name,
+            ContractNumber = Normalise(request.ContractNumber),
             OwnerName = owner.User?.DisplayName,
             OwnerEmail = owner.User?.Email,
             Notes = Normalise(request.Notes),
@@ -157,10 +173,10 @@ public sealed class ContractService(
             return Invalid(nameof(request.VendorId), $"Vendor '{request.VendorId}' does not exist.");
         }
 
-        var number = request.ContractNumber.Trim();
+        var number = NormalisePoNumber(request.PoNumber);
         if (await NumberTakenAsync(number, id, cancellationToken))
         {
-            return new(ContractOutcome.Duplicate, Error: $"Contract number '{number}' is already used.");
+            return new(ContractOutcome.Duplicate, Error: $"PO number '{number}' is already used.");
         }
 
         var owner = await ResolveOwnerAsync(request.OwnerUserId, cancellationToken);
@@ -169,12 +185,18 @@ public sealed class ContractService(
             return Invalid(nameof(request.OwnerUserId), ownerError);
         }
 
+        var (department, departmentError) = await ResolveDepartmentAsync(request.DepartmentId, cancellationToken);
+        if (departmentError is not null)
+        {
+            return Invalid(nameof(request.DepartmentId), departmentError);
+        }
+
         var today = ContractExpiryCalculator.Today();
         var coveredCiCount = await dbContext.Cis.CountAsync(ci => ci.ContractId == id, cancellationToken);
         var before = Map(contract, coveredCiCount, today);
         contract.VendorId = vendor.Id;
         contract.Vendor = vendor;
-        contract.ContractNumber = number;
+        contract.PoNumber = number;
         contract.Name = request.Name.Trim();
         contract.Type = request.Type;
         contract.StartDate = request.StartDate;
@@ -183,6 +205,9 @@ public sealed class ContractService(
         contract.Cost = request.Cost;
         contract.Currency = Normalise(request.Currency)?.ToUpperInvariant();
         contract.OwnerUserId = owner.User?.Id;
+        contract.DepartmentId = department?.Id;
+        contract.DepartmentName = department?.Name;
+        contract.ContractNumber = Normalise(request.ContractNumber);
         contract.OwnerName = owner.User?.DisplayName;
         contract.OwnerEmail = owner.User?.Email;
         contract.Notes = Normalise(request.Notes);
@@ -269,7 +294,7 @@ public sealed class ContractService(
 
     private Task<bool> NumberTakenAsync(string number, Guid? excludingId, CancellationToken cancellationToken) =>
         dbContext.Contracts.AnyAsync(
-            contract => contract.ContractNumber.ToLower() == number.ToLower() && contract.Id != excludingId,
+            contract => contract.PoNumber.ToLower() == number.ToLower() && contract.Id != excludingId,
             cancellationToken);
 
     private async Task<(DirectoryUser? User, string? Error)> ResolveOwnerAsync(
@@ -285,17 +310,55 @@ public sealed class ContractService(
         return user is null ? (null, $"User '{id}' does not exist.") : (user, null);
     }
 
+    /// <summary>
+    /// The department, resolved against the platform's directory rather than taken on the caller's
+    /// word — the same check CI assignment makes. The name is returned with it so the contract can
+    /// snapshot both and stay readable after the department is renamed.
+    /// </summary>
+    private async Task<(DirectoryDepartment? Department, string? Error)> ResolveDepartmentAsync(
+        Guid? departmentId,
+        CancellationToken cancellationToken)
+    {
+        if (departmentId is not { } id)
+        {
+            return (null, null);
+        }
+
+        var department = await directoryService.FindDepartmentAsync(id, cancellationToken);
+        return department is null ? (null, $"Department '{id}' does not exist.") : (department, null);
+    }
+
     private static ContractResult Invalid(string field, string message) => new(
         ContractOutcome.Invalid,
         Errors: new Dictionary<string, string[]>(StringComparer.Ordinal) { [field] = [message] });
 
     private static string? Normalise(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 
+    /// <summary>
+    /// Canonicalises a purchase order number as <c>PO - 22-0419</c>.
+    /// <para>
+    /// The prefix is added here rather than in the browser so every caller gets the same value —
+    /// and an existing one is stripped first, so a person who types "PO - 22-0419" out of habit does
+    /// not end up with "PO - PO - 22-0419". Uniqueness is checked against the canonical form, which
+    /// is the point: the same purchase order typed two ways has to collide.
+    /// </para>
+    /// </summary>
+    public static string NormalisePoNumber(string value)
+    {
+        var trimmed = value.Trim();
+        // "PO", "PO-", "PO :", "po - " — any spacing or separator somebody might type.
+        var stripped = PoPrefix.Replace(trimmed, string.Empty).Trim();
+        return stripped.Length == 0 ? trimmed : $"PO - {stripped}";
+    }
+
+    private static readonly Regex PoPrefix = new(
+        @"^P\s*O\s*[-–—:]?\s*", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
     internal static ContractResponse Map(Contract contract, int coveredCiCount, DateOnly today) => new(
         contract.Id,
         contract.VendorId,
         contract.Vendor?.Name ?? string.Empty,
-        contract.ContractNumber,
+        contract.PoNumber,
         contract.Name,
         contract.Type,
         contract.StartDate,
@@ -306,6 +369,9 @@ public sealed class ContractService(
         contract.OwnerUserId,
         contract.OwnerName,
         contract.OwnerEmail,
+        contract.DepartmentId,
+        contract.DepartmentName,
+        contract.ContractNumber,
         contract.Notes,
         contract.IsActive,
         ContractExpiryCalculator.Status(contract.EndDate, today),

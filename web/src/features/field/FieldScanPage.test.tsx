@@ -1,18 +1,29 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { vi } from 'vitest'
-import { assetsApi, type Ci } from '../../api/assets'
-import { ApiError } from '../../api/client'
+import { assetsApi, type Ci, type CiPage } from '../../api/assets'
 import { FieldScanPage } from './FieldScanPage'
 
 vi.mock('../../api/assets', async (original) => {
   const actual = await original<typeof import('../../api/assets')>()
-  return { ...actual, assetsApi: { ...actual.assetsApi, lookupCi: vi.fn() } }
+  return { ...actual, assetsApi: { ...actual.assetsApi, lookupCi: vi.fn(), listCis: vi.fn() } }
+})
+vi.mock('./useQrCamera', () => ({
+  useQrCamera: () => ({ videoRef: { current: null }, status: 'idle', start: vi.fn(), stop: vi.fn() }),
+}))
+
+const ci = (over: Partial<Ci>): Ci => ({
+  id: 'ci-1', type: 'Hardware', name: 'Reception laptop', assetTag: 'LT-00421',
+  serialNumber: '5CD1234ABC', description: null, isActive: true, lifecycleState: 'Deployed',
+  ownership: { ownerUserId: null, ownerName: null, departmentId: null, departmentName: null, siteId: null, siteName: null, assignedAt: null },
+  coverage: { contractId: null, contractName: null, poNumber: null, vendorName: null, contractEndDate: null, purchaseDate: null, warrantyExpiresAt: null, warrantyStatus: null, warrantyDaysRemaining: null },
+  attributes: {}, customFields: [], createdAt: '2026-08-08T00:00:00Z', updatedAt: '2026-08-08T00:00:00Z',
+  ...over,
 })
 
-const laptop = { id: 'ci-1', name: 'Reception laptop' } as Ci
+const page = (items: Ci[]): CiPage => ({ items, total: items.length, page: 1, pageSize: 10 })
 
 function renderPage() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })
@@ -21,87 +32,86 @@ function renderPage() {
       <Routes>
         <Route path="/field/scan" element={<FieldScanPage />} />
         <Route path="/field/ci/:id" element={<h1>Field asset page</h1>} />
+        <Route path="/field/receive" element={<h1>Receive</h1>} />
       </Routes>
     </QueryClientProvider>
   </MemoryRouter>)
 }
 
-/** jsdom has no camera; each test states what the device offers. */
-function withCamera(stream: MediaStream | Error | null) {
-  if (stream === null) {
-    Object.defineProperty(navigator, 'mediaDevices', { value: undefined, configurable: true })
-    return
-  }
-  Object.defineProperty(navigator, 'mediaDevices', {
-    value: {
-      getUserMedia: vi.fn().mockImplementation(() => stream instanceof Error ? Promise.reject(stream) : Promise.resolve(stream)),
-    },
-    configurable: true,
-  })
-}
-
 describe('FieldScanPage', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    withCamera(null)
+    vi.mocked(assetsApi.listCis).mockResolvedValue(page([]))
   })
 
-  it('opens the field screen for a code it resolves, not the desktop one', async () => {
-    vi.mocked(assetsApi.lookupCi).mockResolvedValue(laptop)
+  /** Nothing to press: pressing a button to learn you mistyped is a slow way to find out. */
+  it('searches as the technician types, with no button to press', async () => {
+    vi.mocked(assetsApi.listCis).mockResolvedValue(page([ci({})]))
 
     renderPage()
+    await userEvent.type(screen.getByLabelText(/Search by name, asset tag or serial/), 'LT-004')
 
-    await userEvent.type(screen.getByLabelText('Asset tag or serial'), 'LT-00421')
-    await userEvent.click(screen.getByRole('button', { name: /Find asset/ }))
-
-    expect(await screen.findByRole('heading', { name: 'Field asset page' })).toBeInTheDocument()
-    expect(assetsApi.lookupCi).toHaveBeenCalledWith('LT-00421')
+    expect(await screen.findByText('Reception laptop')).toBeInTheDocument()
+    await waitFor(() => expect(assetsApi.listCis).toHaveBeenLastCalledWith({ search: 'LT-004', pageSize: 10 }))
+    expect(screen.queryByRole('button', { name: /Find asset/ })).not.toBeInTheDocument()
   })
 
-  it('tells the technician the code matched nothing rather than failing silently', async () => {
-    vi.mocked(assetsApi.lookupCi).mockRejectedValue(new ApiError(404, 'Not found'))
-
+  /** One character matches most of an estate, so the list would be noise rather than a narrowing. */
+  it('waits for a second character before searching at all', async () => {
     renderPage()
+    await userEvent.type(screen.getByLabelText(/Search by name, asset tag or serial/), 'L')
 
-    await userEvent.type(screen.getByLabelText('Asset tag or serial'), 'LT-99999')
-    await userEvent.click(screen.getByRole('button', { name: /Find asset/ }))
-
-    expect(await screen.findByRole('alert')).toHaveTextContent('No asset carries that code.')
-  })
-
-  it('says the camera is refused rather than failing silently', async () => {
-    const denied = new Error('Permission denied')
-    denied.name = 'NotAllowedError'
-    withCamera(denied)
-
-    renderPage()
-    await userEvent.click(screen.getByRole('button', { name: /Scan with camera/ }))
-
-    expect(await screen.findByRole('alert')).toHaveTextContent('not allowed to use the camera')
-  })
-
-  it('offers the typed field when the device has no camera at all', async () => {
-    withCamera(null)
-
-    renderPage()
-    await userEvent.click(screen.getByRole('button', { name: /Scan with camera/ }))
-
-    expect(await screen.findByRole('alert')).toHaveTextContent('No camera is available here')
-    expect(screen.getByLabelText('Asset tag or serial')).toBeInTheDocument()
+    await waitFor(() => expect(assetsApi.listCis).not.toHaveBeenCalled())
   })
 
   /**
-   * Regression: onError first restarted the camera unconditionally, so mistyping a tag on a device
-   * with no camera surfaced "No camera is available" on top of the real "no such code" answer.
+   * The debounce. Without it this is one request per keystroke, and the answers arrive out of order
+   * so the list flickers between prefixes the technician has already moved past.
    */
-  it('does not reach for the camera when it was the typed field that failed', async () => {
-    vi.mocked(assetsApi.lookupCi).mockRejectedValue(new ApiError(404, 'Not found'))
+  it('does not fire a request per keystroke', async () => {
+    renderPage()
+    await userEvent.type(screen.getByLabelText(/Search by name, asset tag or serial/), 'LT-00421')
+
+    await waitFor(() => expect(assetsApi.listCis).toHaveBeenCalled())
+    expect(vi.mocked(assetsApi.listCis).mock.calls.length).toBeLessThan(4)
+  })
+
+  it('opens the asset a result names', async () => {
+    vi.mocked(assetsApi.listCis).mockResolvedValue(page([ci({})]))
 
     renderPage()
-    await userEvent.type(screen.getByLabelText('Asset tag or serial'), 'LT-99999')
-    await userEvent.click(screen.getByRole('button', { name: /Find asset/ }))
+    await userEvent.type(screen.getByLabelText(/Search by name, asset tag or serial/), 'LT-004')
+    await userEvent.click(await screen.findByText('Reception laptop'))
 
-    await waitFor(() => expect(screen.getByText('No asset carries that code.')).toBeInTheDocument())
-    expect(screen.queryByText(/No camera is available here/)).not.toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: 'Field asset page' })).toBeInTheDocument()
+  })
+
+  it('shows the tag and serial, since that is what was searched on', async () => {
+    vi.mocked(assetsApi.listCis).mockResolvedValue(page([ci({})]))
+
+    renderPage()
+    await userEvent.type(screen.getByLabelText(/Search by name, asset tag or serial/), 'LT-004')
+
+    const list = await screen.findByRole('list', { name: 'Matching assets' })
+    expect(within(list).getByText('LT-00421 · 5CD1234ABC')).toBeInTheDocument()
+  })
+
+  /** On a phone the likeliest reason for no match is a device that arrived this morning. */
+  it('offers to receive a code that matches nothing', async () => {
+    renderPage()
+    await userEvent.type(screen.getByLabelText(/Search by name, asset tag or serial/), 'DNI152602HL')
+
+    expect(await screen.findByText(/Nothing matches/)).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: /Receive it as a new asset/ }))
+      .toHaveAttribute('href', '/field/receive?code=DNI152602HL&checked=1')
+  })
+
+  it('surfaces a failed search rather than showing an empty list', async () => {
+    vi.mocked(assetsApi.listCis).mockRejectedValue(new Error('Network request failed'))
+
+    renderPage()
+    await userEvent.type(screen.getByLabelText(/Search by name, asset tag or serial/), 'LT-004')
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Network request failed')
   })
 })

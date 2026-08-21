@@ -1,9 +1,12 @@
-import { useMutation } from '@tanstack/react-query'
-import { Camera, PackagePlus, ScanLine, X } from 'lucide-react'
+import { useMutation, useQuery } from '@tanstack/react-query'
+import { Camera, ChevronRight, PackagePlus, X } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { ApiError } from '../../api/client'
 import { assetsApi } from '../../api/assets'
+import { cn } from '../../lib/utils'
+import { ciLifecycleLabel, ciLifecycleTone } from '../assets/lifecycle'
+import { useDebounced } from './useDebounced'
 import { Button } from '../../components/ui/Button'
 import { FieldActionBar } from '../../layout/FieldShell'
 import { useQrCamera } from './useQrCamera'
@@ -14,7 +17,12 @@ import { useQrCamera } from './useQrCamera'
  * scanner, and the tag someone already knows by heart.
  *
  * A decoded QR is the label's full URL, which the server's lookup already understands (CiLabelCodes
- * .TryReadCiId), so it goes through the same endpoint as a typed tag and the phone parses nothing.
+ * .TryReadCiId), so a camera read resolves to one asset and goes straight there.
+ *
+ * Typing is a different act and gets different behaviour: a technician holding a device usually has
+ * a partial tag, a smudged digit or a number they half remember, so the field searches as they type
+ * and narrows. Nothing to press — pressing a button to find out you mistyped is a slow way to learn
+ * it, and on a phone the button is also the thing the keyboard is covering.
  */
 export function FieldScanPage() {
   const navigate = useNavigate()
@@ -52,6 +60,18 @@ export function FieldScanPage() {
   const notFound = lookup.error instanceof ApiError && lookup.error.status === 404
   const live = camera.status === 'starting' || camera.status === 'scanning'
 
+  const term = useDebounced(code.trim())
+  // Two characters, because one matches most of the estate and the list would be noise. The server
+  // searches name, asset tag and serial together (CiService), which is what makes a half-remembered
+  // anything a usable starting point.
+  const searchable = term.length >= 2
+  const results = useQuery({
+    queryKey: ['cis', 'field-search', term],
+    queryFn: () => assetsApi.listCis({ search: term, pageSize: 10 }),
+    enabled: searchable && !live,
+  })
+  const found = results.data?.items ?? []
+
   return <>
     <h1 className="text-[22px] font-bold leading-tight">Scan an asset</h1>
     <p className="mt-1 text-[15px] text-slate-500">Point the camera at a label, or type its asset tag or serial number.</p>
@@ -82,17 +102,10 @@ export function FieldScanPage() {
       No camera is available here. Type the asset tag below instead.
     </p>}
 
-    <form
-      className={live ? 'hidden' : 'mt-5'}
-      onSubmit={(event) => {
-        event.preventDefault()
-        const trimmed = code.trim()
-        if (!trimmed) return
-        fromCamera.current = false
-        lookup.mutate(trimmed)
-      }}
-    >
-      <label htmlFor="field-scan-code" className="text-[13px] font-medium text-slate-500">Asset tag or serial</label>
+    <div className={live ? 'hidden' : 'mt-5'}>
+      <label htmlFor="field-scan-code" className="text-[13px] font-medium text-slate-500">
+        Search by name, asset tag or serial
+      </label>
       <input
         id="field-scan-code"
         ref={inputRef}
@@ -104,15 +117,50 @@ export function FieldScanPage() {
         // technician then has to pinch back out one-handed.
         className="mt-1.5 h-12 w-full rounded-lg border border-slate-200 bg-white px-3 text-base focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 dark:border-slate-700 dark:bg-slate-900"
       />
-      {notFound && <div role="alert" className="mt-2">
-        <p className="text-[13px] text-red-600">No asset carries that code.</p>
-        {/* The most likely reason on a phone is that it has just been delivered and nobody has
-            registered it yet, so the recovery is offered rather than left to be found. */}
-        <Link
-          to={`/field/receive?code=${encodeURIComponent(code.trim())}&checked=1`}
-          className="mt-2 flex h-12 items-center justify-center gap-2 rounded-lg border border-slate-200 bg-white text-[15px] font-medium text-slate-600 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300"
-        ><PackagePlus size={17} />Receive it as a new asset</Link>
-      </div>}
+      {/* Results narrow as the field fills. Rendered under the input rather than in a sheet so the
+          keyboard stays up and the technician can keep typing to narrow further. */}
+      {searchable && <>
+        {results.isLoading && <p className="mt-3 text-[13px] text-slate-500">Searching…</p>}
+
+        {!results.isLoading && found.length > 0 && <ul className="mt-3 space-y-2" aria-label="Matching assets">
+          {found.map((ci) => <li key={ci.id}>
+            <button
+              type="button"
+              onClick={() => navigate(`/field/ci/${ci.id}`)}
+              className="flex min-h-[68px] w-full items-center gap-3 rounded-xl border border-slate-200 bg-white p-3 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 dark:border-slate-800 dark:bg-slate-900"
+            >
+              <span className="min-w-0 flex-1">
+                <span className="block truncate text-[15px] font-medium">{ci.name}</span>
+                <span className="mt-0.5 block truncate text-[13px] tabular-nums text-slate-500">
+                  {[ci.assetTag, ci.serialNumber].filter(Boolean).join(' · ') || 'No tag or serial'}
+                </span>
+              </span>
+              <span className={cn('shrink-0 rounded-md px-2 py-0.5 text-xs font-medium', ciLifecycleTone(ci.lifecycleState))}>
+                {ciLifecycleLabel(ci.lifecycleState)}
+              </span>
+              <ChevronRight size={17} className="shrink-0 text-slate-400" />
+            </button>
+          </li>)}
+        </ul>}
+
+        {/* Nothing matched. On a phone the likeliest reason is a device that arrived this morning, so
+            the recovery is offered here rather than left to be found. */}
+        {!results.isLoading && found.length === 0 && <div className="mt-3">
+          <p className="text-[15px] text-slate-500">Nothing matches "{term}".</p>
+          <Link
+            to={`/field/receive?code=${encodeURIComponent(term)}&checked=1`}
+            className="mt-2 flex h-12 items-center justify-center gap-2 rounded-lg border border-slate-200 bg-white text-[15px] font-medium text-slate-600 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300"
+          ><PackagePlus size={17} />Receive it as a new asset</Link>
+        </div>}
+
+        {results.isError && <p role="alert" className="mt-3 text-[13px] text-red-600">
+          {(results.error as Error).message}
+        </p>}
+      </>}
+
+      {notFound && <p role="alert" className="mt-2 text-[13px] text-red-600">
+        That code matches no asset.
+      </p>}
       {lookup.isError && !notFound && <p role="alert" className="mt-2 text-[13px] text-red-600">{(lookup.error as Error).message}</p>}
 
       <FieldActionBar>
@@ -122,14 +170,11 @@ export function FieldScanPage() {
         }}>
           <Camera size={18} />Scan with camera
         </Button>
-        <Button type="submit" variant="secondary" className="h-12 w-full text-[15px]" disabled={!code.trim() || lookup.isPending}>
-          <ScanLine size={18} />{lookup.isPending ? 'Looking up…' : 'Find asset'}
-        </Button>
         <Link
           to="/field/receive"
           className="flex h-12 w-full items-center justify-center gap-2 rounded-lg text-[15px] font-medium text-blue-600"
         ><PackagePlus size={17} />Receive a new asset</Link>
       </FieldActionBar>
-    </form>
+    </div>
   </>
 }

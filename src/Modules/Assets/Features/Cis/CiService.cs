@@ -666,7 +666,7 @@ public sealed class CiService(
         return new(
             ci.ContractId,
             ci.Contract?.Name,
-            ci.Contract?.ContractNumber,
+            ci.Contract?.PoNumber,
             ci.Contract?.Vendor?.Name,
             ci.Contract?.EndDate,
             ci.PurchaseDate,

@@ -158,7 +158,7 @@ export function CiDetailPage() {
               <dt className="text-slate-500">Contract</dt>
               <dd className="ml-auto max-w-[65%] break-words text-right font-medium">
                 {item.coverage.contractId
-                  ? <Link to={`/contracts/${item.coverage.contractId}`} className="text-blue-600 hover:underline">{item.coverage.contractNumber} — {item.coverage.contractName}</Link>
+                  ? <Link to={`/contracts/${item.coverage.contractId}`} className="text-blue-600 hover:underline">{item.coverage.poNumber} — {item.coverage.contractName}</Link>
                   : 'Not covered'}
               </dd>
             </div>

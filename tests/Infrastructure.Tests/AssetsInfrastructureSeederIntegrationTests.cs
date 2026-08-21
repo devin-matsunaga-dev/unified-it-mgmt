@@ -95,15 +95,15 @@ public sealed class AssetsInfrastructureSeederIntegrationTests : IAsyncLifetime
         // which create configuration items, vendors and contracts of their own.
         var seededIds = SeededCiIds;
         var vendorNames = AssetsEstate.Vendors.Select(vendor => vendor.Name).ToArray();
-        var contractNumbers = AssetsEstate.Contracts.Select(contract => contract.Number).ToArray();
+        var poNumbers = AssetsEstate.Contracts.Select(contract => contract.Number).ToArray();
         Assert.Equal(AssetsInfrastructureSeeder.CiCount, await assets.Cis.CountAsync(ci => seededIds.Contains(ci.Id)));
         Assert.Equal(
             AssetsEstate.Relationships.Count,
             await assets.CiRelationships.CountAsync(relationship => seededIds.Contains(relationship.SourceCiId)));
         Assert.Equal(vendorNames.Length, await assets.Vendors.CountAsync(vendor => vendorNames.Contains(vendor.Name)));
         Assert.Equal(
-            contractNumbers.Length,
-            await assets.Contracts.CountAsync(contract => contractNumbers.Contains(contract.ContractNumber)));
+            poNumbers.Length,
+            await assets.Contracts.CountAsync(contract => poNumbers.Contains(contract.PoNumber)));
         // The ids are handed to the helpdesk seeder on every run, whether or not rows were added.
         Assert.NotEmpty(second.NetworkCiIds);
         Assert.Equal(_seeded.NetworkCiIds, second.NetworkCiIds);
@@ -421,7 +421,7 @@ public sealed class AssetsInfrastructureSeederIntegrationTests : IAsyncLifetime
     private sealed record CiCoverageDto(
         Guid? ContractId,
         string? ContractName,
-        string? ContractNumber,
+        string? PoNumber,
         string? VendorName,
         DateOnly? ContractEndDate,
         DateOnly? PurchaseDate,

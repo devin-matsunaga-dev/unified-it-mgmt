@@ -46,7 +46,7 @@ public sealed record VendorPageResponse(
 
 public sealed record CreateContractRequest(
     Guid VendorId,
-    string ContractNumber,
+    string PoNumber,
     string Name,
     ContractType Type,
     DateOnly StartDate,
@@ -55,11 +55,13 @@ public sealed record CreateContractRequest(
     decimal? Cost = null,
     string? Currency = null,
     Guid? OwnerUserId = null,
+    Guid? DepartmentId = null,
+    string? ContractNumber = null,
     string? Notes = null);
 
 public sealed record UpdateContractRequest(
     Guid VendorId,
-    string ContractNumber,
+    string PoNumber,
     string Name,
     ContractType Type,
     DateOnly StartDate,
@@ -68,12 +70,15 @@ public sealed record UpdateContractRequest(
     decimal? Cost = null,
     string? Currency = null,
     Guid? OwnerUserId = null,
+    Guid? DepartmentId = null,
+    string? ContractNumber = null,
     string? Notes = null,
     bool IsActive = true);
 
 public sealed record ContractListRequest(
     string? Search = null,
     Guid? VendorId = null,
+    Guid? DepartmentId = null,
     ContractExpiryStatus? Status = null,
     ContractType? Type = null,
     bool? IsActive = null,
@@ -84,7 +89,7 @@ public sealed record ContractResponse(
     Guid Id,
     Guid VendorId,
     string VendorName,
-    string ContractNumber,
+    string PoNumber,
     string Name,
     ContractType Type,
     DateOnly StartDate,
@@ -95,6 +100,9 @@ public sealed record ContractResponse(
     Guid? OwnerUserId,
     string? OwnerName,
     string? OwnerEmail,
+    Guid? DepartmentId,
+    string? DepartmentName,
+    string? ContractNumber,
     string? Notes,
     bool IsActive,
     ContractExpiryStatus Status,
@@ -125,7 +133,7 @@ public sealed record SetCiCoverageRequest(
 public sealed record CiCoverage(
     Guid? ContractId,
     string? ContractName,
-    string? ContractNumber,
+    string? PoNumber,
     string? VendorName,
     DateOnly? ContractEndDate,
     DateOnly? PurchaseDate,

@@ -31,7 +31,7 @@ const laptop = (over: Partial<Ci['ownership']> = {}): Ci => ({
     ownerUserId: null, ownerName: null, departmentId: 'd-1', departmentName: 'Support',
     siteId: 's-1', siteName: 'Riverside', assignedAt: null, ...over,
   },
-  coverage: { contractId: null, contractName: null, contractNumber: null, vendorName: null, contractEndDate: null, purchaseDate: null, warrantyExpiresAt: null, warrantyStatus: null, warrantyDaysRemaining: null },
+  coverage: { contractId: null, contractName: null, poNumber: null, vendorName: null, contractEndDate: null, purchaseDate: null, warrantyExpiresAt: null, warrantyStatus: null, warrantyDaysRemaining: null },
   attributes: {}, customFields: [], createdAt: '2026-08-08T00:00:00Z', updatedAt: '2026-08-08T00:00:00Z',
 })
 

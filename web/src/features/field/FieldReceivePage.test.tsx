@@ -23,11 +23,27 @@ vi.mock('../../api/assets', async (original) => {
 })
 let emitCode: (code: string) => void = () => {}
 let scanRegion: unknown
+let scanManual: boolean | undefined
+/** What the shutter finds when pressed. Null stands for a press that read nothing. */
+let captureResult: string | null = null
+const cameraStatus = { value: 'idle' as string }
 vi.mock('./useQrCamera', () => ({
-  useQrCamera: (onCode: (code: string) => void, options?: { region?: unknown }) => {
+  useQrCamera: (onCode: (code: string) => void, options?: { region?: unknown; manual?: boolean }) => {
     emitCode = onCode
     scanRegion = options?.region
-    return { videoRef: { current: null }, status: 'idle', start: vi.fn(), stop: vi.fn() }
+    scanManual = options?.manual
+    return {
+      videoRef: { current: null },
+      status: cameraStatus.value,
+      start: vi.fn(() => { cameraStatus.value = 'scanning' }),
+      stop: vi.fn(() => { cameraStatus.value = 'idle' }),
+      capturing: false,
+      capture: vi.fn(async () => {
+        if (captureResult === null) return false
+        onCode(captureResult)
+        return true
+      }),
+    }
   },
 }))
 
@@ -77,6 +93,8 @@ function renderPage(entry = '/field/receive') {
 describe('FieldReceivePage', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    cameraStatus.value = 'idle'
+    captureResult = null
     vi.mocked(assetsApi.listTypeSchemas).mockResolvedValue(schemas)
     vi.mocked(assetsApi.identifyDevice).mockResolvedValue(identified())
     // Not registered is the ordinary answer for a device being received.
@@ -266,6 +284,7 @@ describe('FieldReceivePage', () => {
 
     await userEvent.click(await screen.findByRole('button', { name: 'Scan serial number' }))
     act(() => emitCode('FDO12345678'))
+    await userEvent.click(await screen.findByRole('button', { name: 'Use it' }))
 
     await waitFor(() => expect(screen.getByLabelText('Serial number')).toHaveValue('FDO12345678'))
     expect(assetsApi.identifyDevice).toHaveBeenLastCalledWith(['S/N: FDO12345678'])
@@ -276,6 +295,7 @@ describe('FieldReceivePage', () => {
 
     await userEvent.click(await screen.findByRole('button', { name: /Scan the model code/ }))
     act(() => emitCode('WS-C2960X-24TS-L'))
+    await userEvent.click(await screen.findByRole('button', { name: 'Use it' }))
 
     await waitFor(() => expect(assetsApi.identifyDevice).toHaveBeenLastCalledWith(['WS-C2960X-24TS-L']))
     expect(screen.getByLabelText('Serial number')).toHaveValue('')
@@ -328,6 +348,7 @@ describe('FieldReceivePage', () => {
 
     await userEvent.click(screen.getByRole('button', { name: 'Scan serial number' }))
     act(() => emitCode('DNI152602HL'))
+    await userEvent.click(await screen.findByRole('button', { name: 'Use it' }))
 
     await waitFor(() => expect(screen.getByLabelText('Serial number')).toHaveValue('DNI152602HL'))
   })
@@ -443,6 +464,7 @@ describe('FieldReceivePage', () => {
     renderPage()
     await userEvent.click(await screen.findByRole('button', { name: /Scan the model code/ }))
     act(() => emitCode('WS-C2960X-24TS-L'))
+    await userEvent.click(await screen.findByRole('button', { name: 'Use it' }))
 
     // No warning: the primary scan named a model code, which is the point of turning it around.
     await waitFor(() => expect(screen.queryByText(/No model code yet/)).not.toBeInTheDocument())
@@ -470,10 +492,12 @@ describe('FieldReceivePage', () => {
     renderPage()
     await userEvent.click(await screen.findByRole('button', { name: /Scan the model code/ }))
     act(() => emitCode('WS-C2960X-24TS-L'))
+    await userEvent.click(await screen.findByRole('button', { name: 'Use it' }))
     await waitFor(() => expect(screen.getByRole('button', { name: /Scan another code/ })).toBeInTheDocument())
 
     await userEvent.click(screen.getByRole('button', { name: /Scan another code/ }))
     act(() => emitCode('SOMETHING-ELSE'))
+    await userEvent.click(await screen.findByRole('button', { name: 'Use it' }))
 
     // Exactly one row is the model code, and it is the first one scanned.
     const list = await screen.findByRole('list', { name: 'Scanned identifiers' })
@@ -487,8 +511,9 @@ describe('FieldReceivePage', () => {
 
     await userEvent.click(await screen.findByRole('button', { name: 'Scan serial number' }))
     act(() => emitCode('DNI152602HL'))
+    await userEvent.click(await screen.findByRole('button', { name: 'Use it' }))
 
-    await waitFor(() => expect(screen.getByLabelText('Serial number')).toHaveValue('DNI152602HL'))
+    expect(await screen.findByLabelText('Serial number')).toHaveValue('DNI152602HL')
     expect(assetsApi.identifyDevice).toHaveBeenLastCalledWith(['S/N: DNI152602HL'])
   })
 
@@ -505,6 +530,7 @@ describe('FieldReceivePage', () => {
     renderPage()
     await userEvent.click(await screen.findByRole('button', { name: /Scan the model code/ }))
     act(() => emitCode('WS-C2960X-24TS-L'))
+    await userEvent.click(await screen.findByRole('button', { name: 'Use it' }))
 
     await waitFor(() => expect(screen.getByLabelText('Model code')).toHaveValue('WS-C2960X-24TS-L'))
     expect(screen.getByLabelText('Serial number')).toHaveValue('')
@@ -545,7 +571,154 @@ describe('FieldReceivePage', () => {
     await userEvent.type(await screen.findByLabelText('Model code'), 'WRONG-CODE')
     await userEvent.click(screen.getByRole('button', { name: 'Scan model code' }))
     act(() => emitCode('WS-C2960X-24TS-L'))
+    await userEvent.click(await screen.findByRole('button', { name: 'Use it' }))
 
     await waitFor(() => expect(screen.getByLabelText('Model code')).toHaveValue('WS-C2960X-24TS-L'))
   })
+
+  /**
+   * Reported from the field: cropping to the guide narrowed the target but still fired the instant
+   * anything resolved, which on a crowded label is before the technician has finished aiming.
+   */
+  it('waits for a shutter press rather than reading whatever comes into view', async () => {
+    renderPage()
+
+    await screen.findByLabelText('Device name')
+    expect(scanManual).toBe(true)
+  })
+
+  it('reads only when the shutter is pressed', async () => {
+    captureResult = 'WS-C2960X-24TS-L'
+
+    renderPage()
+    await userEvent.click(await screen.findByRole('button', { name: /Scan the model code/ }))
+
+    // Camera is open and nothing has been read yet.
+    expect(assetsApi.identifyDevice).not.toHaveBeenCalled()
+
+    await userEvent.click(screen.getByRole('button', { name: /Read barcode/ }))
+    await userEvent.click(await screen.findByRole('button', { name: 'Use it' }))
+
+    await waitFor(() => expect(screen.getByLabelText('Model code')).toHaveValue('WS-C2960X-24TS-L'))
+  })
+
+  /** A press that finds nothing must say so, not look like a dead button. */
+  it('says when a press read nothing', async () => {
+    captureResult = null
+
+    renderPage()
+    await userEvent.click(await screen.findByRole('button', { name: /Scan the model code/ }))
+    await userEvent.click(screen.getByRole('button', { name: /Read barcode/ }))
+
+    expect(await screen.findByText(/Nothing readable in the frame/)).toBeInTheDocument()
+  })
+
+  /**
+   * Reported from the field: a misread landed straight in the field and stayed there, so backing out
+   * of the scan left the wrong code behind. Nothing is written until it is confirmed.
+   */
+  it('writes nothing until the read is confirmed', async () => {
+    renderPage()
+
+    await userEvent.click(await screen.findByRole('button', { name: /Scan the model code/ }))
+    act(() => emitCode('WRONG-BARCODE'))
+
+    // Held and shown, not applied. The form is behind the viewfinder, so what proves nothing was
+    // written is that closing the camera leaves the field empty.
+    expect(await screen.findByText('WRONG-BARCODE')).toBeInTheDocument()
+    expect(assetsApi.identifyDevice).not.toHaveBeenCalled()
+
+    await userEvent.click(screen.getByRole('button', { name: 'Close camera' }))
+    expect(await screen.findByLabelText('Model code')).toHaveValue('')
+  })
+
+  it('discards a misread and takes the next one instead', async () => {
+    renderPage()
+
+    await userEvent.click(await screen.findByRole('button', { name: /Scan the model code/ }))
+    act(() => emitCode('WRONG-BARCODE'))
+    await userEvent.click(await screen.findByRole('button', { name: 'Try again' }))
+
+    // Back to the shutter, camera still open, so the next read is one press away.
+    expect(screen.getByRole('button', { name: /Read barcode/ })).toBeInTheDocument()
+
+    act(() => emitCode('WS-C2960X-24TS-L'))
+    await userEvent.click(await screen.findByRole('button', { name: 'Use it' }))
+
+    await waitFor(() => expect(screen.getByLabelText('Model code')).toHaveValue('WS-C2960X-24TS-L'))
+  })
+
+  it('leaves the form untouched when the camera is closed on a held read', async () => {
+    renderPage()
+
+    await userEvent.type(await screen.findByLabelText('Model code'), 'TYPED-CODE')
+    await userEvent.click(screen.getByRole('button', { name: 'Scan model code' }))
+    act(() => emitCode('WRONG-BARCODE'))
+    // Deliberately not confirmed: closing on a held read is the case under test.
+    await userEvent.click(await screen.findByRole('button', { name: 'Close camera' }))
+
+    // Cancelling is not a half-applied scan: what was there before is what is there after.
+    expect(screen.getByLabelText('Model code')).toHaveValue('TYPED-CODE')
+  })
+
+  /**
+   * Manufacturer and Model hold what a person calls the thing; no barcode carries that. Offering a
+   * camera there promised something impossible, so the buttons are gone — the model *code* has its
+   * own field, and that is what is actually printed.
+   */
+  it('offers no camera on the attribute fields, which hold names rather than codes', async () => {
+    renderPage('/field/receive?code=5CD1234ABC&checked=1')
+
+    await screen.findByLabelText('Manufacturer')
+    expect(screen.queryByRole('button', { name: 'Scan Manufacturer' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Scan Model' })).not.toBeInTheDocument()
+    // The two that are printed keep theirs.
+    expect(screen.getByRole('button', { name: 'Scan model code' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Scan serial number' })).toBeInTheDocument()
+  })
+
+  /**
+   * The opening line sits above the viewfinder and is always on screen, so it kept telling the
+   * technician to scan a model code while they were aiming at a serial.
+   */
+  it('says which code the camera is reading, not always the model', async () => {
+    renderPage()
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Scan serial number' }))
+
+    expect(screen.getByText('Reading the serial number.')).toBeInTheDocument()
+    expect(screen.queryByText(/Start with the model or product code/)).not.toBeInTheDocument()
+  })
+
+
+
+
+  /**
+   * These were computed and validated but never rendered after the rewrite onto the identification
+   * API, so a required custom field left Register permanently disabled with nothing on screen to
+   * explain it — the same shape of silent dead end as the missing attributes before them.
+   */
+  it('renders the type\'s custom fields and demands the required ones', async () => {
+    vi.mocked(assetsApi.listTypeSchemas).mockResolvedValue([{
+      ...schemas[0],
+      customFields: [
+        { id: 'cf-1', ciType: 'Hardware', key: 'costCentre', label: 'Cost centre', type: 'Text', isRequired: true, options: [], sortOrder: 0 },
+        { id: 'cf-2', ciType: 'Hardware', key: 'notes', label: 'Notes', type: 'Text', isRequired: false, options: [], sortOrder: 1 },
+      ],
+    }])
+
+    renderPage('/field/receive?code=5CD1234ABC&checked=1')
+
+    await userEvent.type(await screen.findByLabelText('Device name'), 'Reception laptop')
+    await userEvent.type(screen.getByLabelText('Manufacturer'), 'Dell')
+    await userEvent.type(screen.getByLabelText('Model'), 'Latitude 5450')
+    expect(screen.getByLabelText('Notes (optional)')).toBeInTheDocument()
+
+    // Everything else is filled; the required custom field is the only thing still holding it.
+    expect(screen.getByRole('button', { name: /Register it/ })).toBeDisabled()
+
+    await userEvent.type(screen.getByLabelText('Cost centre'), 'CC-42')
+    expect(screen.getByRole('button', { name: /Register it/ })).toBeEnabled()
+  })
+
 })

@@ -253,7 +253,7 @@ public sealed class AssetsInfrastructureSeeder(AssetsDbContext dbContext, IDirec
             {
                 Id = id,
                 VendorId = vendorIds[seed.VendorKey],
-                ContractNumber = seed.Number,
+                PoNumber = seed.Number,
                 Name = seed.Name,
                 Type = seed.Type,
                 StartDate = today.AddDays(-seed.StartDaysAgo),

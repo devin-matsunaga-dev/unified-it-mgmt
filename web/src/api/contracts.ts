@@ -26,7 +26,7 @@ export type Contract = {
   id: string
   vendorId: string
   vendorName: string
-  contractNumber: string
+  poNumber: string
   name: string
   type: ContractType
   startDate: string
@@ -37,6 +37,11 @@ export type Contract = {
   ownerUserId: string | null
   ownerName: string | null
   ownerEmail: string | null
+  departmentId: string | null
+  /** Snapshotted beside the id, so the record stays readable after a department is renamed. */
+  departmentName: string | null
+  /** The agreement's own reference, if it has one. Distinct from the PO that bought it. */
+  contractNumber: string | null
   notes: string | null
   isActive: boolean
   status: ContractExpiryStatus
@@ -69,7 +74,7 @@ export type VendorInput = {
 
 export type ContractInput = {
   vendorId: string
-  contractNumber: string
+  poNumber: string
   name: string
   type: ContractType
   startDate: string
@@ -78,6 +83,8 @@ export type ContractInput = {
   cost: number | null
   currency: string | null
   ownerUserId: string | null
+  departmentId: string | null
+  contractNumber: string | null
   notes: string | null
 }
 
@@ -152,6 +159,12 @@ export function contractFilterToQuery(filter: ContractFilter) {
 }
 
 export const contractsApi = {
+  getReminderSettings: () =>
+    apiRequest<ContractReminderSettings>('/api/contract-reminder-settings'),
+  saveReminderSettings: (input: SaveContractReminderSettingsInput) =>
+    apiRequest<ContractReminderSettings>('/api/contract-reminder-settings', {
+      method: 'PUT', body: JSON.stringify(input),
+    }),
   listVendors: (search = '') => apiRequest<VendorPage>(`/api/vendors?pageSize=200${search ? `&search=${encodeURIComponent(search)}` : ''}`),
   createVendor: (input: VendorInput) => apiRequest<Vendor>('/api/vendors', { method: 'POST', body: JSON.stringify(input) }),
   updateVendor: (id: string, input: VendorInput & { isActive: boolean }) =>
@@ -167,4 +180,21 @@ export const contractsApi = {
     apiRequest<Ci>(`/api/cis/${ciId}/coverage`, { method: 'PUT', body: JSON.stringify(input) }),
   listNotifications: (limit = 50) => apiRequest<ContractNotification[]>(`/api/contract-notifications?limit=${limit}`),
   runExpiryPass: () => apiRequest<ContractExpiryRun>('/api/contract-notifications/runs', { method: 'POST' }),
+}
+
+/** How far ahead of an expiry renewal notices go out. One row for the whole platform. */
+export type ContractReminderSettings = {
+  /** Days before expiry, widest first. Empty means notices are switched off. */
+  thresholdDays: number[]
+  enabled: boolean
+  /** Who every contract notice goes to. Empty falls back to each contract's own owner. */
+  recipients: string[]
+  updatedBy: string
+  updatedAt: string
+}
+
+export type SaveContractReminderSettingsInput = {
+  thresholdDays: number[]
+  enabled: boolean
+  recipients: string[]
 }

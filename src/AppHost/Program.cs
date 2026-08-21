@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.IO;
 
 using Aspire.Hosting.ApplicationModel;
@@ -261,6 +262,33 @@ var mailhog = builder.AddContainer(MailHogHost, "mailhog/mailhog", "v1.0.1")
     .WithEndpoint(targetPort: MailHogSmtpPort, name: "smtp")
     .WithHttpEndpoint(targetPort: MailHogHttpPort, name: "http");
 
+// Naming a relay host is what moves outbound mail off MailHog and onto the internet, so it is the
+// single switch: absent, every notification lands in the MailHog UI exactly as it always has, and a
+// default `aspire run` cannot mail a real person by accident. It is read as a plain string for the
+// same reason `public-host` is — the decision has to be made here, before the environment is built.
+//
+//   env 'Parameters__smtp-host=smtp.example.org' 'Parameters__smtp-username=apikey' \
+//       'Parameters__smtp-from=it-platform@example.org' aspire run
+//
+// The password is *not* passed that way. It is a secret parameter, so `aspire run` prompts for it
+// once and persists it to user secrets; after that a relay run needs only the three keys above.
+var smtpRelayHost = builder.Configuration["Parameters:smtp-host"] is { Length: > 0 } relayHost
+    ? relayHost
+    : null;
+// 587 is submission-with-STARTTLS, which is what a relay offers unless it is told otherwise. 465
+// works too — SmtpNotificationService reads the port and picks implicit TLS for it.
+var smtpRelayPort = int.TryParse(builder.Configuration["Parameters:smtp-port"], out var configuredSmtpPort)
+    ? configuredSmtpPort
+    : 587;
+var smtpRelayUsername = builder.Configuration["Parameters:smtp-username"] is { Length: > 0 } relayUser
+    ? relayUser
+    : null;
+// A relay authorises the envelope sender, so the default `helpdesk@it-platform.local` — a domain that
+// does not exist — is refused or binned by SPF/DMARC. Sending externally means saying who from.
+var smtpRelayFrom = builder.Configuration["Parameters:smtp-from"] is { Length: > 0 } relayFrom
+    ? relayFrom
+    : smtpRelayUsername;
+
 // The `https` launch profile publishes both an HTTPS and an HTTP URL; the `http` one publishes
 // only HTTP. Which profile is used decides which endpoints exist at all, so it is chosen here
 // rather than patched afterwards.
@@ -283,8 +311,6 @@ var webHost = builder.AddProject<Projects.Web_Host>("web-host", isLanRun ? "http
     .WithEnvironment("ObjectStorage__AccessKey", minioAccessKey)
     .WithEnvironment("ObjectStorage__SecretKey", minioSecretKey)
     .WithEnvironment("Email__Smtp__Enabled", "true")
-    .WithEnvironment("Email__Smtp__Host", mailhog.GetEndpoint("smtp").Property(EndpointProperty.Host))
-    .WithEnvironment("Email__Smtp__Port", mailhog.GetEndpoint("smtp").Property(EndpointProperty.Port))
     .WithEnvironment("Email__Imap__Enabled", "true")
     .WithEnvironment("Email__Imap__Host", inboundMail.GetEndpoint("imap").Property(EndpointProperty.Host))
     .WithEnvironment("Email__Imap__Port", inboundMail.GetEndpoint("imap").Property(EndpointProperty.Port))
@@ -320,6 +346,38 @@ var webHost = builder.AddProject<Projects.Web_Host>("web-host", isLanRun ? "http
     // exists in both modes, it is loopback-or-LAN local either way, and it is already the route the
     // poller, the scanner and the seeder take.
     .WithHttpHealthCheck("/health", endpointName: "http");
+
+// Outbound mail goes to one of two places, decided by whether a relay was named. MailHog keeps its
+// endpoint reference — its port is only known once Aspire has allocated it — while a relay is a
+// fixed host and port that has to be given as plain strings, so the two cannot share one expression.
+if (smtpRelayHost is null)
+{
+    webHost
+        .WithEnvironment("Email__Smtp__Host", mailhog.GetEndpoint("smtp").Property(EndpointProperty.Host))
+        .WithEnvironment("Email__Smtp__Port", mailhog.GetEndpoint("smtp").Property(EndpointProperty.Port));
+}
+else
+{
+    webHost
+        .WithEnvironment("Email__Smtp__Host", smtpRelayHost)
+        .WithEnvironment("Email__Smtp__Port", smtpRelayPort.ToString(CultureInfo.InvariantCulture));
+    if (smtpRelayFrom is not null)
+    {
+        webHost.WithEnvironment("Email__FromAddress", smtpRelayFrom);
+    }
+
+    if (smtpRelayUsername is not null)
+    {
+        // Only declared when a username was given, because a secret parameter with no value prompts
+        // on startup — and a relay that authenticates by IP would otherwise ask for a password that
+        // does not exist. The password reaching the API also puts the connection on required STARTTLS
+        // rather than opportunistic; see SmtpNotificationService.TlsFor.
+        var smtpRelayPassword = builder.AddParameter("smtp-password", secret: true);
+        webHost
+            .WithEnvironment("Email__Smtp__Username", smtpRelayUsername)
+            .WithEnvironment("Email__Smtp__Password", smtpRelayPassword);
+    }
+}
 
 if (isLanRun)
 {

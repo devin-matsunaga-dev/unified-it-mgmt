@@ -1,4 +1,5 @@
 using System.Security.Claims;
+using System.Text.RegularExpressions;
 
 using FluentValidation;
 using Microsoft.AspNetCore.Builder;
@@ -9,7 +10,7 @@ using Modules.Assets.Features.Cis;
 
 namespace Modules.Assets.Features.Contracts;
 
-public static class ContractEndpoints
+public static partial class ContractEndpoints
 {
     public static IEndpointRouteBuilder MapContractEndpoints(this IEndpointRouteBuilder endpoints)
     {
@@ -86,11 +87,31 @@ public static class ContractEndpoints
     {
         var group = endpoints.MapGroup("/api/contracts").RequireAuthorization("CanManageAssets");
 
-        group.MapGet("/", async (string? search, Guid? vendorId, ContractExpiryStatus? status, ContractType? type,
+        // Read by anyone who may see contracts, written by an administrator: the thresholds decide
+        // who gets told what and when, which is a policy rather than a preference.
+        var reminders = endpoints.MapGroup("/api/contract-reminder-settings")
+            .RequireAuthorization("CanManageAssets");
+
+        reminders.MapGet("/", async (IContractReminderSettingsService service,
+                CancellationToken cancellationToken) =>
+            Results.Ok(await service.GetAsync(cancellationToken)));
+
+        reminders.MapPut("/", async (SaveContractReminderSettingsRequest request, ClaimsPrincipal user,
+            IContractReminderSettingsService service, CancellationToken cancellationToken) =>
+        {
+            var validation = await new ReminderSettingsValidator().ValidateAsync(request, cancellationToken);
+            return validation.IsValid
+                ? Results.Ok(await service.SaveAsync(request, user, cancellationToken))
+                : Results.ValidationProblem(validation.ToDictionary());
+        }).RequireAuthorization("AdminOnly");
+
+        group.MapGet("/", async (string? search, Guid? vendorId, Guid? departmentId,
+                ContractExpiryStatus? status, ContractType? type,
                 bool? isActive, int? page, int? pageSize, IContractService service,
                 CancellationToken cancellationToken) =>
             Results.Ok(await service.ListAsync(
-                new ContractListRequest(search, vendorId, status, type, isActive, page ?? 1, pageSize ?? 25),
+                new ContractListRequest(search, vendorId, departmentId, status, type, isActive,
+                    page ?? 1, pageSize ?? 25),
                 cancellationToken)));
 
         group.MapGet("/{id:guid}", async (Guid id, IContractService service, CancellationToken cancellationToken) =>
@@ -220,7 +241,7 @@ public static class ContractEndpoints
         public CreateContractValidator()
         {
             RuleFor(request => request.VendorId).NotEqual(Guid.Empty);
-            RuleFor(request => request.ContractNumber).NotEmpty().MaximumLength(100);
+            RuleFor(request => request.PoNumber).NotEmpty().MaximumLength(100);
             RuleFor(request => request.Name).NotEmpty().MaximumLength(200);
             RuleFor(request => request.Type).IsInEnum();
             RuleFor(request => request.EndDate).GreaterThanOrEqualTo(request => request.StartDate)
@@ -236,7 +257,7 @@ public static class ContractEndpoints
         public UpdateContractValidator()
         {
             RuleFor(request => request.VendorId).NotEqual(Guid.Empty);
-            RuleFor(request => request.ContractNumber).NotEmpty().MaximumLength(100);
+            RuleFor(request => request.PoNumber).NotEmpty().MaximumLength(100);
             RuleFor(request => request.Name).NotEmpty().MaximumLength(200);
             RuleFor(request => request.Type).IsInEnum();
             RuleFor(request => request.EndDate).GreaterThanOrEqualTo(request => request.StartDate)
@@ -256,6 +277,43 @@ public static class ContractEndpoints
                 .GreaterThanOrEqualTo(request => request.PurchaseDate!.Value)
                 .When(request => request.PurchaseDate is not null && request.WarrantyExpiresAt is not null)
                 .WithMessage("A warranty cannot end before the asset was bought.");
+        }
+    }
+
+    private sealed partial class ReminderSettingsValidator : AbstractValidator<SaveContractReminderSettingsRequest>
+    {
+        /// <summary>
+        /// Deliberately loose: one @, something either side, a dot in the domain. Tighter patterns
+        /// reject addresses that are legal and in use, and the only authority on deliverability is the
+        /// mail server.
+        /// </summary>
+        [GeneratedRegex(@"^[^@\s]+@[^@\s.]+(\.[^@\s.]+)+$")]
+        private static partial Regex EmailShape();
+
+        public ReminderSettingsValidator()
+        {
+            RuleFor(request => request.ThresholdDays).NotNull();
+            RuleFor(request => request.ThresholdDays.Count)
+                .InclusiveBetween(1, ContractReminderSettingsService.MaximumThresholds)
+                .WithMessage($"Between 1 and {ContractReminderSettingsService.MaximumThresholds} reminders.");
+            // Zero is the expiry day itself and is a legitimate choice; negative is a notice after the
+            // fact, which is a different feature and not this one.
+            RuleFor(request => request.Recipients!.Count)
+                .LessThanOrEqualTo(ContractReminderSettingsService.MaximumRecipients)
+                .When(request => request.Recipients is not null)
+                .WithMessage($"At most {ContractReminderSettingsService.MaximumRecipients} addresses — use a distribution group for a wider audience.");
+
+            // Shape only. Whether the mailbox exists is the mail server's answer, not something this
+            // screen can know, and a rejected send is already recorded against the notice.
+            RuleForEach(request => request.Recipients)
+                .Must(address => !string.IsNullOrWhiteSpace(address)
+                    && address.Trim().Length <= ContractReminderSettingsService.MaximumRecipientLength
+                    && EmailShape().IsMatch(address.Trim()))
+                .WithMessage("Each entry must be an email address.");
+
+            RuleForEach(request => request.ThresholdDays)
+                .InclusiveBetween(0, ContractReminderSettingsService.MaximumThresholdDays)
+                .WithMessage($"A reminder is 0 to {ContractReminderSettingsService.MaximumThresholdDays} days before expiry.");
         }
     }
 }

@@ -1,5 +1,5 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { ChevronLeft, ChevronRight, FileText, Plus, Search, Building2, BellRing } from 'lucide-react'
+import { ChevronLeft, ChevronRight, FileText, Plus, Search, Building2, BellRing, Settings } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { toast } from 'sonner'
@@ -16,12 +16,14 @@ import {
   type ContractType,
 } from '../../api/contracts'
 import { directoryApi } from '../../api/directory'
+import { useAuth } from '../../auth/AuthProvider'
 import { Button } from '../../components/ui/Button'
 import { ContractFormDialog } from './ContractFormDialog'
 
 /** Every agreement the estate runs on, soonest to expire first. */
 export function ContractListPage() {
   const navigate = useNavigate()
+  const { roles } = useAuth()
   const queryClient = useQueryClient()
   const [search, setSearch] = useState('')
   const [filter, setFilter] = useState<ContractFilter>({ page: 1, pageSize: 25 })
@@ -35,6 +37,7 @@ export function ContractListPage() {
   const contracts = useQuery({ queryKey: ['contracts', filter], queryFn: () => contractsApi.listContracts(filter), placeholderData: keepPreviousData })
   const vendors = useQuery({ queryKey: ['vendors'], queryFn: () => contractsApi.listVendors() })
   const users = useQuery({ queryKey: ['directory', 'users'], queryFn: directoryApi.listUsers })
+  const departments = useQuery({ queryKey: ['directory', 'departments'], queryFn: directoryApi.listDepartments })
 
   const create = useMutation({
     mutationFn: (input: ContractInput) => contractsApi.createContract(input),
@@ -67,6 +70,12 @@ export function ContractListPage() {
           <BellRing size={18} />{runNotices.isPending ? 'Checking…' : 'Check renewals now'}
         </Button>
         <Button variant="secondary" onClick={() => navigate('/contracts/vendors')}><Building2 size={18} />Vendors</Button>
+        {/* Admins only: the settings page itself is Admin-gated, so showing this to a technician would
+            offer a button that lands on "forbidden". */}
+        {roles.includes('Admin') && <Button
+          variant="secondary"
+          onClick={() => navigate('/admin/settings/renewal-reminders')}
+        ><Settings size={18} />Reminder settings</Button>}
         <Button onClick={() => setDialogOpen(true)}><Plus size={18} />New contract</Button>
       </div>
     </div>
@@ -99,11 +108,11 @@ export function ContractListPage() {
         : <div className="overflow-x-auto">
             <table className="w-full min-w-[900px] text-left text-sm">
               <thead><tr>
-                {['Number', 'Name', 'Vendor', 'Type', 'Ends', 'Status', 'Covered CIs'].map((header) => <th key={header} className="h-11 px-4 text-[13px] font-medium text-slate-500">{header}</th>)}
+                {['PO number', 'Name', 'Vendor', 'Type', 'Ends', 'Status', 'Covered CIs'].map((header) => <th key={header} className="h-11 px-4 text-[13px] font-medium text-slate-500">{header}</th>)}
               </tr></thead>
               <tbody>
                 {contracts.data!.items.map((contract) => <tr key={contract.id} className="border-t border-slate-200 hover:bg-slate-50 dark:border-slate-800 dark:hover:bg-slate-800/50">
-                  <td className="h-12 px-4 font-mono text-xs text-slate-500">{contract.contractNumber}</td>
+                  <td className="h-12 px-4 font-mono text-xs text-slate-500">{contract.poNumber}</td>
                   <td className="h-12 px-4"><Link to={`/contracts/${contract.id}`} className="font-medium text-slate-900 hover:text-blue-600 dark:text-slate-100">{contract.name}</Link></td>
                   <td className="h-12 px-4 text-slate-600 dark:text-slate-300">{contract.vendorName}</td>
                   <td className="h-12 px-4 text-slate-600 dark:text-slate-300">{contract.type}</td>
@@ -126,6 +135,7 @@ export function ContractListPage() {
     </section>
 
     <ContractFormDialog open={dialogOpen} contract={null} vendors={vendors.data?.items ?? []} users={users.data ?? []}
+      departments={departments.data ?? []}
       pending={create.isPending} error={create.error instanceof Error ? create.error.message : undefined}
       onClose={() => { if (!create.isPending) { setDialogOpen(false); create.reset() } }}
       onSubmit={async (input) => { await create.mutateAsync(input) }} />

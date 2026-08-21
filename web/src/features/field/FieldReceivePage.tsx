@@ -27,6 +27,16 @@ import { useQrCamera } from './useQrCamera'
  */
 const types: CiType[] = ['Hardware', 'Server', 'NetworkDevice']
 
+/**
+ * What the camera reads and what the guide draws — one definition, because two would drift and a
+ * guide that disagrees with the crop is decorative, which is the defect that made aiming meaningless
+ * in the first place.
+ *
+ * Wide and short: a barcode is a strip, and device labels crowd several of them within a couple of
+ * centimetres.
+ */
+const scanRegion = { widthRatio: 0.85, heightRatio: 0.28 }
+
 export function FieldReceivePage() {
   const navigate = useNavigate()
   const [params] = useSearchParams()
@@ -78,6 +88,8 @@ export function FieldReceivePage() {
   }
   /** An asset already registered under one of these codes. The device is not new. */
   const [existing, setExisting] = useState<Ci | null>(null)
+  /** A shutter press that found nothing. Cleared on the next press, so it never goes stale. */
+  const [missed, setMissed] = useState(false)
 
   const schemas = useQuery({ queryKey: ['ci-type-schemas'], queryFn: assetsApi.listTypeSchemas })
 
@@ -155,38 +167,63 @@ export function FieldReceivePage() {
     else identify.mutate(next)
   }
 
+  /**
+   * What the shutter just read, before it is committed anywhere.
+   *
+   * A read used to land straight in its field and close the camera, so a misread — the barcode
+   * beside the one being aimed at, a partial decode — was already in the form and the only way out
+   * was to notice and retype it. Nothing is written now until the technician says that is the code
+   * they meant, which makes a wrong read cost one tap instead of a correction.
+   */
+  const [pendingRead, setPendingRead] = useState<{ target: string; code: string } | null>(null)
+
   const camera = useQrCamera((code) => {
-    if (scanTarget === 'model') {
-      // The primary scan. A product code is what makes the next device of this model identify
-      // itself; a serial names one unit and can never do that, which is why the serial has been
-      // demoted to its own field and this is what the main button aims at.
-      //
-      // A read aimed at the Model code field replaces whatever is there — the technician is
-      // correcting it. The section button above only claims an empty one, so scanning extra codes
-      // for a better vendor answer cannot displace the key the catalogue will use.
-      if (!modelCodeRef.current || replaceModelRef.current) assignModelCode(code)
-      addScan(code)
-    } else if (scanTarget === 'serial') {
-      setSerial(code)
-      // Sent to the identifier as a labelled serial rather than a bare string. The technician aimed
-      // at the serial barcode and said so, which is a better source of truth than any pattern the
-      // parser could apply — and it means the identification uses it as a serial too, rather than
-      // carrying it as one more unclassified code.
-      addScan(`S/N: ${code}`)
-    } else if (scanTarget && scanTarget !== 'device') {
-      setAttributes((current) => ({ ...current, [scanTarget]: code }))
-    } else {
-      addScan(code)
-    }
-    replaceModelRef.current = false
-    setScanTarget(null)
-    camera.stop()
+    // Held, not applied. The camera stays open so "Try again" is another press rather than another
+    // trip through the button that opened it.
+    setPendingRead({ target: scanTarget ?? 'device', code })
   }, {
     // A wide, short window matching the guide drawn over the viewfinder: device labels crowd the
     // serial, the product code and a shipping reference together, and without this the decoder
     // returns whichever it resolved first rather than the one being aimed at.
-    region: { widthRatio: 0.85, heightRatio: 0.28 },
+    //
+    // The tag reader gets a taller one. A 1D barcode is a wide strip and a band suits it, but
+    // clipping a printed number costs a digit outright — the first one, when a technician lines the
+    // tag up from the left — and a recogniser has no way to know a character was cut in half.
+    region: scanRegion,
+    // A shutter rather than a tripwire. Cropping narrowed the target but still fired the instant
+    // anything resolved, which on a crowded label is before the technician has finished aiming.
+    manual: true,
   })
+
+  /** Applies the held read to whatever it was aimed at, and closes the camera. */
+  function commitPendingRead() {
+    if (!pendingRead) return
+    const { target, code } = pendingRead
+    if (target === 'model') {
+      if (!modelCodeRef.current || replaceModelRef.current) assignModelCode(code)
+      addScan(code)
+    } else if (target === 'serial') {
+      assignSerial(code)
+      // Sent to the identifier as a labelled serial rather than a bare string. The technician aimed
+      // at the serial barcode and said so, which is a better source of truth than any pattern the
+      // parser could apply.
+      addScan(`S/N: ${code}`)
+    } else if (target !== 'device') {
+      setAttributes((current) => ({ ...current, [target]: code }))
+    } else {
+      addScan(code)
+    }
+    setPendingRead(null)
+    replaceModelRef.current = false
+    setScanTarget(null)
+    camera.stop()
+  }
+
+  /** Discards it. Nothing was written, so there is nothing to undo. */
+  function discardPendingRead() {
+    setPendingRead(null)
+    setMissed(false)
+  }
 
   // A code carried in from the scan screen has already failed a CI lookup, so it belongs to a device
   // nobody has registered — identify it on arrival rather than making the technician scan it twice.
@@ -247,32 +284,87 @@ export function FieldReceivePage() {
     </Link>
     <h1 className="mt-1 text-[22px] font-bold leading-tight">Receive a new asset</h1>
     <p className="mt-1 text-[15px] text-slate-500">
-      Start with the model or product code — <span className="font-medium">P/N</span>,{' '}
-      <span className="font-medium">PID</span>, <span className="font-medium">MTM</span> or{' '}
-      <span className="font-medium">SKU</span>. That is what lets the next one of these identify itself.
+      {live
+        ? scanTarget === 'serial'
+          ? 'Reading the serial number.'
+          : scanTarget === 'model'
+            ? 'Reading the model or product code.'
+            : 'Reading a barcode.'
+        : <>
+            Start with the model or product code — <span className="font-medium">P/N</span>,{' '}
+            <span className="font-medium">PID</span>, <span className="font-medium">MTM</span> or{' '}
+            <span className="font-medium">SKU</span>. That is what lets the next one of these identify itself.
+          </>}
     </p>
 
     <div className={live ? 'mt-4' : 'hidden'}>
       <div className="relative overflow-hidden rounded-xl border border-slate-200 bg-slate-900 dark:border-slate-800">
         <video ref={camera.videoRef} muted playsInline className="aspect-[4/3] w-full object-cover" />
-        {/* Wide and short: a 1D barcode has to span the frame's width to decode, unlike a QR. */}
+        {/* Drawn from the same ratios the decoder crops to. If these two ever disagree the guide is
+            decorative again, which is the defect that started all of this. */}
         <div className="pointer-events-none absolute inset-0 grid place-items-center">
-          <div className="h-24 w-[85%] rounded-lg border-2 border-white/80" />
+          <div
+            className="rounded-lg border-2 border-white/80"
+            style={{
+              width: `${scanRegion.widthRatio * 100}%`,
+              height: `${scanRegion.heightRatio * 100}%`,
+            }}
+          />
         </div>
         <button
           type="button"
-          onClick={() => { setScanTarget(null); camera.stop() }}
+          onClick={() => {
+            // Closing discards a held read: nothing was written, so cancelling leaves the form
+            // exactly as it was rather than half-applying a scan somebody backed out of.
+            discardPendingRead()
+            replaceModelRef.current = false
+            setScanTarget(null)
+            camera.stop()
+          }}
           aria-label="Close camera"
           className="absolute right-2 top-2 grid size-11 place-items-center rounded-lg bg-black/50 text-white"
         ><X size={20} /></button>
       </div>
       <p className="mt-2 text-center text-[13px] text-slate-500">
         {scanTarget === 'serial'
-          ? 'Reading the serial number. Only the barcode inside the frame counts.'
+          ? 'Line up the serial number, then read it.'
           : scanTarget === 'model'
-            ? 'Reading the model or product code. Only the barcode inside the frame counts.'
-            : 'Hold one barcode inside the frame — nothing outside it is read.'}
+            ? 'Line up the model or product code, then read it.'
+            : 'Line up one barcode inside the frame, then read it.'}
       </p>
+      {missed && <p role="alert" className="mt-2 text-center text-[13px] text-amber-700 dark:text-amber-400">
+        Nothing readable in the frame. Move closer or steadier and try again.
+      </p>}
+
+      {pendingRead
+        // Shown before anything is written. A misread costs one tap here; committed, it costs a
+        // correction somebody has to notice first.
+        ? <div className="mt-3 rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
+            <p className="text-[13px] text-slate-500">Read this — is it right?</p>
+            <p className="mt-1 break-all text-[17px] font-semibold tabular-nums">{pendingRead.code}</p>
+            <div className="mt-3 grid gap-2">
+              <Button type="button" className="h-12 w-full text-[15px]" onClick={commitPendingRead}>
+                <Check size={18} />Use it
+              </Button>
+              <Button
+                type="button"
+                variant="secondary"
+                className="h-12 w-full text-[15px]"
+                onClick={discardPendingRead}
+              >Try again</Button>
+            </div>
+          </div>
+        // The shutter. Full width and at the bottom, because it is pressed one-handed while the
+        // other hand holds the device being read.
+        : <Button
+            type="button"
+            className="mt-3 h-14 w-full text-[15px]"
+            disabled={camera.status !== 'scanning' || camera.capturing}
+            onClick={async () => {
+              setMissed(false)
+              if (!(await camera.capture())) setMissed(true)
+            }}
+          ><Camera size={19} />{camera.capturing ? 'Reading…' : 'Read barcode'}</Button>}
     </div>
 
     {camera.status === 'denied' && <p role="alert" className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-3 text-[15px] text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-300">
@@ -418,51 +510,47 @@ export function FieldReceivePage() {
             <label htmlFor={`field-receive-${definition.key}`} className="mt-4 block text-[13px] font-medium text-slate-500">
               {definition.label}
             </label>
-            <div className="mt-1.5 flex gap-2">
-              <input
-                id={`field-receive-${definition.key}`}
-                value={attributes[definition.key] ?? ''}
-                onChange={(event) => setAttributes((current) => ({ ...current, [definition.key]: event.target.value }))}
-                inputMode={definition.kind === 'Integer' ? 'numeric' : 'text'}
-                autoComplete="off"
-                className="h-12 min-w-0 flex-1 rounded-lg border border-slate-200 bg-white px-3 text-base focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 dark:border-slate-700 dark:bg-slate-900"
-              />
-              {definition.kind === 'Text' && <button
-                type="button"
-                aria-label={`Scan ${definition.label}`}
-                onClick={() => { setScanTarget(definition.key); void camera.start() }}
-                className="grid size-12 shrink-0 place-items-center rounded-lg border border-slate-200 bg-white text-slate-600 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300"
-              ><ScanLine size={19} /></button>}
-            </div>
+            {/* No camera here. Manufacturer and Model hold what a person calls the thing — "Cisco",
+                "Catalyst 2960-X" — and no barcode carries that. What is printed is the model code,
+                which has its own field; offering a scan for a name promised something impossible.
+                A field with no button runs the full width — only the scannable ones are inset. */}
+            <input
+              id={`field-receive-${definition.key}`}
+              value={attributes[definition.key] ?? ''}
+              onChange={(event) => setAttributes((current) => ({ ...current, [definition.key]: event.target.value }))}
+              inputMode={definition.kind === 'Integer' ? 'numeric' : 'text'}
+              autoComplete="off"
+              className="mt-1.5 h-12 w-full rounded-lg border border-slate-200 bg-white px-3 text-base focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 dark:border-slate-700 dark:bg-slate-900"
+            />
           </div>)}
 
-          <label htmlFor="field-receive-model-code" className="mt-4 block text-[13px] font-medium text-slate-500">
-            Model code
-          </label>
-          <div className="mt-1.5 flex gap-2">
-            <input
-              id="field-receive-model-code"
-              value={modelCode ?? ''}
-              onChange={(event) => assignModelCode(event.target.value.trim() ? event.target.value : null)}
-              placeholder="P/N, PID, MTM or SKU"
-              autoComplete="off"
-              autoCapitalize="characters"
-              className="h-12 min-w-0 flex-1 rounded-lg border border-slate-200 bg-white px-3 text-base focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 dark:border-slate-700 dark:bg-slate-900"
-            />
-            <button
-              type="button"
-              aria-label="Scan model code"
-              onClick={() => { replaceModelRef.current = true; setScanTarget('model'); void camera.start() }}
-              className="grid size-12 shrink-0 place-items-center rounded-lg border border-slate-200 bg-white text-slate-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300"
-            ><ScanLine size={19} /></button>
-          </div>
-          {/* Said here rather than only beside the checkbox: this is the field it is about. */}
-          <p className="mt-1.5 text-[13px] text-slate-500">
-            What every device of this model carries. It is the key the next one is recognised by.
-          </p>
+        <label htmlFor="field-receive-model-code" className="mt-4 block text-[13px] font-medium text-slate-500">
+          Model code
+        </label>
+        <div className="mt-1.5 flex gap-2">
+          <input
+            id="field-receive-model-code"
+            value={modelCode ?? ''}
+            onChange={(event) => assignModelCode(event.target.value.trim() ? event.target.value : null)}
+            placeholder="P/N, PID, MTM or SKU"
+            autoComplete="off"
+            autoCapitalize="characters"
+            className="mt-1.5 h-12 w-full rounded-lg border border-slate-200 bg-white px-3 text-base focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 dark:border-slate-700 dark:bg-slate-900"
+          />
+          <button
+            type="button"
+            aria-label="Scan model code"
+            onClick={() => { replaceModelRef.current = true; setScanTarget('model'); void camera.start() }}
+            className="grid size-12 shrink-0 place-items-center rounded-lg border border-slate-200 bg-white text-slate-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300"
+          ><ScanLine size={19} /></button>
+        </div>
+        {/* Said here rather than only beside the checkbox: this is the field it is about. */}
+        <p className="mt-1.5 text-[13px] text-slate-500">
+          What every device of this model carries. It is the key the next one is recognised by.
+        </p>
 
-          <label htmlFor="field-receive-serial" className="mt-4 block text-[13px] font-medium text-slate-500">Serial number</label>
-          <div className="mt-1.5 flex gap-2">
+        <label htmlFor="field-receive-serial" className="mt-4 block text-[13px] font-medium text-slate-500">Serial number</label>
+        <div className="mt-1.5 flex gap-2">
             <input
               id="field-receive-serial"
               value={serial}
@@ -479,7 +567,38 @@ export function FieldReceivePage() {
             ><ScanLine size={19} /></button>
           </div>
 
+        {/* Restored: these were computed and validated but not rendered after the rewrite onto the
+            identification API, so a required custom field made Register permanently disabled with
+            nothing on screen to say why. They are validated on create exactly as attributes are. */}
+        {fields.map((field) => <div key={field.id}>
+          <label htmlFor={`field-receive-cf-${field.key}`} className="mt-4 block text-[13px] font-medium text-slate-500">
+            {field.label}{field.isRequired ? '' : ' (optional)'}
+          </label>
+          {field.type === 'Select'
+              ? <select
+                  id={`field-receive-cf-${field.key}`}
+                  value={customFields[field.key] ?? ''}
+                  onChange={(event) => setCustomFields((current) => ({ ...current, [field.key]: event.target.value }))}
+                  className="mt-1.5 h-12 w-full rounded-lg border border-slate-200 bg-white px-3 text-base focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 dark:border-slate-700 dark:bg-slate-900"
+                >
+                  <option value="">Not set</option>
+                  {field.options.map((option) => <option key={option} value={option}>{option}</option>)}
+                </select>
+              : <input
+                  id={`field-receive-cf-${field.key}`}
+                  value={customFields[field.key] ?? ''}
+                  onChange={(event) => setCustomFields((current) => ({ ...current, [field.key]: event.target.value }))}
+                  type={field.type === 'Date' ? 'date' : 'text'}
+                  inputMode={field.type === 'Number' ? 'numeric' : 'text'}
+                  autoComplete="off"
+                  className="mt-1.5 h-12 w-full rounded-lg border border-slate-200 bg-white px-3 text-base focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 dark:border-slate-700 dark:bg-slate-900"
+              />}
+        </div>)}
+
           <label htmlFor="field-receive-tag" className="mt-4 block text-[13px] font-medium text-slate-500">Asset tag (optional)</label>
+          {/* Typed, not scanned. Our tags are printed digits with no barcode, and reading them by
+              camera was tried and withdrawn: OCR on foil was too unreliable to trust, and a tag being
+              received is new, so nothing exists to catch a misread. */}
           <input
             id="field-receive-tag"
             value={assetTag}
@@ -487,6 +606,7 @@ export function FieldReceivePage() {
             maxLength={64}
             autoComplete="off"
             autoCapitalize="characters"
+            inputMode="numeric"
             className="mt-1.5 h-12 w-full rounded-lg border border-slate-200 bg-white px-3 text-base focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 dark:border-slate-700 dark:bg-slate-900"
           />
 

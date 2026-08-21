@@ -26,10 +26,11 @@ export function ContractDetailPage() {
 
   const contract = useQuery({ queryKey: ['contracts', id], queryFn: () => contractsApi.getContract(id), enabled: Boolean(id) })
   usePageHeading(contract.data ? { title: contract.data.name } : null)
-  const [covered, vendors, users] = useQueries({ queries: [
+  const [covered, vendors, users, departments] = useQueries({ queries: [
     { queryKey: ['cis', { contractId: id }], queryFn: () => assetsApi.listCis({ contractId: id, pageSize: 200 }), enabled: Boolean(id) },
     { queryKey: ['vendors'], queryFn: () => contractsApi.listVendors() },
     { queryKey: ['directory', 'users'], queryFn: directoryApi.listUsers },
+    { queryKey: ['directory', 'departments'], queryFn: directoryApi.listDepartments },
   ] })
 
   const save = useMutation({
@@ -67,7 +68,7 @@ export function ContractDetailPage() {
     <header className="flex flex-col gap-4 xl:flex-row xl:items-start">
       <div className="min-w-0">
         <div className="flex flex-wrap items-center gap-2">
-          <span className="font-mono text-sm text-slate-500">{item.contractNumber}</span>
+          <span className="font-mono text-sm text-slate-500">{item.poNumber}</span>
           <span className={`rounded-md px-2 py-0.5 text-xs font-medium ${contractStatusTone(item.status)}`}>{contractStatusLabel(item.status)}</span>
           {item.autoRenews && <span className="rounded-md bg-blue-100 px-2 py-0.5 text-xs font-medium text-blue-700 dark:bg-blue-500/15 dark:text-blue-400">Auto-renews</span>}
           {!item.isActive && <span className="rounded-md bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-600 dark:bg-slate-500/15 dark:text-slate-400">Inactive</span>}
@@ -129,6 +130,7 @@ export function ContractDetailPage() {
     </div>
 
     <ContractFormDialog open={editing} contract={item} vendors={vendors.data?.items ?? []} users={users.data ?? []}
+      departments={departments.data ?? []}
       pending={save.isPending} error={save.error instanceof Error ? save.error.message : undefined}
       onClose={() => { if (!save.isPending) { setEditing(false); save.reset() } }}
       onSubmit={async (input) => { await save.mutateAsync(input) }} />

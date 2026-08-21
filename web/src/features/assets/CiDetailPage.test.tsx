@@ -30,7 +30,7 @@ const host: Ci = {
   id: 'ci-host', type: 'Server', name: 'esx-01', assetTag: 'AT-9001', serialNumber: 'SN-9001', description: 'Primary hypervisor host',
   isActive: true, lifecycleState: 'Deployed',
   ownership: { ownerUserId: 'user-1', ownerName: 'Technician One', departmentId: 'dept-1', departmentName: 'IT', siteId: 'site-1', siteName: 'Head Office', assignedAt: '2026-08-01T00:00:00Z' },
-  coverage: { contractId: null, contractName: null, contractNumber: null, vendorName: null, contractEndDate: null, purchaseDate: null, warrantyExpiresAt: null, warrantyStatus: null, warrantyDaysRemaining: null },
+  coverage: { contractId: null, contractName: null, poNumber: null, vendorName: null, contractEndDate: null, purchaseDate: null, warrantyExpiresAt: null, warrantyStatus: null, warrantyDaysRemaining: null },
   attributes: { hostname: 'esx-01', operatingSystem: 'ESXi 8', cpuCores: '32', ramGb: '512' },
   customFields: [], createdAt: '2026-08-01T00:00:00Z', updatedAt: '2026-08-06T00:00:00Z',
 }

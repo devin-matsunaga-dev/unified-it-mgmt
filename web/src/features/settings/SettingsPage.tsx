@@ -1,8 +1,9 @@
 import { useQuery } from '@tanstack/react-query'
-import { AlarmClock, Building2, ChevronRight, ListPlus, Tags } from 'lucide-react'
+import { AlarmClock, BellRing, Building2, ChevronRight, ListPlus, Tags } from 'lucide-react'
 import type { ComponentType } from 'react'
 import { Link } from 'react-router-dom'
 import { assetsApi } from '../../api/assets'
+import { contractsApi } from '../../api/contracts'
 import { directoryApi } from '../../api/directory'
 import { slaApi } from '../../api/sla'
 import { helpdeskApi } from '../../api/helpdesk'
@@ -43,6 +44,15 @@ export function SettingsPage() {
     ? schemas.data.reduce((total, schema) => total + schema.customFields.length, 0)
     : null
   const orgCount = departments.data?.length ?? null
+  const reminders = useQuery({
+    queryKey: ['contract-reminder-settings'],
+    queryFn: contractsApi.getReminderSettings,
+  })
+  const reminderDetail = reminders.data === undefined
+    ? 'Loading…'
+    : !reminders.data.enabled
+      ? 'Switched off'
+      : `${reminders.data.thresholdDays.length} ${reminders.data.thresholdDays.length === 1 ? 'reminder' : 'reminders'}`
 
   return <div className="space-y-6">
     <div className="grid gap-6 sm:grid-cols-2">
@@ -73,6 +83,13 @@ export function SettingsPage() {
         title="Service levels"
         description="The ordered rules that decide how long a ticket has, and the business hours they run on."
         detail={policyCount === null ? 'Loading…' : `${policyCount} ${policyCount === 1 ? 'policy' : 'policies'}`} />
+
+      <SettingsCard
+        to="/admin/settings/renewal-reminders"
+        icon={BellRing}
+        title="Renewal reminders"
+        description="How far ahead of an expiry a contract's owner is emailed, and whether they are at all."
+        detail={reminderDetail} />
     </div>
   </div>
 }

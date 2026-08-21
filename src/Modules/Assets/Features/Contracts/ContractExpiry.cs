@@ -34,12 +34,22 @@ public static class ContractExpiryCalculator
 }
 
 /// <summary>Something with an end date that someone should hear about: a contract, or a CI's warranty.</summary>
+/// <param name="Recipient">
+/// Where the notice goes. One or more addresses joined by <c>;</c>, so the recorded row says who was
+/// actually written to rather than only the first of them.
+/// </param>
+/// <param name="Details">
+/// The handful of facts somebody needs to act on this without opening the platform — vendor, owner,
+/// cost. Optional: a warranty notice names the asset in <paramref name="SubjectName"/> and has nothing
+/// further worth saying.
+/// </param>
 public sealed record ContractExpiryCandidate(
     ContractNotificationSubject Subject,
     Guid SubjectId,
     string SubjectName,
     DateOnly DueDate,
-    string Recipient);
+    string Recipient,
+    string? Details = null);
 
 /// <summary>The identity of a notice already raised — the job's dedupe key, mirroring the unique index.</summary>
 public readonly record struct ContractNotificationKey(
@@ -56,7 +66,15 @@ public sealed record ContractExpiryNotice(
     public ContractNotificationKey Key =>
         new(Candidate.Subject, Candidate.SubjectId, Candidate.DueDate, ThresholdDays);
 
-    public string Message => DaysRemaining switch
+    /// <summary>
+    /// What lands in the mail. The first line is the deadline, the second the facts needed to act on
+    /// it — kept to one line each, because a renewal notice is read on a phone between jobs.
+    /// </summary>
+    public string Message => string.IsNullOrWhiteSpace(Candidate.Details)
+        ? Headline
+        : $"{Headline}\n{Candidate.Details}";
+
+    private string Headline => DaysRemaining switch
     {
         > 0 => $"{Candidate.SubjectName} expires in {DaysRemaining} days on {Date}.",
         0 => $"{Candidate.SubjectName} expires today, {Date}.",
@@ -77,16 +95,23 @@ public sealed record ContractExpiryNotice(
 /// </summary>
 public static class ContractExpiryPlanner
 {
+    /// <param name="thresholds">
+    /// Days before expiry at which a notice is due, from the administrator's settings. Passed in
+    /// rather than read from a constant so the rule has one home — the planner decides which
+    /// threshold a due date has crossed, and where the numbers come from is not its business.
+    /// </param>
     public static IReadOnlyList<ContractExpiryNotice> Plan(
         IEnumerable<ContractExpiryCandidate> candidates,
         DateOnly today,
-        IReadOnlySet<ContractNotificationKey> alreadySent)
+        IReadOnlySet<ContractNotificationKey> alreadySent,
+        IReadOnlyList<int>? thresholds = null)
     {
+        var due = thresholds ?? ContractExpiryCalculator.Thresholds;
         var notices = new List<ContractExpiryNotice>();
         foreach (var candidate in candidates)
         {
             var daysRemaining = ContractExpiryCalculator.DaysRemaining(candidate.DueDate, today);
-            var threshold = ContractExpiryCalculator.Thresholds
+            var threshold = due
                 .Where(days => daysRemaining <= days)
                 .Cast<int?>()
                 .Min();

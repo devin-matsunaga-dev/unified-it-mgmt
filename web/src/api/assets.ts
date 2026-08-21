@@ -285,7 +285,7 @@ export function ciTimelineQuery(filter: CiTimelineFilter) {
 export type CiCoverage = {
   contractId: string | null
   contractName: string | null
-  contractNumber: string | null
+  poNumber: string | null
   vendorName: string | null
   contractEndDate: string | null
   purchaseDate: string | null

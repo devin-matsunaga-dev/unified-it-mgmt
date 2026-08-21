@@ -56,7 +56,7 @@ export function CiCoverageDialog({ ci, onClose }: { ci: Ci | null; onClose: () =
           <select id="coverage-contract" className="input h-11" disabled={frozen} value={form.contractId ?? ''}
             onChange={(event) => setForm((current) => ({ ...current, contractId: event.target.value || null }))}>
             <option value="">Not covered</option>
-            {(contracts.data?.items ?? []).map((contract) => <option key={contract.id} value={contract.id}>{contract.contractNumber} — {contract.name} ({contract.vendorName})</option>)}
+            {(contracts.data?.items ?? []).map((contract) => <option key={contract.id} value={contract.id}>{contract.poNumber} — {contract.name} ({contract.vendorName})</option>)}
           </select>
         </div>
         <div className="grid gap-4 sm:grid-cols-2">

@@ -1,14 +1,16 @@
 import { useEffect, useState } from 'react'
 import { contractTypes, type Contract, type ContractInput, type ContractType, type Vendor } from '../../api/contracts'
-import type { DirectoryUser } from '../../api/directory'
+import type { DirectoryDepartment, DirectoryUser } from '../../api/directory'
 import { Button } from '../../components/ui/Button'
 
 /** Create or edit one contract. Dates are calendar dates, so the inputs are plain date pickers. */
-export function ContractFormDialog({ open, contract, vendors, users, pending, error, onClose, onSubmit }: {
+export function ContractFormDialog({ open, contract, vendors, users, departments, pending, error, onClose, onSubmit }: {
   open: boolean
   contract: Contract | null
   vendors: Vendor[]
   users: DirectoryUser[]
+  /** The platform's own departments, so a contract's spend lines up with the rest of the estate. */
+  departments: DirectoryDepartment[]
   pending: boolean
   error?: string
   onClose: () => void
@@ -20,7 +22,7 @@ export function ContractFormDialog({ open, contract, vendors, users, pending, er
     if (!open) return
     setForm(contract ? {
       vendorId: contract.vendorId,
-      contractNumber: contract.contractNumber,
+      poNumber: contract.poNumber,
       name: contract.name,
       type: contract.type,
       startDate: contract.startDate,
@@ -29,6 +31,8 @@ export function ContractFormDialog({ open, contract, vendors, users, pending, er
       cost: contract.cost,
       currency: contract.currency,
       ownerUserId: contract.ownerUserId,
+      departmentId: contract.departmentId,
+      contractNumber: contract.contractNumber,
       notes: contract.notes,
     } : emptyContract())
   }, [open, contract])
@@ -38,7 +42,7 @@ export function ContractFormDialog({ open, contract, vendors, users, pending, er
   const set = <K extends keyof ContractInput>(key: K, value: ContractInput[K]) =>
     setForm((current) => ({ ...current, [key]: value }))
   const invalidDates = Boolean(form.startDate && form.endDate && form.endDate < form.startDate)
-  const complete = form.vendorId && form.contractNumber.trim() && form.name.trim() && form.startDate && form.endDate
+  const complete = form.vendorId && form.poNumber.trim() && form.name.trim() && form.startDate && form.endDate
 
   return <div className="fixed inset-0 z-30 grid place-items-center bg-slate-900/40 p-4" role="dialog" aria-modal="true" aria-label={contract ? `Edit ${contract.name}` : 'New contract'}>
     <form
@@ -55,8 +59,17 @@ export function ContractFormDialog({ open, contract, vendors, users, pending, er
             {vendors.map((vendor) => <option key={vendor.id} value={vendor.id}>{vendor.name}</option>)}
           </select>
         </Field>
-        <Field label="Contract number" htmlFor="contract-number">
-          <input id="contract-number" required maxLength={100} className="input h-11" value={form.contractNumber} onChange={(event) => set('contractNumber', event.target.value)} />
+        <Field label="PO number" htmlFor="contract-po-number">
+          {/* The prefix is shown, not typed. The server canonicalises to "PO - <number>" whatever
+              arrives, so a person typing it out of habit and one who does not both end up with the
+              same value — and the uniqueness check compares like with like. */}
+          <div className="flex items-center gap-2">
+            <span className="shrink-0 text-sm font-medium text-slate-500">PO -</span>
+            <input id="contract-po-number" required maxLength={100} className="input h-11 flex-1" value={form.poNumber} onChange={(event) => set('poNumber', event.target.value)} />
+          </div>
+        </Field>
+        <Field label="Contract number (optional)" htmlFor="contract-number">
+          <input id="contract-number" maxLength={100} className="input h-11" placeholder="CUC-ADM-22-C008" value={form.contractNumber ?? ''} onChange={(event) => set('contractNumber', event.target.value || null)} />
         </Field>
         <Field label="Name" htmlFor="contract-name">
           <input id="contract-name" required maxLength={200} className="input h-11" value={form.name} onChange={(event) => set('name', event.target.value)} />
@@ -77,6 +90,14 @@ export function ContractFormDialog({ open, contract, vendors, users, pending, er
         </Field>
         <Field label="Currency" htmlFor="contract-currency">
           <input id="contract-currency" maxLength={3} placeholder="USD" className="input h-11 uppercase" value={form.currency ?? ''} onChange={(event) => set('currency', event.target.value || null)} />
+        </Field>
+        <Field label="Department" htmlFor="contract-department">
+          {/* The same directory the rest of the estate uses, so contract spend and CI ownership can
+              be read against each other rather than against two lists that drift apart. */}
+          <select id="contract-department" className="input h-11" value={form.departmentId ?? ''} onChange={(event) => set('departmentId', event.target.value || null)}>
+            <option value="">No department</option>
+            {departments.map((department) => <option key={department.id} value={department.id}>{department.name}</option>)}
+          </select>
         </Field>
         <Field label="Internal owner" htmlFor="contract-owner">
           <select id="contract-owner" className="input h-11" value={form.ownerUserId ?? ''} onChange={(event) => set('ownerUserId', event.target.value || null)}>
@@ -109,7 +130,7 @@ export function ContractFormDialog({ open, contract, vendors, users, pending, er
 function emptyContract(): ContractInput {
   return {
     vendorId: '',
-    contractNumber: '',
+    poNumber: '',
     name: '',
     type: 'Support',
     startDate: '',
@@ -118,6 +139,8 @@ function emptyContract(): ContractInput {
     cost: null,
     currency: null,
     ownerUserId: null,
+    departmentId: null,
+    contractNumber: null,
     notes: null,
   }
 }

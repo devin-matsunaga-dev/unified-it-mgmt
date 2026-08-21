@@ -22,7 +22,7 @@ const laptop: Ci = {
   id: 'ci-1', type: 'Hardware', name: 'Reception laptop', assetTag: 'LT-00421', serialNumber: '5CD1234ABC',
   description: null, isActive: true, lifecycleState: 'Deployed',
   ownership: { ownerUserId: null, ownerName: null, departmentId: null, departmentName: null, siteId: null, siteName: null, assignedAt: null },
-  coverage: { contractId: null, contractName: null, contractNumber: null, vendorName: null, contractEndDate: null, purchaseDate: null, warrantyExpiresAt: null, warrantyStatus: null, warrantyDaysRemaining: null },
+  coverage: { contractId: null, contractName: null, poNumber: null, vendorName: null, contractEndDate: null, purchaseDate: null, warrantyExpiresAt: null, warrantyStatus: null, warrantyDaysRemaining: null },
   attributes: {}, customFields: [], createdAt: '2026-08-08T00:00:00Z', updatedAt: '2026-08-08T00:00:00Z',
 }
 const server: Ci = { ...laptop, id: 'ci-2', name: 'app-01', type: 'Server', assetTag: 'AT-0001' }

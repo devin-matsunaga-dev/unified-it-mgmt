@@ -20,7 +20,18 @@ public sealed class Contract
     public Guid Id { get; set; }
     public Guid VendorId { get; set; }
     public Vendor Vendor { get; set; } = null!;
-    public string ContractNumber { get; set; } = string.Empty;
+    /// <summary>
+    /// The purchase order this was bought on, canonicalised as <c>PO - 22-0419</c>. Required and
+    /// unique: it is how a line of spend is found again.
+    /// </summary>
+    public string PoNumber { get; set; } = string.Empty;
+
+    /// <summary>
+    /// The vendor's or the organisation's own reference for the agreement — <c>CUC-ADM-22-C008</c>.
+    /// A different fact from the PO: one identifies the purchase, the other the contract it bought,
+    /// and a single row can carry both. Optional, because plenty of purchases have no such code.
+    /// </summary>
+    public string? ContractNumber { get; set; }
     public string Name { get; set; } = string.Empty;
     public ContractType Type { get; set; }
     public DateOnly StartDate { get; set; }
@@ -34,6 +45,16 @@ public sealed class Contract
     public Guid? OwnerUserId { get; set; }
     public string? OwnerName { get; set; }
     public string? OwnerEmail { get; set; }
+
+    /// <summary>
+    /// Which department the spend belongs to, chosen from the platform's own directory. Snapshotted
+    /// by name beside the id for the same reason CI ownership is: the directory belongs to Platform,
+    /// this module may not join to it, and a contract's record has to stay readable after a
+    /// department is renamed or retired.
+    /// </summary>
+    public Guid? DepartmentId { get; set; }
+
+    public string? DepartmentName { get; set; }
 
     public string? Notes { get; set; }
     public bool IsActive { get; set; } = true;

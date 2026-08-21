@@ -7,6 +7,12 @@ export type CameraStatus = 'idle' | 'starting' | 'scanning' | 'denied' | 'unavai
 const repeatCooldownMs = 2500
 
 /**
+ * How long a shutter press keeps looking. Long enough to ride out the shake of the press itself,
+ * short enough that a press which found nothing still feels like it answered.
+ */
+const captureWindowMs = 700
+
+/**
  * What a technician can point this at. QR because that is what our own printed labels carry, and the
  * 1D families because that is what a manufacturer puts on a new device — Code 39 for a Dell service
  * tag, Code 128 for most HP, Lenovo and Apple serials. Listed explicitly rather than left to try
@@ -57,7 +63,19 @@ export type ScanRegion = { widthRatio: number; heightRatio: number }
 
 export function useQrCamera(
   onCode: (code: string) => void,
-  { continuous = false, region }: { continuous?: boolean; region?: ScanRegion } = {},
+  { continuous = false, region, manual = false }: {
+    continuous?: boolean
+    region?: ScanRegion
+    /**
+     * Decode only when <c>capture()</c> is called, rather than on every frame.
+     *
+     * A continuous reader takes whichever code resolves first, and on a device label the serial, the
+     * product code and a shipping reference sit within a couple of centimetres — so cropping to the
+     * guide narrowed the target but could not give the technician time to aim at it. A shutter does:
+     * the preview runs, they line the barcode up, and the read happens when they say so.
+     */
+    manual?: boolean
+  } = {},
 ) {
   const videoRef = useRef<HTMLVideoElement>(null)
   const [status, setStatus] = useState<CameraStatus>('idle')
@@ -74,12 +92,17 @@ export function useQrCamera(
    * left the frame for the cooldown — pointing at the next shelf works, lingering on one box does not.
    */
   const lastRead = useRef<{ code: string; at: number } | null>(null)
+  /** Reads the current frame once. Set when the camera opens, cleared when it stops. */
+  const readOneFrame = useRef<(() => string | null) | null>(null)
+  const [capturing, setCapturing] = useState(false)
 
   const stop = useCallback(() => {
     cancelAnimationFrame(frameRef.current)
     streamRef.current?.getTracks().forEach((track) => track.stop())
     streamRef.current = null
     lastRead.current = null
+    readOneFrame.current = null
+    setCapturing(false)
     setStatus('idle')
   }, [])
 
@@ -93,7 +116,15 @@ export function useQrCamera(
       // `environment` is the rear camera. Ideal rather than exact so a laptop with only a front
       // camera still opens something rather than throwing.
       const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: { ideal: 'environment' } },
+        // Ask for a lot of pixels. Left to itself a browser commonly hands back 640×480, and after
+        // cropping to the guide that leaves a few hundred pixels of barcode or digits — which is why
+        // reading anything meant holding the phone almost against the label. `ideal` rather than
+        // `exact` so a camera that cannot manage it still opens at whatever it has.
+        video: {
+          facingMode: { ideal: 'environment' },
+          width: { ideal: 1920 },
+          height: { ideal: 1080 },
+        },
         audio: false,
       })
       streamRef.current = stream
@@ -112,26 +143,21 @@ export function useQrCamera(
       const reader = createReader()
       const canvas = document.createElement('canvas')
       const context = canvas.getContext('2d', { willReadFrequently: true })
+      readOneFrame.current = () => {
+        if (!context || video.readyState !== video.HAVE_ENOUGH_DATA) return null
+        return decodeRegion(reader, context, canvas, video, region)
+      }
+      if (manual) {
+        // No loop. The frames still stream to the <video> for the technician to aim with; nothing
+        // reads them until capture() asks.
+        return
+      }
       const readFrame = () => {
         if (!streamRef.current || !context || video.readyState !== video.HAVE_ENOUGH_DATA) {
           frameRef.current = requestAnimationFrame(readFrame)
           return
         }
-        // Only the guide's area is drawn onto the canvas, so only it can be decoded. Cropping here
-        // rather than filtering results afterwards is what makes aiming work at all — a decoder given
-        // the whole frame has already chosen before anything downstream could reject its choice.
-        const widthRatio = region?.widthRatio ?? 1
-        const heightRatio = region?.heightRatio ?? 1
-        const sourceWidth = Math.max(1, Math.round(video.videoWidth * widthRatio))
-        const sourceHeight = Math.max(1, Math.round(video.videoHeight * heightRatio))
-        const sourceX = Math.round((video.videoWidth - sourceWidth) / 2)
-        const sourceY = Math.round((video.videoHeight - sourceHeight) / 2)
-        canvas.width = sourceWidth
-        canvas.height = sourceHeight
-        context.drawImage(
-          video, sourceX, sourceY, sourceWidth, sourceHeight, 0, 0, sourceWidth, sourceHeight)
-        const frame = context.getImageData(0, 0, sourceWidth, sourceHeight)
-        const found = decode(reader, frame)
+        const found = decodeRegion(reader, context, canvas, video, region)
         if (found) {
           const now = Date.now()
           const seenRecently = lastRead.current?.code === found && now - lastRead.current.at < repeatCooldownMs
@@ -151,11 +177,39 @@ export function useQrCamera(
     }
   }, [continuous, region?.widthRatio, region?.heightRatio])
 
+  /**
+   * Reads what is in the guide right now, for a shutter. Samples for a short window rather than
+   * taking exactly one frame: the instant a finger presses the screen is often the blurriest moment
+   * there is, and a single-frame shutter would make the technician press twice for a barcode that
+   * was correctly aimed the whole time.
+   *
+   * Resolves false when nothing read, so the caller can say so rather than leaving a press that
+   * appears to do nothing.
+   */
+  const capture = useCallback(async () => {
+    if (!readOneFrame.current) return false
+    setCapturing(true)
+    try {
+      const deadline = Date.now() + captureWindowMs
+      while (Date.now() < deadline) {
+        const found = readOneFrame.current?.()
+        if (found) {
+          onCodeRef.current(found)
+          return true
+        }
+        await new Promise((resolve) => requestAnimationFrame(() => resolve(null)))
+      }
+      return false
+    } finally {
+      setCapturing(false)
+    }
+  }, [])
+
   // The camera must not outlive the screen that opened it — a live rear camera behind a page the
   // technician has walked away from is both a battery drain and a light left on.
   useEffect(() => stop, [stop])
 
-  return { videoRef, status, start, stop }
+  return { videoRef, status, start, stop, capture, capturing }
 }
 
 /**
@@ -191,4 +245,38 @@ function convertToLuminance(frame: ImageData): Uint8ClampedArray {
     grey[pixel] = (data[index] * 0.299 + data[index + 1] * 0.587 + data[index + 2] * 0.114) | 0
   }
   return grey
+}
+
+/**
+ * Draws the guide's area onto the canvas and decodes only that. Cropping at capture rather than
+ * filtering results afterwards is what makes aiming work at all — a decoder given the whole frame
+ * has already chosen before anything downstream could reject its choice.
+ */
+function decodeRegion(
+  reader: MultiFormatReader,
+  context: CanvasRenderingContext2D,
+  canvas: HTMLCanvasElement,
+  video: HTMLVideoElement,
+  region: ScanRegion | undefined,
+): string | null {
+  return decode(reader, cropRegion(context, canvas, video, region))
+}
+
+/** The crop both paths share, so a decode and a recognition see the same pixels. */
+function cropRegion(
+  context: CanvasRenderingContext2D,
+  canvas: HTMLCanvasElement,
+  video: HTMLVideoElement,
+  region: ScanRegion | undefined,
+): ImageData {
+  const widthRatio = region?.widthRatio ?? 1
+  const heightRatio = region?.heightRatio ?? 1
+  const sourceWidth = Math.max(1, Math.round(video.videoWidth * widthRatio))
+  const sourceHeight = Math.max(1, Math.round(video.videoHeight * heightRatio))
+  const sourceX = Math.round((video.videoWidth - sourceWidth) / 2)
+  const sourceY = Math.round((video.videoHeight - sourceHeight) / 2)
+  canvas.width = sourceWidth
+  canvas.height = sourceHeight
+  context.drawImage(video, sourceX, sourceY, sourceWidth, sourceHeight, 0, 0, sourceWidth, sourceHeight)
+  return context.getImageData(0, 0, sourceWidth, sourceHeight)
 }

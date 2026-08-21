@@ -28,7 +28,7 @@ const laptop: Ci = {
   id: 'ci-1', type: 'Hardware', name: 'LT-4417', assetTag: 'AT-4417', serialNumber: 'SN-4417', description: null,
   isActive: true, lifecycleState: 'Deployed',
   ownership: { ownerUserId: 'user-1', ownerName: 'Requester One', departmentId: null, departmentName: 'Finance', siteId: null, siteName: 'Head Office', assignedAt: '2026-08-01T00:00:00Z' },
-  coverage: { contractId: null, contractName: null, contractNumber: null, vendorName: null, contractEndDate: null, purchaseDate: null, warrantyExpiresAt: null, warrantyStatus: null, warrantyDaysRemaining: null },
+  coverage: { contractId: null, contractName: null, poNumber: null, vendorName: null, contractEndDate: null, purchaseDate: null, warrantyExpiresAt: null, warrantyStatus: null, warrantyDaysRemaining: null },
   attributes: { manufacturer: 'Dell', model: 'Latitude' }, customFields: [],
   createdAt: '2026-08-01T00:00:00Z', updatedAt: '2026-08-01T00:00:00Z',
 }

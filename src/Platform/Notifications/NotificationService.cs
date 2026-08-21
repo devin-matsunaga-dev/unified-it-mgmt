@@ -2,6 +2,7 @@ using System.Net.Mail;
 using System.Reflection;
 
 using MailKit.Net.Smtp;
+using MailKit.Security;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using MimeKit;
@@ -24,6 +25,33 @@ public interface INotificationService
 public sealed class SmtpNotificationService(IConfiguration configuration, ILogger<SmtpNotificationService> logger)
     : INotificationService
 {
+    /// <summary>The submission port that carries implicit TLS; everything else negotiates it.</summary>
+    public const int ImplicitTlsPort = 465;
+
+    /// <summary>
+    /// How long a relay gets to answer. MailKit's own default is two minutes, which is what a blocked
+    /// outbound port costs before it reports anything — long enough that an operator pressing "check
+    /// renewals" concludes the request has hung. A relay that has not answered in this long is not
+    /// going to.
+    /// </summary>
+    public const int DefaultTimeoutSeconds = 30;
+
+    /// <summary>
+    /// How to secure the connection, decided from the port and whether we are about to authenticate.
+    /// <para>
+    /// Credentials are the deciding factor for the middle case: a relay we log in to must prove TLS
+    /// before the password crosses, so a stripped STARTTLS advertisement fails the send rather than
+    /// quietly downgrading it. The local development sink has no credentials and no TLS, and stays on
+    /// the opportunistic setting so it keeps working untouched.
+    /// </para>
+    /// </summary>
+    public static SecureSocketOptions TlsFor(int port, bool authenticating) => (port, authenticating) switch
+    {
+        (ImplicitTlsPort, _) => SecureSocketOptions.SslOnConnect,
+        (_, true) => SecureSocketOptions.StartTls,
+        _ => SecureSocketOptions.StartTlsWhenAvailable,
+    };
+
     public async Task SendAsync(NotificationMessage notification, CancellationToken cancellationToken = default)
     {
         if (!configuration.GetValue("Email:Smtp:Enabled", false))
@@ -65,9 +93,16 @@ public sealed class SmtpNotificationService(IConfiguration configuration, ILogge
             }
         }
 
-        using var client = new MailKit.Net.Smtp.SmtpClient();
-        await client.ConnectAsync(host, port, false, cancellationToken);
         var username = configuration["Email:Smtp:Username"];
+        var authenticating = !string.IsNullOrWhiteSpace(username);
+
+        using var client = new MailKit.Net.Smtp.SmtpClient
+        {
+            Timeout = (int)TimeSpan
+                .FromSeconds(configuration.GetValue("Email:Smtp:TimeoutSeconds", DefaultTimeoutSeconds))
+                .TotalMilliseconds,
+        };
+        await client.ConnectAsync(host, port, TlsFor(port, authenticating), cancellationToken);
         if (!string.IsNullOrWhiteSpace(username))
         {
             var password = configuration["Email:Smtp:Password"]

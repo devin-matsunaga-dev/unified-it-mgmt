@@ -1,3 +1,5 @@
+using System.Globalization;
+
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
@@ -17,10 +19,14 @@ public sealed class ContractExpiryService(
     IDirectoryService directoryService,
     INotificationService notificationService,
     IConfiguration configuration,
+    IContractReminderSettingsService reminderSettings,
     ILogger<ContractExpiryService> logger) : IContractExpiryService
 {
     public const string FallbackRecipientKey = "Assets:ContractNoticeRecipient";
     public const string DefaultFallbackRecipient = "it-assets@it-platform.local";
+
+    /// <summary>Separates addresses in a notice's recorded recipient, and how they are split to send.</summary>
+    public const char RecipientSeparator = ';';
 
     private static readonly NotificationTemplate Template = new(
         "ContractExpiry",
@@ -31,7 +37,18 @@ public sealed class ContractExpiryService(
     {
         var today = ContractExpiryCalculator.Today();
         var fallbackRecipient = configuration[FallbackRecipientKey] ?? DefaultFallbackRecipient;
-        var horizon = today.AddDays(ContractExpiryCalculator.Thresholds.Max());
+        // Read per run rather than cached: an administrator changing the thresholds should see the
+        // next night's notices follow, not the next restart.
+        var thresholds = await reminderSettings.ThresholdsAsync(cancellationToken);
+        var configuredRecipients = await reminderSettings.RecipientsAsync(cancellationToken);
+        if (thresholds.Count == 0)
+        {
+            // Notices are switched off. Nothing is scanned and nothing is recorded, so switching them
+            // back on later resumes from the same due dates rather than replaying a silent period.
+            return new ContractExpiryRunResponse(today, 0, 0, []);
+        }
+
+        var horizon = today.AddDays(thresholds.Max());
 
         var contracts = await dbContext.Contracts
             .Include(contract => contract.Vendor)
@@ -73,12 +90,18 @@ public sealed class ContractExpiryService(
 
         var candidates = new List<ContractExpiryCandidate>(
             contracts.Count + warranties.Count + licensePools.Count);
+        // Renewals are a team's job, not a named owner's, so a configured list wins outright here.
+        // With none set the behaviour is what it was: the owner, then the asset mailbox.
+        var contractRecipient = configuredRecipients.Count > 0
+            ? string.Join(RecipientSeparator, configuredRecipients)
+            : null;
         candidates.AddRange(contracts.Select(contract => new ContractExpiryCandidate(
             ContractNotificationSubject.Contract,
             contract.Id,
-            $"{contract.Type} contract {contract.ContractNumber} ({contract.Name}, {contract.Vendor.Name})",
+            $"{contract.Type} contract {contract.PoNumber} ({contract.Name}, {contract.Vendor.Name})",
             contract.EndDate,
-            Recipient(contract.OwnerEmail, fallbackRecipient))));
+            contractRecipient ?? Recipient(contract.OwnerEmail, fallbackRecipient),
+            ContractDetails(contract))));
         // A warranty notice goes to whoever holds the asset; an unheld one falls back to the asset
         // mailbox. Owner emails live in the platform directory, so they are resolved through the
         // service rather than read from another module's tables.
@@ -122,7 +145,7 @@ public sealed class ContractExpiryService(
             .Select(row => new ContractNotificationKey(row.Subject, row.SubjectId, row.DueDate, row.ThresholdDays))
             .ToHashSet();
 
-        var notices = ContractExpiryPlanner.Plan(candidates, today, alreadySent);
+        var notices = ContractExpiryPlanner.Plan(candidates, today, alreadySent, thresholds);
         var raised = new List<ContractNotificationResponse>(notices.Count);
         var sentAt = DateTimeOffset.UtcNow;
         foreach (var notice in notices)
@@ -152,9 +175,30 @@ public sealed class ContractExpiryService(
             logger.LogInformation(
                 "Contract expiry notice for {Subject} {SubjectId} at {ThresholdDays} days: {Message}",
                 notification.Subject, notification.SubjectId, notification.ThresholdDays, notification.Message);
-            await notificationService.SendAsync(
-                new NotificationMessage(notification.Recipient, Template, notification),
-                cancellationToken);
+            // One message per address rather than one with several in the To line: the notification
+            // port takes a single recipient, and a failure to one mailbox should not lose the rest.
+            foreach (var recipient in notification.Recipient.Split(
+                         RecipientSeparator, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            {
+                try
+                {
+                    await notificationService.SendAsync(
+                        new NotificationMessage(recipient, Template, notification),
+                        cancellationToken);
+                }
+                catch (Exception exception) when (exception is not OperationCanceledException)
+                {
+                    // An unreachable relay must not take the rest of the batch with it, nor fail the
+                    // request that asked for the pass — the notices are already recorded, and a run
+                    // that half-sent and then threw would look to an operator like nothing happened.
+                    // The row survives and the dedupe key stands, so this notice is not retried: the
+                    // warning below is the only trace, which is why it names the mailbox.
+                    logger.LogWarning(
+                        exception,
+                        "Contract expiry notice {SubjectId} at {ThresholdDays} days could not be mailed to {Recipient}.",
+                        notification.SubjectId, notification.ThresholdDays, recipient);
+                }
+            }
         }
 
         return new(today, contracts.Count, warranties.Count, raised, licensePools.Count);
@@ -173,6 +217,26 @@ public sealed class ContractExpiryService(
 
     private static string Recipient(string? preferred, string fallback) =>
         string.IsNullOrWhiteSpace(preferred) ? fallback : preferred;
+
+    /// <summary>
+    /// The facts that decide what to do about a renewal, on one line: who it is with, who it belongs
+    /// to, and what it costs. Anything absent is left out rather than printed empty, so a sparsely
+    /// filled contract produces a short line instead of a row of dashes.
+    /// </summary>
+    private static string ContractDetails(Contract contract)
+    {
+        var parts = new List<string>(4) { $"Vendor: {contract.Vendor.Name}" };
+        if (!string.IsNullOrWhiteSpace(contract.DepartmentName)) parts.Add($"Department: {contract.DepartmentName}");
+        if (contract.Cost is { } cost)
+        {
+            var currency = string.IsNullOrWhiteSpace(contract.Currency) ? string.Empty : $" {contract.Currency}";
+            parts.Add($"Cost: {cost.ToString("N2", CultureInfo.InvariantCulture)}{currency}");
+        }
+
+        var owner = contract.OwnerName ?? contract.OwnerEmail;
+        if (!string.IsNullOrWhiteSpace(owner)) parts.Add($"Owner: {owner}");
+        return string.Join(" · ", parts);
+    }
 
     private static string Truncate(string value, int length) =>
         value.Length <= length ? value : value[..length];

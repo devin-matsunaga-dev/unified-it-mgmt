@@ -55,6 +55,7 @@ public static class AssetsServiceCollectionExtensions
         services.AddScoped<IDashboardWidget, LicenseComplianceWidget>();
         services.AddScoped<ICiDirectory, CiDirectory>();
         services.AddScoped<ICiLifecycleService, CiLifecycleService>();
+        services.AddScoped<IContractReminderSettingsService, ContractReminderSettingsService>();
         services.AddScoped<IDeviceIdentificationService, DeviceIdentificationService>();
         // Registered as one of many: a manufacturer provider is an added registration here rather
         // than an edit to the service, which is the point of the abstraction.

@@ -99,7 +99,7 @@ public sealed class ContractApiIntegrationTests : IAsyncLifetime
         });
 
         Assert.Equal(contract.Id, updated.Coverage.ContractId);
-        Assert.Equal(contract.ContractNumber, updated.Coverage.ContractNumber);
+        Assert.Equal(contract.PoNumber, updated.Coverage.PoNumber);
         Assert.Equal(vendor.Name, updated.Coverage.VendorName);
         Assert.Equal("Active", updated.Coverage.WarrantyStatus);
         Assert.Equal(60, updated.Coverage.WarrantyDaysRemaining);
@@ -184,7 +184,7 @@ public sealed class ContractApiIntegrationTests : IAsyncLifetime
         var notice = Assert.Single(run.Raised, raised => raised.SubjectId == contract.Id);
         Assert.Equal("Contract", notice.Subject);
         Assert.Equal(30, notice.ThresholdDays);
-        Assert.Contains(contract.ContractNumber, notice.SubjectName, StringComparison.Ordinal);
+        Assert.Contains(contract.PoNumber, notice.SubjectName, StringComparison.Ordinal);
         Assert.Equal(ContractExpiryService.DefaultFallbackRecipient, notice.Recipient);
     }
 
@@ -212,7 +212,7 @@ public sealed class ContractApiIntegrationTests : IAsyncLifetime
         renewal.Content = JsonContent.Create(new
         {
             vendorId = vendor.Id,
-            contractNumber = contract.ContractNumber,
+            poNumber = contract.PoNumber,
             name = contract.Name,
             type = "Support",
             startDate = Today.AddYears(-1).ToString("yyyy-MM-dd"),
@@ -239,7 +239,7 @@ public sealed class ContractApiIntegrationTests : IAsyncLifetime
         request.Content = JsonContent.Create(new
         {
             vendorId = vendor.Id,
-            contractNumber = $"C-{Guid.NewGuid():N}"[..12],
+            poNumber = $"C-{Guid.NewGuid():N}"[..12],
             name = "Backwards contract",
             type = "Support",
             startDate = Today.ToString("yyyy-MM-dd"),
@@ -260,7 +260,7 @@ public sealed class ContractApiIntegrationTests : IAsyncLifetime
         request.Content = JsonContent.Create(new
         {
             vendorId = Guid.CreateVersion7(),
-            contractNumber = $"C-{Guid.NewGuid():N}"[..12],
+            poNumber = $"C-{Guid.NewGuid():N}"[..12],
             name = "Contract with no vendor",
             type = "Support",
             startDate = Today.ToString("yyyy-MM-dd"),
@@ -283,7 +283,7 @@ public sealed class ContractApiIntegrationTests : IAsyncLifetime
         request.Content = JsonContent.Create(new
         {
             vendorId = vendor.Id,
-            contractNumber = contract.ContractNumber.ToLowerInvariant(),
+            poNumber = contract.PoNumber.ToLowerInvariant(),
             name = "Second contract, same number",
             type = "Support",
             startDate = Today.ToString("yyyy-MM-dd"),
@@ -407,7 +407,7 @@ public sealed class ContractApiIntegrationTests : IAsyncLifetime
         Assert.Contains(soon.Items, item => item.Id == expiring.Id);
         Assert.DoesNotContain(soon.Items, item => item.Id == distant.Id);
 
-        var byNumber = await GetAsync<ContractPageDto>($"/api/contracts?search={distant.ContractNumber}");
+        var byNumber = await GetAsync<ContractPageDto>($"/api/contracts?search={distant.PoNumber}");
         Assert.Equal(distant.Id, Assert.Single(byNumber.Items).Id);
 
         var byVendor = await GetAsync<ContractPageDto>($"/api/contracts?search={vendor.Name}&pageSize=200");
@@ -451,13 +451,44 @@ public sealed class ContractApiIntegrationTests : IAsyncLifetime
         return Assert.IsType<VendorDto>(await response.Content.ReadFromJsonAsync<VendorDto>());
     }
 
+    /// <summary>
+    /// The department comes from the platform's directory, not from whatever the caller sends. Taking
+    /// it on trust would let a contract carry a department nothing else in the estate knows about,
+    /// which is the opposite of the point — the field exists so contract spend and CI ownership can
+    /// be read against each other.
+    /// </summary>
+    [Fact]
+    public async Task CreateContract_WithADepartmentThatDoesNotExist_IsRefused()
+    {
+        var vendor = await CreateVendorAsync();
+
+        using var request = Authenticated(HttpMethod.Post, "/api/contracts");
+        request.Content = JsonContent.Create(new
+        {
+            vendorId = vendor.Id,
+            poNumber = $"C-{Guid.NewGuid():N}"[..14],
+            name = "ProSupport",
+            type = "Support",
+            startDate = Today.AddYears(-1).ToString("yyyy-MM-dd"),
+            endDate = Today.AddDays(45).ToString("yyyy-MM-dd"),
+            departmentId = Guid.CreateVersion7(),
+        });
+
+        using var response = await _client!.SendAsync(request);
+        var problem = await response.Content.ReadAsStringAsync();
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Equal("application/problem+json", response.Content.Headers.ContentType?.MediaType);
+        Assert.Contains("does not exist", problem, StringComparison.Ordinal);
+    }
+
     private async Task<ContractDto> CreateContractAsync(Guid vendorId, DateOnly? endDate = null)
     {
         using var request = Authenticated(HttpMethod.Post, "/api/contracts");
         request.Content = JsonContent.Create(new
         {
             vendorId,
-            contractNumber = $"C-{Guid.NewGuid():N}"[..14],
+            poNumber = $"C-{Guid.NewGuid():N}"[..14],
             name = "ProSupport",
             type = "Support",
             startDate = Today.AddYears(-1).ToString("yyyy-MM-dd"),
@@ -533,7 +564,7 @@ public sealed class ContractApiIntegrationTests : IAsyncLifetime
         Guid Id,
         Guid VendorId,
         string VendorName,
-        string ContractNumber,
+        string PoNumber,
         string Name,
         string Type,
         string StartDate,
@@ -548,7 +579,7 @@ public sealed class ContractApiIntegrationTests : IAsyncLifetime
     private sealed record CoverageDto(
         Guid? ContractId,
         string? ContractName,
-        string? ContractNumber,
+        string? PoNumber,
         string? VendorName,
         string? ContractEndDate,
         string? PurchaseDate,

@@ -3,6 +3,7 @@ using System;
 using System.Collections.Generic;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Modules.Assets.Data;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
@@ -13,9 +14,11 @@ using NpgsqlTypes;
 namespace Modules.Assets.Data.Migrations
 {
     [DbContext(typeof(AssetsDbContext))]
-    partial class AssetsDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260821002612_WP57_ContractReminderSettings")]
+    partial class WP57_ContractReminderSettings
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -900,8 +903,8 @@ namespace Modules.Assets.Data.Migrations
 
                     b.Property<string>("Recipient")
                         .IsRequired()
-                        .HasMaxLength(1300)
-                        .HasColumnType("character varying(1300)")
+                        .HasMaxLength(320)
+                        .HasColumnType("character varying(320)")
                         .HasColumnName("recipient");
 
                     b.Property<DateTimeOffset>("SentAt")
@@ -950,11 +953,6 @@ namespace Modules.Assets.Data.Migrations
                     b.Property<bool>("Enabled")
                         .HasColumnType("boolean")
                         .HasColumnName("enabled");
-
-                    b.PrimitiveCollection<string[]>("Recipients")
-                        .IsRequired()
-                        .HasColumnType("text[]")
-                        .HasColumnName("recipients");
 
                     b.PrimitiveCollection<int[]>("ThresholdDays")
                         .IsRequired()

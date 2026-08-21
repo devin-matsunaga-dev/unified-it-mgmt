@@ -19,9 +19,12 @@ vi.mock('../../api/contracts', async (original) => {
 vi.mock('../../api/directory', () => ({ directoryApi: { listUsers: vi.fn().mockResolvedValue([]) } }))
 
 const contract: Contract = {
-  id: 'contract-1', vendorId: 'vendor-1', vendorName: 'Dell', contractNumber: 'C-1001', name: 'ProSupport Plus',
+  id: 'contract-1', vendorId: 'vendor-1', vendorName: 'Dell', poNumber: 'C-1001', name: 'ProSupport Plus',
   type: 'Support', startDate: '2025-09-01', endDate: '2026-09-01', autoRenews: true, cost: 12500, currency: 'USD',
-  ownerUserId: 'user-1', ownerName: 'Technician One', ownerEmail: 'tech1@example.test', notes: 'Covers the racks',
+  ownerUserId: 'user-1',
+  departmentId: null,
+  departmentName: null,
+  contractNumber: null, ownerName: 'Technician One', ownerEmail: 'tech1@example.test', notes: 'Covers the racks',
   isActive: true, status: 'ExpiringSoon', daysRemaining: 24, coveredCiCount: 1,
   createdAt: '2026-08-01T00:00:00Z', updatedAt: '2026-08-01T00:00:00Z',
 }
@@ -31,7 +34,7 @@ const coveredCi: Ci = {
   isActive: true, lifecycleState: 'Deployed',
   ownership: { ownerUserId: null, ownerName: null, departmentId: null, departmentName: null, siteId: null, siteName: null, assignedAt: null },
   coverage: {
-    contractId: contract.id, contractName: contract.name, contractNumber: contract.contractNumber,
+    contractId: contract.id, contractName: contract.name, poNumber: contract.poNumber,
     vendorName: 'Dell', contractEndDate: contract.endDate, purchaseDate: '2025-09-01',
     warrantyExpiresAt: '2026-09-01', warrantyStatus: 'ExpiringSoon', warrantyDaysRemaining: 24,
   },
